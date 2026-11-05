@@ -52,7 +52,11 @@ const filteredEvents = computed(() =>
 			</div>
 		</div>
 
-		<div v-if="filteredEvents.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center text-xs font-bold text-fg-muted">
+		<div v-if="events.isLoading.value" class="space-y-4" aria-busy="true">
+			<div v-for="idx in 4" :key="idx" class="h-28 animate-pulse rounded-2xl border border-border bg-surface"></div>
+		</div>
+
+		<div v-else-if="filteredEvents.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center text-xs font-bold text-fg-muted">
 			رویدادی متناسب با این فیلتر یافت نشد.
 		</div>
 

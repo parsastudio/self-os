@@ -368,6 +368,18 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		scheduleAutoSave(0);
 	}
 
+	function setTomorrowPlanMinutes(habitId: string, minutes: number) {
+		const current = tomorrowPlansByHabitId.value[habitId];
+		if (!current) return;
+		tomorrowPlansByHabitId.value = {
+			...tomorrowPlansByHabitId.value,
+			[habitId]: {
+				...current,
+				plannedMinutesPerInterval: Math.max(0, Number.isNaN(minutes) ? 0 : minutes)
+			}
+		};
+	}
+
 	function copyTodayActualsToTomorrowPlan() {
 		const next = { ...tomorrowPlansByHabitId.value };
 		for (const habit of habits.value.filter((h) => h.trackingMode === 'interval_cadence')) {
@@ -437,6 +449,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		toggleTag,
 		scheduleAutoSave,
 		flushPendingSave,
+		setTomorrowPlanMinutes,
 		copyTodayActualsToTomorrowPlan,
 		saveTomorrowCadencePlans,
 		isNodeCompleted,

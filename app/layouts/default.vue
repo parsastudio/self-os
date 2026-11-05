@@ -5,6 +5,7 @@ import { useSyncEngine } from '~/composables/useSyncEngine';
 import { useTheme } from '~/composables/useTheme';
 import { toPersianDigits } from '~/domain/calendar';
 import {
+	AlertTriangle,
 	Cloud,
 	CloudOff,
 	RefreshCw,
@@ -130,7 +131,28 @@ function isActive(href: string, currentPath: string): boolean {
 		</header>
 
 		<main class="mx-auto max-w-4xl px-3.5 py-5 sm:px-6 sm:py-8">
-			<slot />
+			<NuxtErrorBoundary>
+				<slot />
+				<template #error="{ error, clearError }">
+					<div class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)">
+						<div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-failed-border bg-failed-soft text-failed">
+							<AlertTriangle class="h-7 w-7" />
+						</div>
+						<h2 class="text-lg font-black text-fg">خطایی در بارگذاری این بخش رخ داد</h2>
+						<p class="mt-1.5 text-xs font-bold text-fg-secondary">
+							{{ error?.message || 'مشکل غیرمنتظره‌ای در پردازش داده‌های صفحه پیش آمده است.' }}
+						</p>
+						<button
+							type="button"
+							class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-6 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90"
+							@click="clearError()"
+						>
+							<RefreshCw class="h-4 w-4" />
+							<span>تلاش مجدد</span>
+						</button>
+					</div>
+				</template>
+			</NuxtErrorBoundary>
 		</main>
 	</div>
 </template>

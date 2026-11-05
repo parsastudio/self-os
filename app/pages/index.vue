@@ -102,7 +102,12 @@ const groupedTieredSections = computed(() => {
 			@toggle-complete="handleToggleCalendarEvent"
 		/>
 
-		<div v-if="tracker.habits.value.length === 0" class="rounded-3xl border border-border bg-surface p-10 text-center">
+		<div v-if="tracker.habits.isLoading.value" class="space-y-4" aria-busy="true">
+			<div class="h-18 animate-pulse rounded-3xl border border-border bg-surface"></div>
+			<div v-for="idx in 3" :key="idx" class="h-24 animate-pulse rounded-3xl border border-border bg-surface"></div>
+		</div>
+
+		<div v-else-if="tracker.habits.value.length === 0" class="rounded-3xl border border-border bg-surface p-10 text-center">
 			<h2 class="text-xl font-black text-fg">پایگاه داده خالی است</h2>
 			<p class="mt-2 text-sm text-fg-secondary">
 				طرحی برای ردیابی ثبت نشده است. می‌توانید از بخش «طرح‌ها» اولین طرح خود را ایجاد کنید یا از دیتابیس پشتیبان بگیرید.
@@ -127,6 +132,7 @@ const groupedTieredSections = computed(() => {
 				@clear-day="tracker.clearDay"
 				@toggle-tag="tracker.toggleTag"
 				@update-reflection-note="(val) => { tracker.reflectionNote.value = val; tracker.scheduleAutoSave(750); }"
+				@update-tomorrow-plan="(id, mins) => tracker.setTomorrowPlanMinutes(id, mins)"
 				@copy-today-to-tomorrow="tracker.copyTodayActualsToTomorrowPlan"
 				@save-tomorrow-plans="tracker.saveTomorrowCadencePlans"
 			/>

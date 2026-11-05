@@ -209,8 +209,12 @@ async function handleDeleteNote(noteId: string) {
 			</div>
 		</section>
 
+		<div v-if="rawNotes.isLoading.value" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true">
+			<div v-for="idx in 6" :key="idx" class="h-44 animate-pulse rounded-3xl border border-border bg-surface"></div>
+		</div>
+
 		<div
-			v-if="notes.length === 0"
+			v-else-if="notes.length === 0"
 			class="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
 		>
 			<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-elevated text-fg-muted">

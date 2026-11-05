@@ -126,7 +126,14 @@ function selectHabitAndScroll(habitId: string) {
 			</div>
 		</section>
 
-		<div v-if="habits.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center">
+		<div v-if="habits.isLoading.value" class="space-y-6" aria-busy="true">
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+				<div v-for="idx in 3" :key="idx" class="h-28 animate-pulse rounded-3xl border border-border bg-surface"></div>
+			</div>
+			<div class="h-80 animate-pulse rounded-3xl border border-border bg-surface"></div>
+		</div>
+
+		<div v-else-if="habits.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center">
 			<h2 class="text-base font-extrabold text-fg">هنوز طرحی در سیستم تعریف نشده است</h2>
 			<NuxtLink to="/architect" class="mt-4 inline-flex h-11 items-center rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg shadow-xs">
 				تعریف اولین طرح

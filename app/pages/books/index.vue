@@ -78,8 +78,12 @@ async function handleDeleteBook(bookId: string) {
 			@open-create="openCreateModal"
 		/>
 
+		<div v-if="books.isLoading.value" class="space-y-2.5" aria-busy="true">
+			<div v-for="idx in 4" :key="idx" class="h-20 animate-pulse rounded-2xl border border-border bg-surface"></div>
+		</div>
+
 		<div
-			v-if="books.length === 0"
+			v-else-if="books.length === 0"
 			class="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
 		>
 			<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-elevated text-fg-muted">

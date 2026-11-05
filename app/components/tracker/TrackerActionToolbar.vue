@@ -20,6 +20,7 @@ const emit = defineEmits<{
 	(e: 'clearDay'): void;
 	(e: 'toggleTag', tag: string): void;
 	(e: 'updateReflectionNote', text: string): void;
+	(e: 'updateTomorrowPlan', habitId: string, minutes: number): void;
 	(e: 'copyTodayToTomorrow'): void;
 	(e: 'saveTomorrowPlans'): void;
 }>();
@@ -162,7 +163,7 @@ const activeNotesBadgeCount = computed(
 							min="0"
 							step="1"
 							class="h-10 w-20 rounded-xl border border-border bg-surface px-3 text-center font-mono text-base font-black text-fg focus:border-border-strong focus:outline-none"
-							@input="tomorrowPlans[habit.id] && (tomorrowPlans[habit.id]!.plannedMinutesPerInterval = Number(($event.target as HTMLInputElement).value))"
+							@input="emit('updateTomorrowPlan', habit.id, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0))"
 						/>
 						<span class="text-xs font-bold text-fg-secondary">دقیقه</span>
 					</label>

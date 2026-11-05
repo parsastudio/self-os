@@ -65,6 +65,57 @@ const inspectedPoint = computed<HabitDailyPoint | null>(() =>
 	activePointIndex.value !== null ? props.report.dailySeries[activePointIndex.value] ?? null : null
 );
 
+const barWidth = computed(() => {
+	const count = Math.max(1, props.report.dailySeries.length);
+	return Math.max(4, Math.min(20, (PLOT_W / count) * 0.62));
+});
+
+const hitAreaWidth = computed(() => Math.max(barWidth.value, 12));
+
+const renderedBars = computed(() => {
+	const series = props.report.dailySeries;
+	const total = series.length;
+	const bw = barWidth.value;
+
+	return series.map((pt, idx) => {
+		const cx = getX(idx, total);
+		const hasVisibleBar =
+			(isCadence.value && pt.actualMinutes !== null && pt.actualMinutes > 0) ||
+			(!isCadence.value && pt.score !== null && pt.score > 0) ||
+			pt.outcome === 'failed' ||
+			pt.outcome === 'skipped';
+
+		const barY = isCadence.value
+			? pt.actualMinutes !== null && pt.actualMinutes > 0
+				? getYFromMins(pt.actualMinutes)
+				: PAD_TOP + PLOT_H - 6
+			: pt.score !== null && pt.score > 0
+				? getYFromScore(pt.score)
+				: pt.outcome === 'failed'
+					? PAD_TOP + PLOT_H - 7
+					: PAD_TOP + PLOT_H - 12;
+
+		const barHeight = Math.max(0, PAD_TOP + PLOT_H - barY);
+		const showAxisLabel =
+			idx === 0 ||
+			idx === total - 1 ||
+			idx === Math.floor(total / 2) ||
+			(total <= 14 && idx % 2 === 0);
+
+		return {
+			pt,
+			idx,
+			cx,
+			hasVisibleBar,
+			barX: cx - bw / 2,
+			barY,
+			barHeight,
+			barRx: Math.min(5, bw / 2),
+			showAxisLabel
+		};
+	});
+});
+
 function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 	if (outcome === 'gold') return 'var(--tier-gold)';
 	if (outcome === 'silver') return 'var(--tier-silver)';
@@ -194,28 +245,28 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 				<path v-if="rollingAreaPath" :d="rollingAreaPath" fill="url(#trendAreaGrad)" />
 
 				<g
-					v-for="(pt, idx) in report.dailySeries"
-					:key="pt.dateIso"
+					v-for="item in renderedBars"
+					:key="item.pt.dateIso"
 					class="cursor-pointer transition-opacity"
 					role="button"
 					tabindex="0"
-					:aria-label="pt.humanLabel"
-					@click="manualPointIndex = idx"
-					@mouseenter="manualPointIndex = idx"
+					:aria-label="item.pt.humanLabel"
+					@click="manualPointIndex = item.idx"
+					@mouseenter="manualPointIndex = item.idx"
 				>
 					<rect
-						:x="getX(idx, report.dailySeries.length) - Math.max(4, Math.min(20, (PLOT_W / Math.max(1, report.dailySeries.length)) * 0.62), 12) / 2"
+						:x="item.cx - hitAreaWidth / 2"
 						:y="PAD_TOP"
-						:width="Math.max(4, Math.min(20, (PLOT_W / Math.max(1, report.dailySeries.length)) * 0.62), 12)"
+						:width="hitAreaWidth"
 						:height="PLOT_H"
 						fill="transparent"
 					/>
 
 					<line
-						v-if="activePointIndex === idx"
-						:x1="getX(idx, report.dailySeries.length)"
+						v-if="activePointIndex === item.idx"
+						:x1="item.cx"
 						:y1="PAD_TOP"
-						:x2="getX(idx, report.dailySeries.length)"
+						:x2="item.cx"
 						:y2="PAD_TOP + PLOT_H"
 						stroke="var(--surface-accent)"
 						stroke-width="1.5"
@@ -223,56 +274,27 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 					/>
 
 					<rect
-						v-if="
-							(isCadence && pt.actualMinutes !== null && pt.actualMinutes > 0) ||
-							(!isCadence && pt.score !== null && pt.score > 0) ||
-							pt.outcome === 'failed' ||
-							pt.outcome === 'skipped'
-						"
-						:x="getX(idx, report.dailySeries.length) - Math.max(4, Math.min(20, (PLOT_W / Math.max(1, report.dailySeries.length)) * 0.62)) / 2"
-						:y="
-							isCadence
-								? pt.actualMinutes !== null && pt.actualMinutes > 0
-									? getYFromMins(pt.actualMinutes)
-									: PAD_TOP + PLOT_H - 6
-								: pt.score !== null && pt.score > 0
-									? getYFromScore(pt.score)
-									: pt.outcome === 'failed'
-										? PAD_TOP + PLOT_H - 7
-										: PAD_TOP + PLOT_H - 12
-						"
-						:width="Math.max(4, Math.min(20, (PLOT_W / Math.max(1, report.dailySeries.length)) * 0.62))"
-						:height="
-							Math.max(
-								0,
-								PAD_TOP + PLOT_H -
-									(isCadence
-										? pt.actualMinutes !== null && pt.actualMinutes > 0
-											? getYFromMins(pt.actualMinutes)
-											: PAD_TOP + PLOT_H - 6
-										: pt.score !== null && pt.score > 0
-											? getYFromScore(pt.score)
-											: pt.outcome === 'failed'
-												? PAD_TOP + PLOT_H - 7
-												: PAD_TOP + PLOT_H - 12)
-							)
-						"
-						:rx="Math.min(5, Math.max(4, Math.min(20, (PLOT_W / Math.max(1, report.dailySeries.length)) * 0.62)) / 2)"
-						:fill="getBarColorVar(pt.outcome)"
-						:opacity="activePointIndex === idx ? '1' : '0.82'"
+						v-if="item.hasVisibleBar"
+						:x="item.barX"
+						:y="item.barY"
+						:width="barWidth"
+						:height="item.barHeight"
+						:rx="item.barRx"
+						:fill="getBarColorVar(item.pt.outcome)"
+						:opacity="activePointIndex === item.idx ? '1' : '0.82'"
 					/>
 
 					<circle
-						v-else-if="pt.outcome === 'unlogged'"
-						:cx="getX(idx, report.dailySeries.length)"
+						v-else-if="item.pt.outcome === 'unlogged'"
+						:cx="item.cx"
 						:cy="PAD_TOP + PLOT_H - 2"
 						r="2"
 						fill="var(--border-hairline)"
 					/>
 
 					<circle
-						v-if="pt.lifecycleEventsOnDay.length > 0"
-						:cx="getX(idx, report.dailySeries.length)"
+						v-if="item.pt.lifecycleEventsOnDay.length > 0"
+						:cx="item.cx"
 						:cy="PAD_TOP - 10"
 						r="6"
 						fill="var(--surface-accent)"
@@ -281,20 +303,15 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 					/>
 
 					<text
-						v-if="
-							idx === 0 ||
-							idx === report.dailySeries.length - 1 ||
-							idx === Math.floor(report.dailySeries.length / 2) ||
-							(report.dailySeries.length <= 14 && idx % 2 === 0)
-						"
-						:x="getX(idx, report.dailySeries.length)"
+						v-if="item.showAxisLabel"
+						:x="item.cx"
 						:y="SVG_HEIGHT - 8"
 						text-anchor="middle"
-						:fill="activePointIndex === idx ? 'var(--text-primary)' : 'var(--text-muted)'"
+						:fill="activePointIndex === item.idx ? 'var(--text-primary)' : 'var(--text-muted)'"
 						font-size="10"
-						:font-weight="activePointIndex === idx ? '800' : '600'"
+						:font-weight="activePointIndex === item.idx ? '800' : '600'"
 					>
-						{{ toPersianDigits(pt.jalaliSlash.slice(5)) }}
+						{{ toPersianDigits(item.pt.jalaliSlash.slice(5)) }}
 					</text>
 				</g>
 

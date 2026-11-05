@@ -98,8 +98,12 @@ async function handleUpdateHabit(payload: MutateHabitStructureInput) {
 			</div>
 		</div>
 
+		<div v-if="habits.isLoading.value" class="grid grid-cols-1 gap-5 md:grid-cols-2" aria-busy="true">
+			<div v-for="idx in 4" :key="idx" class="h-48 animate-pulse rounded-3xl border border-border bg-surface"></div>
+		</div>
+
 		<!-- گرید کارت‌های طرح‌های اصلی -->
-		<div class="grid grid-cols-1 gap-5 md:grid-cols-2">
+		<div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2">
 			<ArchitectHabitCard
 				v-for="habit in rootHabits"
 				:key="habit.id"

@@ -43,8 +43,8 @@ async function handleDeleteEvent(eventId: string) {
 	await localRepo.calendar.delete(eventId);
 }
 
-const todayIso = getTodayIso();
-const todayParts = isoToJalaliParts(todayIso);
+const todayIso = computed(() => getTodayIso());
+const todayParts = computed(() => isoToJalaliParts(todayIso.value));
 
 const requestedDate = computed(() => {
 	const d = route.query.date as string | undefined;
@@ -55,14 +55,14 @@ const currentYear = computed(() => {
 	const jyParam = Number(route.query.jy);
 	if (!Number.isNaN(jyParam) && jyParam >= 1300 && jyParam <= 1500) return jyParam;
 	if (requestedDate.value) return isoToJalaliParts(requestedDate.value).jy;
-	return todayParts.jy;
+	return todayParts.value.jy;
 });
 
 const currentMonth = computed(() => {
 	const jmParam = Number(route.query.jm);
 	if (!Number.isNaN(jmParam) && jmParam >= 1 && jmParam <= 12) return jmParam;
 	if (requestedDate.value) return isoToJalaliParts(requestedDate.value).jm;
-	return todayParts.jm;
+	return todayParts.value.jm;
 });
 
 const monthIsoBounds = computed(() => {
@@ -70,8 +70,8 @@ const monthIsoBounds = computed(() => {
 	const jm = currentMonth.value;
 	const len = getJalaliMonthLength(jy, jm);
 	return {
-		startIso: jalaliPartsToIso({ jy, jm, jd: 1 }) ?? todayIso,
-		endIso: jalaliPartsToIso({ jy, jm, jd: len }) ?? todayIso
+		startIso: jalaliPartsToIso({ jy, jm, jd: 1 }) ?? todayIso.value,
+		endIso: jalaliPartsToIso({ jy, jm, jd: len }) ?? todayIso.value
 	};
 });
 
@@ -104,15 +104,15 @@ const userSelectedIso = ref<string | null>(null);
 const archiveData = computed(() => {
 	const { todayAndUpcoming } = computeUpcomingEventsBanner({
 		allEvents: allEvents.value,
-		referenceDateIso: todayIso,
-		todayIso,
+		referenceDateIso: todayIso.value,
+		todayIso: todayIso.value,
 		horizonDays: 14
 	});
 
 	return assembleJalaliMonthArchive({
 		jy: currentYear.value,
 		jm: currentMonth.value,
-		todayIso,
+		todayIso: todayIso.value,
 		selectedIso: requestedDate.value ?? undefined,
 		allHabits: allHabits.value,
 		entriesInMonth: monthEntries.value,
@@ -165,7 +165,7 @@ function navigateToMonth(jy: number, jm: number) {
 
 function goToToday() {
 	userSelectedIso.value = null;
-	router.push({ query: { date: todayIso } });
+	router.push({ query: { date: todayIso.value } });
 }
 </script>
 

@@ -89,8 +89,12 @@ const displayedMemories = computed(() => {
 			</div>
 		</div>
 
+		<div v-if="entries.isLoading.value" class="mx-auto max-w-3xl space-y-5" aria-busy="true">
+			<div v-for="idx in 3" :key="idx" class="h-44 animate-pulse rounded-3xl border border-border bg-surface"></div>
+		</div>
+
 		<div
-			v-if="entries.length === 0"
+			v-else-if="entries.length === 0"
 			class="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
 		>
 			<div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-elevated text-fg-muted">
