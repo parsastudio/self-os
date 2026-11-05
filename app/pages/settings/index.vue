@@ -194,7 +194,7 @@ async function handleLogout() {
 					type="button"
 					class="flex items-center justify-between rounded-2xl border p-4 text-right transition"
 					:class="!theme.isDark.value ? 'border-accent bg-accent-soft text-accent-text ring-1 ring-accent-border' : 'border-border bg-elevated text-fg-secondary hover:border-border-strong hover:text-fg'"
-					@click="theme.isDark.value && theme.toggle()"
+					@click="theme.setTheme(false)"
 				>
 					<div class="flex items-center gap-3">
 						<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-surface">
@@ -212,7 +212,7 @@ async function handleLogout() {
 					type="button"
 					class="flex items-center justify-between rounded-2xl border p-4 text-right transition"
 					:class="theme.isDark.value ? 'border-accent bg-accent-soft text-accent-text ring-1 ring-accent-border' : 'border-border bg-elevated text-fg-secondary hover:border-border-strong hover:text-fg'"
-					@click="!theme.isDark.value && theme.toggle()"
+					@click="theme.setTheme(true)"
 				>
 					<div class="flex items-center gap-3">
 						<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-surface">

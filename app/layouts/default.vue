@@ -8,9 +8,7 @@ import {
 	Cloud,
 	CloudOff,
 	RefreshCw,
-	Settings,
-	Sun,
-	Moon
+	Settings
 } from 'lucide-vue-next';
 
 const route = useRoute();
@@ -111,17 +109,6 @@ function isActive(href: string, currentPath: string): boolean {
 							</template>
 							<RefreshCw v-else-if="syncEngine.status.value === 'error'" class="h-4 w-4" />
 							<Cloud v-else class="h-4 w-4 text-optimal" />
-						</button>
-
-						<button
-							type="button"
-							class="flex h-10 w-10 items-center justify-center rounded-2xl border border-border bg-elevated text-fg-secondary transition hover:border-border-strong hover:text-fg sm:h-11 sm:w-11"
-							aria-label="تغییر تم"
-							title="تغییر پوسته تاریک و روشن"
-							@click="theme.toggle"
-						>
-							<Sun v-if="theme.isDark.value" class="h-4.5 w-4.5" />
-							<Moon v-else class="h-4.5 w-4.5" />
 						</button>
 
 						<NuxtLink

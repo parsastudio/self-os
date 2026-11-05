@@ -33,8 +33,7 @@ export default defineNuxtConfig({
     head: {
       htmlAttrs: {
         lang: 'fa',
-        dir: 'rtl',
-        class: 'dark'
+        dir: 'rtl'
       },
       title: 'ردیابی طرح‌ها و سیستم عامل فردی',
       meta: [
