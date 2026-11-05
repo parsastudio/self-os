@@ -1,56 +1,58 @@
-const CACHE_NAME = 'personal-os-v1';
-const STATIC_ASSETS = [
-	'/',
-	'/favicon.svg',
-	'/manifest.webmanifest',
-	'/Vazirmatn.woff2'
+const CACHE_NAME = 'personal-os-cache-v1';
+const PRECACHE_URLS = [
+  '/',
+  '/manifest.webmanifest',
+  '/favicon.svg',
+  '/Vazirmatn.woff2'
 ];
 
 self.addEventListener('install', (event) => {
-	event.waitUntil(
-		caches.open(CACHE_NAME).then((cache) => {
-			return cache.addAll(STATIC_ASSETS);
-		})
-	);
-	self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_URLS).catch(() => {});
+    })
+  );
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-	event.waitUntil(
-		caches.keys().then((keys) => {
-			return Promise.all(
-				keys.map((key) => {
-					if (key !== CACHE_NAME) {
-						return caches.delete(key);
-					}
-				})
-			);
-		})
-	);
-	self.clients.claim();
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+      );
+    })
+  );
+  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
-	const url = new URL(event.request.url);
+  const { request } = event;
+  const url = new URL(request.url);
 
-	if (url.origin !== self.location.origin) return;
-	if (event.request.method !== 'GET') return;
-	if (url.pathname.startsWith('/api/')) return;
+  if (url.origin !== self.location.origin) return;
+  if (request.method !== 'GET') return;
+  if (url.pathname.startsWith('/api/')) return;
 
-	event.respondWith(
-		caches.match(event.request).then((cached) => {
-			if (cached) return cached;
-			return fetch(event.request).then((response) => {
-				if (response.ok && (url.pathname.startsWith('/_nuxt/') || url.pathname.endsWith('.woff2') || url.pathname.endsWith('.svg'))) {
-					const clone = response.clone();
-					caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-				}
-				return response;
-			}).catch(() => {
-				if (event.request.mode === 'navigate') {
-					return caches.match('/');
-				}
-			});
-		})
-	);
+  event.respondWith(
+    caches.match(request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+      return fetch(request).then((networkResponse) => {
+        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+          return networkResponse;
+        }
+        const responseToCache = networkResponse.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(request, responseToCache);
+        });
+        return networkResponse;
+      }).catch(() => {
+        if (request.mode === 'navigate') {
+          return caches.match('/');
+        }
+      });
+    })
+  );
 });
