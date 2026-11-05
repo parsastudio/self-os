@@ -47,7 +47,17 @@ const report = computed(() =>
 	buildFullAnalyticsReport({
 		habits: habits.value,
 		entries: rawEntries.value,
-		logs: rawLogs.value,
+		logs: rawLogs.value.map((l) => ({
+			...l,
+			habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+			achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+			habitSnapshotJson: l.habitSnapshotJson ?? null,
+			completedIntervals: l.completedIntervals ?? null,
+			actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
+			totalActualMinutes: l.totalActualMinutes ?? null,
+			plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
+			plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null
+		})),
 		lifecycleEvents: lifecycleEvents.value,
 		selectedHabitId: selectedHabitId.value,
 		range: selectedRange.value,

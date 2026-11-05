@@ -63,6 +63,9 @@ async function exportLocalBackup() {
 				})),
 				habitLogs: (await db.habitLogs.toArray()).map((l) => ({
 					...l,
+					habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+					achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+					habitSnapshotJson: l.habitSnapshotJson ?? null,
 					totalActualMinutes: l.totalActualMinutes ?? null,
 					completedIntervals: l.completedIntervals ?? null,
 					actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
