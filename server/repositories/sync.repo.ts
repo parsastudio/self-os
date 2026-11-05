@@ -1,4 +1,5 @@
-import { db } from '../database/index';
+import { asc, desc, eq, sql } from 'drizzle-orm';
+import { db, ensureDatabaseReady } from '../database/index';
 import {
 	books,
 	cadencePlans,
@@ -10,9 +11,12 @@ import {
 	mediaLogs,
 	notes
 } from '../database/schema';
-import { asc, desc, eq, sql } from 'drizzle-orm';
 import { getAllHabits } from './habits.repo';
-import { getReflectionTags, saveCadencePlansForDate, saveDailyEntryAndLogs } from './daily-tracker.repo';
+import {
+	getReflectionTags,
+	saveCadencePlansForDate,
+	saveDailyEntryAndLogs
+} from './daily-tracker.repo';
 import { parseTagsJson } from '~/domain/tags';
 import type {
 	LocalWorkspaceSnapshot,
@@ -28,9 +32,10 @@ export function bumpServerStructuralVersion(iso = new Date().toISOString()): voi
 	}
 }
 
-export function getServerMaxVersionIso(): string {
-	const row = db.get<{ maxIso: string | null }>(sql`
-		SELECT MAX(ts) AS maxIso FROM (
+export async function getServerMaxVersionIso(): Promise<string> {
+	await ensureDatabaseReady();
+	const rows = await db.execute<{ max_iso: string | null }>(sql`
+		SELECT MAX(ts) AS max_iso FROM (
 			SELECT MAX(updated_at_iso) AS ts FROM daily_entries
 			UNION ALL
 			SELECT MAX(updated_at_iso) AS ts FROM habit_logs
@@ -48,15 +53,19 @@ export function getServerMaxVersionIso(): string {
 			SELECT MAX(updated_at_iso) AS ts FROM calendar_events
 			UNION ALL
 			SELECT MAX(created_at_iso) AS ts FROM habit_lifecycle_events
-		)
+		) AS combined_timestamps
 	`);
 
-	const dbMax = row?.maxIso || '1970-01-01T00:00:00.000Z';
+	const dbMax = rows[0]?.max_iso || '1970-01-01T00:00:00.000Z';
 	return dbMax > lastStructuralMutationIso ? dbMax : lastStructuralMutationIso;
 }
 
-export function processClientSyncRequest(input: SyncRequestPayload, appVersion = '0.0.1'): ServerSyncResponse {
-	const versionBeforeMutations = getServerMaxVersionIso();
+export async function processClientSyncRequest(
+	input: SyncRequestPayload,
+	appVersion = '0.0.1'
+): Promise<ServerSyncResponse> {
+	await ensureDatabaseReady();
+	const versionBeforeMutations = await getServerMaxVersionIso();
 	const hadRemoteUpdatesBeforePush = Boolean(
 		input.knownServerVersionIso && versionBeforeMutations > input.knownServerVersionIso
 	);
@@ -68,100 +77,109 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 			a.queuedAtIso > b.queuedAtIso ? 1 : a.queuedAtIso < b.queuedAtIso ? -1 : 0
 		);
 
-		db.transaction((tx) => {
-			const preloadedHabitMap = new Map(getAllHabits().map((h) => [h.id, h]));
+		await db.transaction(async (tx) => {
+			const allHabitsList = await tx.select().from(habits).orderBy(asc(habits.sortOrder));
+			const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
 
 			for (const mutation of sortedMutations) {
 				try {
 					if (mutation.kind === 'SAVE_DAILY_ENTRY') {
-						saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
+						await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
-						saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
+						await saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_BOOK') {
-						tx.insert(books)
+						await tx
+							.insert(books)
 							.values(mutation.payload)
 							.onConflictDoUpdate({
 								target: books.id,
 								set: mutation.payload
-							})
-							.run();
+							});
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_BOOK') {
-						tx.delete(books).where(eq(books.id, mutation.payload.bookId)).run();
+						await tx.delete(books).where(eq(books.id, mutation.payload.bookId));
 						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_MEDIA') {
-						tx.insert(mediaLogs)
+						await tx
+							.insert(mediaLogs)
 							.values(mutation.payload)
 							.onConflictDoUpdate({
 								target: mediaLogs.id,
 								set: mutation.payload
-							})
-							.run();
+							});
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_MEDIA') {
-						tx.delete(mediaLogs).where(eq(mediaLogs.id, mutation.payload.mediaId)).run();
+						await tx
+							.delete(mediaLogs)
+							.where(eq(mediaLogs.id, mutation.payload.mediaId));
 						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_NOTE') {
-						tx.insert(notes)
+						await tx
+							.insert(notes)
 							.values(mutation.payload)
 							.onConflictDoUpdate({
 								target: notes.id,
 								set: mutation.payload
-							})
-							.run();
+							});
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_NOTE') {
-						tx.delete(notes).where(eq(notes.id, mutation.payload.noteId)).run();
+						await tx.delete(notes).where(eq(notes.id, mutation.payload.noteId));
 						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
-						tx.insert(calendarEvents)
+						await tx
+							.insert(calendarEvents)
 							.values(mutation.payload)
 							.onConflictDoUpdate({
 								target: calendarEvents.id,
 								set: mutation.payload
-							})
-							.run();
+							});
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
-						tx.delete(calendarEvents).where(eq(calendarEvents.id, mutation.payload.eventId)).run();
+						await tx
+							.delete(calendarEvents)
+							.where(eq(calendarEvents.id, mutation.payload.eventId));
 						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_HABIT') {
-						tx.insert(habits)
+						await tx
+							.insert(habits)
 							.values(mutation.payload)
 							.onConflictDoUpdate({
 								target: habits.id,
 								set: mutation.payload
-							})
-							.run();
+							});
 						preloadedHabitMap.set(mutation.payload.id, mutation.payload);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
-						tx.insert(habitLifecycleEvents)
+						await tx
+							.insert(habitLifecycleEvents)
 							.values(mutation.payload)
 							.onConflictDoUpdate({
 								target: habitLifecycleEvents.id,
 								set: mutation.payload
-							})
-							.run();
+							});
 						appliedMutationIds.push(mutation.id);
 					}
 				} catch (err) {
-					console.error(`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`, err);
+					console.error(
+						`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`,
+						err
+					);
 					appliedMutationIds.push(mutation.id);
 				}
 			}
 		});
 	}
 
-	const serverVersionIso = getServerMaxVersionIso();
+	const serverVersionIso = await getServerMaxVersionIso();
 	const serverTimeIso = new Date().toISOString();
-	const shouldSendFullWorkspace = !input.knownServerVersionIso || hadRemoteUpdatesBeforePush;
+	const shouldSendFullWorkspace =
+		!input.knownServerVersionIso || hadRemoteUpdatesBeforePush;
 
 	if (!shouldSendFullWorkspace) {
 		return {
@@ -174,17 +192,35 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 		};
 	}
 
-	const allEntriesRaw = db
-		.select()
-		.from(dailyEntries)
-		.orderBy(desc(dailyEntries.dateIso))
-		.all();
-
-	const allLogsRaw = db
-		.select()
-		.from(habitLogs)
-		.orderBy(desc(habitLogs.dateIso))
-		.all();
+	const [
+		allEntriesRaw,
+		allLogsRaw,
+		allHabits,
+		availableTags,
+		allCadencePlans,
+		allBooks,
+		allMedia,
+		allNotes,
+		allCalendarEvents,
+		allLifecycleEvents
+	] = await Promise.all([
+		db.select().from(dailyEntries).orderBy(desc(dailyEntries.dateIso)),
+		db.select().from(habitLogs).orderBy(desc(habitLogs.dateIso)),
+		getAllHabits(),
+		getReflectionTags(),
+		db.select().from(cadencePlans).orderBy(asc(cadencePlans.dateIso)),
+		db.select().from(books).orderBy(desc(books.createdAtIso)),
+		db.select().from(mediaLogs).orderBy(desc(mediaLogs.createdAtIso)),
+		db
+			.select()
+			.from(notes)
+			.orderBy(desc(notes.isPinned), desc(notes.updatedAtIso)),
+		db.select().from(calendarEvents).orderBy(desc(calendarEvents.createdAtIso)),
+		db
+			.select()
+			.from(habitLifecycleEvents)
+			.orderBy(desc(habitLifecycleEvents.createdAtIso))
+	]);
 
 	const mappedEntries = allEntriesRaw.map((e) => ({
 		id: e.id,
@@ -215,28 +251,16 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 	const fullWorkspace: LocalWorkspaceSnapshot = {
 		versionIso: serverVersionIso,
 		syncedAtIso: serverTimeIso,
-		habits: getAllHabits(),
-		availableTags: getReflectionTags(),
+		habits: allHabits,
+		availableTags,
 		entries: mappedEntries,
 		logs: mappedLogs,
-		cadencePlans: db.select().from(cadencePlans).orderBy(asc(cadencePlans.dateIso)).all(),
-		books: db.select().from(books).orderBy(desc(books.createdAtIso)).all(),
-		media: db.select().from(mediaLogs).orderBy(desc(mediaLogs.createdAtIso)).all(),
-		notes: db
-			.select()
-			.from(notes)
-			.orderBy(desc(notes.isPinned), desc(notes.updatedAtIso))
-			.all(),
-		calendarEvents: db
-			.select()
-			.from(calendarEvents)
-			.orderBy(desc(calendarEvents.createdAtIso))
-			.all(),
-		lifecycleEvents: db
-			.select()
-			.from(habitLifecycleEvents)
-			.orderBy(desc(habitLifecycleEvents.createdAtIso))
-			.all()
+		cadencePlans: allCadencePlans,
+		books: allBooks,
+		media: allMedia,
+		notes: allNotes,
+		calendarEvents: allCalendarEvents,
+		lifecycleEvents: allLifecycleEvents
 	};
 
 	return {

@@ -1,26 +1,24 @@
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import * as schema from './schema';
-import fs from 'node:fs';
-import path from 'node:path';
 
-const dbPath = process.env.DATABASE_URL || './data/local.db';
+const connectionString =
+	process.env.DATABASE_URL ||
+	'postgresql://postgres:postgres@localhost:5432/personal_os';
 
-if (dbPath !== ':memory:') {
-	const dir = path.dirname(dbPath);
-	if (!fs.existsSync(dir)) {
-		fs.mkdirSync(dir, { recursive: true });
-	}
-}
+export const pgClient = postgres(connectionString, {
+	max: 10,
+	idle_timeout: 20,
+	connect_timeout: 10,
+	onnotice: () => {}
+});
 
-const client = new Database(dbPath);
-client.pragma('journal_mode = WAL');
-client.pragma('synchronous = NORMAL');
-client.pragma('busy_timeout = 5000');
-client.pragma('foreign_keys = ON');
+export const db = drizzle(pgClient, { schema });
 
-function ensureProductionSchema(sqlite: Database.Database): void {
-	sqlite.exec(`
+let schemaInitPromise: Promise<void> | null = null;
+
+async function bootstrapPostgreSqlSchema(): Promise<void> {
+	await pgClient.unsafe(`
 		CREATE TABLE IF NOT EXISTS habits (
 			id TEXT PRIMARY KEY,
 			parent_id TEXT,
@@ -28,7 +26,7 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 			category TEXT NOT NULL DEFAULT 'عمومی',
 			tracking_mode TEXT NOT NULL DEFAULT 'tiered',
 			time_slot TEXT NOT NULL DEFAULT 'day',
-			is_situational INTEGER NOT NULL DEFAULT 0,
+			is_situational BOOLEAN NOT NULL DEFAULT FALSE,
 			status TEXT NOT NULL DEFAULT 'active',
 			schedule_label TEXT,
 			notes TEXT,
@@ -37,7 +35,7 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 			gold_desc TEXT,
 			emergency_min_desc TEXT,
 			default_intervals INTEGER NOT NULL DEFAULT 2,
-			default_minutes_per_interval REAL NOT NULL DEFAULT 10,
+			default_minutes_per_interval DOUBLE PRECISION NOT NULL DEFAULT 10,
 			cadence_window_minutes INTEGER NOT NULL DEFAULT 60,
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			created_at_iso TEXT NOT NULL,
@@ -49,7 +47,7 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 			date_iso TEXT NOT NULL,
 			habit_id TEXT NOT NULL,
 			planned_intervals INTEGER NOT NULL,
-			planned_minutes_per_interval REAL NOT NULL,
+			planned_minutes_per_interval DOUBLE PRECISION NOT NULL,
 			cadence_window_minutes INTEGER NOT NULL DEFAULT 60,
 			updated_at_iso TEXT
 		);
@@ -73,10 +71,10 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 			achieved_rule_snapshot TEXT,
 			habit_snapshot_json TEXT,
 			completed_intervals INTEGER,
-			actual_minutes_per_interval REAL,
-			total_actual_minutes REAL,
+			actual_minutes_per_interval DOUBLE PRECISION,
+			total_actual_minutes DOUBLE PRECISION,
 			planned_intervals_snapshot INTEGER,
-			planned_minutes_snapshot REAL,
+			planned_minutes_snapshot DOUBLE PRECISION,
 			updated_at_iso TEXT
 		);
 
@@ -129,11 +127,11 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 			id TEXT PRIMARY KEY,
 			title TEXT NOT NULL,
 			event_type TEXT NOT NULL DEFAULT 'occasion',
-			is_annual INTEGER NOT NULL DEFAULT 0,
+			is_annual BOOLEAN NOT NULL DEFAULT FALSE,
 			date_iso TEXT,
 			jalali_month INTEGER NOT NULL,
 			jalali_day INTEGER NOT NULL,
-			is_completed INTEGER NOT NULL DEFAULT 0,
+			is_completed BOOLEAN NOT NULL DEFAULT FALSE,
 			notes TEXT,
 			created_at_iso TEXT NOT NULL,
 			updated_at_iso TEXT
@@ -144,7 +142,7 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 			title TEXT NOT NULL DEFAULT '',
 			content TEXT NOT NULL,
 			category TEXT NOT NULL DEFAULT 'عمومی',
-			is_pinned INTEGER NOT NULL DEFAULT 0,
+			is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at_iso TEXT NOT NULL,
 			updated_at_iso TEXT NOT NULL
 		);
@@ -162,9 +160,7 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 			expires_at_iso TEXT NOT NULL,
 			last_seen_at_iso TEXT NOT NULL
 		);
-	`);
 
-	sqlite.exec(`
 		CREATE INDEX IF NOT EXISTS idx_habits_parent_id ON habits(parent_id);
 		CREATE INDEX IF NOT EXISTS idx_habits_updated_at ON habits(updated_at_iso);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_cadence_plans_date_habit ON cadence_plans(date_iso, habit_id);
@@ -186,6 +182,12 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 	`);
 }
 
-ensureProductionSchema(client);
-
-export const db = drizzle(client, { schema });
+export async function ensureDatabaseReady(): Promise<void> {
+	if (!schemaInitPromise) {
+		schemaInitPromise = bootstrapPostgreSqlSchema().catch((err) => {
+			schemaInitPromise = null;
+			throw err;
+		});
+	}
+	return schemaInitPromise;
+}

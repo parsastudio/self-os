@@ -16,10 +16,10 @@ export default defineEventHandler(async (event) => {
 
 	if (parsed.data.action === 'inject') {
 		const dataset = buildDemoSeedDataset();
-		const res = importDatabaseFromJson(dataset, 'merge');
+		const res = await importDatabaseFromJson(dataset, 'merge');
 		return { ok: true, count: res.importedRecordsCount };
 	}
 
-	const res = removeDemoSeedFromServer();
+	const res = await removeDemoSeedFromServer();
 	return { ok: true, count: res.removedRecordsCount };
 });

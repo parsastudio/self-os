@@ -9,7 +9,7 @@ import {
 } from '../../repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
-	if (isPasswordConfigured()) {
+	if (await isPasswordConfigured()) {
 		throw createError({ statusCode: 400, statusMessage: 'رمز عبور قبلاً تنظیم شده است' });
 	}
 
@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
 	}
 
 	await setupInitialPassword(parsed.data.password);
-	const session = createAuthSession();
+	const session = await createAuthSession();
 	const isSecure = process.env.NODE_ENV === 'production';
 
 	setCookie(event, SESSION_COOKIE_NAME, session.token, getSessionCookieOptions(isSecure));

@@ -6,14 +6,14 @@ import {
 	SESSION_COOKIE_NAME
 } from '../../repositories/auth.repo';
 
-export default defineEventHandler((event) => {
-	const configured = isPasswordConfigured();
+export default defineEventHandler(async (event) => {
+	const configured = await isPasswordConfigured();
 	const token = getCookie(event, SESSION_COOKIE_NAME);
 	let isAuthenticated = false;
 	const isSecure = process.env.NODE_ENV === 'production';
 
 	if (configured && token) {
-		const status = validateAndExtendSession(token, true);
+		const status = await validateAndExtendSession(token, true);
 		isAuthenticated = status.valid;
 
 		if (status.valid) {

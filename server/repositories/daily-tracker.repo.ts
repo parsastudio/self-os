@@ -1,4 +1,5 @@
-import { db } from '../database/index';
+import { and, asc, eq } from 'drizzle-orm';
+import { db, ensureDatabaseReady } from '../database/index';
 import {
 	cadencePlans,
 	dailyEntries,
@@ -6,7 +7,6 @@ import {
 	habits,
 	reflectionTags
 } from '../database/schema';
-import { and, asc, eq } from 'drizzle-orm';
 import { getAllHabits } from './habits.repo';
 import { bumpServerStructuralVersion } from './sync.repo';
 import {
@@ -21,12 +21,12 @@ import type {
 	SaveDailyEntryInput
 } from '~/domain/schemas';
 
-export function getReflectionTags(): string[] {
-	const rows = db
+export async function getReflectionTags(): Promise<string[]> {
+	await ensureDatabaseReady();
+	const rows = await db
 		.select()
 		.from(reflectionTags)
-		.orderBy(asc(reflectionTags.sortOrder))
-		.all();
+		.orderBy(asc(reflectionTags.sortOrder));
 
 	if (rows.length === 0) {
 		return [...DEFAULT_REFLECTION_TAGS];
@@ -34,29 +34,32 @@ export function getReflectionTags(): string[] {
 	return rows.map((r) => r.label);
 }
 
-type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
+export type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
 
-export function saveDailyEntryAndLogs(
+export async function saveDailyEntryAndLogs(
 	input: SaveDailyEntryInput,
 	preloadedHabitMap?: ReadonlyMap<string, HabitEntity>,
 	txExecutor?: DbExecutor
-): void {
+): Promise<void> {
+	await ensureDatabaseReady();
 	const nowIso = new Date().toISOString();
 	const entryUpdatedAtIso = input.updatedAtIso || nowIso;
 	const normalizedJournal = input.journalText?.trim() ? input.journalText.trim() : null;
 	const habitMap =
-		preloadedHabitMap ?? new Map(getAllHabits().map((h) => [h.id, h]));
+		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
 
-	const applyOperations = (tx: DbExecutor) => {
-		const existing = tx
+	const applyOperations = async (tx: DbExecutor) => {
+		const existingRows = await tx
 			.select()
 			.from(dailyEntries)
 			.where(eq(dailyEntries.dateIso, input.dateIso))
-			.get();
+			.limit(1);
+		const existing = existingRows[0];
 
 		if (existing) {
 			if (!input.updatedAtIso || entryUpdatedAtIso >= existing.updatedAtIso) {
-				tx.update(dailyEntries)
+				await tx
+					.update(dailyEntries)
 					.set({
 						dayStatus: input.dayStatus,
 						reflectionNote: input.reflectionNote,
@@ -64,35 +67,31 @@ export function saveDailyEntryAndLogs(
 						tagsJson: JSON.stringify(input.tags),
 						updatedAtIso: entryUpdatedAtIso
 					})
-					.where(eq(dailyEntries.dateIso, input.dateIso))
-					.run();
+					.where(eq(dailyEntries.dateIso, input.dateIso));
 			}
 		} else {
-			tx.insert(dailyEntries)
-				.values({
-					id: `entry:${input.dateIso}`,
-					dateIso: input.dateIso,
-					dayStatus: input.dayStatus,
-					reflectionNote: input.reflectionNote,
-					journalText: normalizedJournal,
-					tagsJson: JSON.stringify(input.tags),
-					updatedAtIso: entryUpdatedAtIso
-				})
-				.run();
+			await tx.insert(dailyEntries).values({
+				id: `entry:${input.dateIso}`,
+				dateIso: input.dateIso,
+				dayStatus: input.dayStatus,
+				reflectionNote: input.reflectionNote,
+				journalText: normalizedJournal,
+				tagsJson: JSON.stringify(input.tags),
+				updatedAtIso: entryUpdatedAtIso
+			});
 		}
 
 		if (isDailyEntryEmpty(input)) {
-			tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso)).run();
-			tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso)).run();
+			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
+			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
 			bumpServerStructuralVersion(entryUpdatedAtIso);
 			return;
 		}
 
-		const previousLogs = tx
+		const previousLogs = await tx
 			.select()
 			.from(habitLogs)
-			.where(eq(habitLogs.dateIso, input.dateIso))
-			.all();
+			.where(eq(habitLogs.dateIso, input.dateIso));
 		const previousLogByHabitId = new Map(previousLogs.map((l) => [l.habitId, l]));
 
 		for (const log of input.logs) {
@@ -105,7 +104,7 @@ export function saveDailyEntryAndLogs(
 
 			if (isUnloggedTiered) {
 				if (prev) {
-					tx.delete(habitLogs).where(eq(habitLogs.id, prev.id)).run();
+					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
 					bumpServerStructuralVersion(entryUpdatedAtIso);
 				}
 				continue;
@@ -143,7 +142,8 @@ export function saveDailyEntryAndLogs(
 					: (prev?.habitSnapshotJson ?? null));
 
 			if (prev) {
-				tx.update(habitLogs)
+				await tx
+					.update(habitLogs)
 					.set({
 						habitTitleSnapshot,
 						achievedTier: log.achievedTier,
@@ -158,49 +158,49 @@ export function saveDailyEntryAndLogs(
 							log.plannedMinutesSnapshot ?? prev.plannedMinutesSnapshot ?? null,
 						updatedAtIso: logUpdatedAt
 					})
-					.where(eq(habitLogs.id, prev.id))
-					.run();
+					.where(eq(habitLogs.id, prev.id));
 			} else {
-				tx.insert(habitLogs)
-					.values({
-						id: `log:${input.dateIso}:${log.habitId}`,
-						dateIso: input.dateIso,
-						habitId: log.habitId,
-						habitTitleSnapshot,
-						achievedTier: log.achievedTier,
-						achievedRuleSnapshot,
-						habitSnapshotJson,
-						completedIntervals: log.completedIntervals,
-						actualMinutesPerInterval: log.actualMinutesPerInterval,
-						totalActualMinutes: log.totalActualMinutes,
-						plannedIntervalsSnapshot: log.plannedIntervalsSnapshot ?? null,
-						plannedMinutesSnapshot: log.plannedMinutesSnapshot ?? null,
-						updatedAtIso: logUpdatedAt
-					})
-					.run();
+				await tx.insert(habitLogs).values({
+					id: `log:${input.dateIso}:${log.habitId}`,
+					dateIso: input.dateIso,
+					habitId: log.habitId,
+					habitTitleSnapshot,
+					achievedTier: log.achievedTier,
+					achievedRuleSnapshot,
+					habitSnapshotJson,
+					completedIntervals: log.completedIntervals,
+					actualMinutesPerInterval: log.actualMinutesPerInterval,
+					totalActualMinutes: log.totalActualMinutes,
+					plannedIntervalsSnapshot: log.plannedIntervalsSnapshot ?? null,
+					plannedMinutesSnapshot: log.plannedMinutesSnapshot ?? null,
+					updatedAtIso: logUpdatedAt
+				});
 			}
 		}
 	};
 
 	if (txExecutor) {
-		applyOperations(txExecutor);
+		await applyOperations(txExecutor);
 	} else {
-		db.transaction((tx) => applyOperations(tx));
+		await db.transaction(async (tx) => {
+			await applyOperations(tx);
+		});
 	}
 }
 
-export function saveCadencePlansForDate(
+export async function saveCadencePlansForDate(
 	input: SaveCadencePlanBatch,
 	preloadedHabitMap?: Map<string, HabitEntity>,
 	txExecutor?: DbExecutor
-): void {
+): Promise<void> {
+	await ensureDatabaseReady();
 	const nowIso = new Date().toISOString();
 	const habitMap =
-		preloadedHabitMap ?? new Map(getAllHabits().map((h) => [h.id, h]));
+		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
 
-	const applyOperations = (tx: DbExecutor) => {
+	const applyOperations = async (tx: DbExecutor) => {
 		for (const item of input.items) {
-			const existing = tx
+			const existingRows = await tx
 				.select()
 				.from(cadencePlans)
 				.where(
@@ -209,30 +209,29 @@ export function saveCadencePlansForDate(
 						eq(cadencePlans.habitId, item.habitId)
 					)
 				)
-				.get();
+				.limit(1);
+			const existing = existingRows[0];
 
 			if (existing) {
-				tx.update(cadencePlans)
+				await tx
+					.update(cadencePlans)
 					.set({
 						plannedIntervals: item.plannedIntervals,
 						plannedMinutesPerInterval: item.plannedMinutesPerInterval,
 						cadenceWindowMinutes: item.cadenceWindowMinutes,
 						updatedAtIso: nowIso
 					})
-					.where(eq(cadencePlans.id, existing.id))
-					.run();
+					.where(eq(cadencePlans.id, existing.id));
 			} else {
-				tx.insert(cadencePlans)
-					.values({
-						id: `plan:${input.targetDateIso}:${item.habitId}`,
-						dateIso: input.targetDateIso,
-						habitId: item.habitId,
-						plannedIntervals: item.plannedIntervals,
-						plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: nowIso
-					})
-					.run();
+				await tx.insert(cadencePlans).values({
+					id: `plan:${input.targetDateIso}:${item.habitId}`,
+					dateIso: input.targetDateIso,
+					habitId: item.habitId,
+					plannedIntervals: item.plannedIntervals,
+					plannedMinutesPerInterval: item.plannedMinutesPerInterval,
+					cadenceWindowMinutes: item.cadenceWindowMinutes,
+					updatedAtIso: nowIso
+				});
 			}
 
 			const habit = habitMap.get(item.habitId);
@@ -242,15 +241,15 @@ export function saveCadencePlansForDate(
 					habit.defaultMinutesPerInterval !== item.plannedMinutesPerInterval ||
 					habit.cadenceWindowMinutes !== item.cadenceWindowMinutes)
 			) {
-				tx.update(habits)
+				await tx
+					.update(habits)
 					.set({
 						defaultIntervals: item.plannedIntervals,
 						defaultMinutesPerInterval: item.plannedMinutesPerInterval,
 						cadenceWindowMinutes: item.cadenceWindowMinutes,
 						updatedAtIso: nowIso
 					})
-					.where(eq(habits.id, habit.id))
-					.run();
+					.where(eq(habits.id, habit.id));
 
 				habitMap.set(habit.id, {
 					...habit,
@@ -264,8 +263,10 @@ export function saveCadencePlansForDate(
 	};
 
 	if (txExecutor) {
-		applyOperations(txExecutor);
+		await applyOperations(txExecutor);
 	} else {
-		db.transaction((tx) => applyOperations(tx));
+		await db.transaction(async (tx) => {
+			await applyOperations(tx);
+		});
 	}
 }

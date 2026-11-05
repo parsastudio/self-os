@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
 		const config = useRuntimeConfig();
 		const appVersion = (config.public?.appVersion as string) || '0.0.1';
 
-		return processClientSyncRequest(parsed.data, appVersion);
+		return await processClientSyncRequest(parsed.data, appVersion);
 	} catch (err: unknown) {
 		const error = err as { statusCode?: number; statusMessage?: string; message?: string };
 		throw createError({

@@ -89,7 +89,7 @@ export default defineEventHandler(async (event) => {
 	}
 
 	failedLoginAttemptsByIp.delete(ip);
-	const session = createAuthSession();
+	const session = await createAuthSession();
 	const isSecure = process.env.NODE_ENV === 'production';
 
 	setCookie(event, SESSION_COOKIE_NAME, session.token, getSessionCookieOptions(isSecure));

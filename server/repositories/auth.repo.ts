@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import util from 'node:util';
-import { db } from '../database/index';
-import { appAuth, authSessions } from '../database/schema';
 import { eq, lt, ne } from 'drizzle-orm';
+import { db, ensureDatabaseReady } from '../database/index';
+import { appAuth, authSessions } from '../database/schema';
 
 const scryptAsync = util.promisify(crypto.scrypt);
 
@@ -32,47 +32,51 @@ function hashSessionToken(rawToken: string): string {
 	return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
-export function isPasswordConfigured(): boolean {
-	const record = db
+export async function isPasswordConfigured(): Promise<boolean> {
+	await ensureDatabaseReady();
+	const rows = await db
 		.select()
 		.from(appAuth)
 		.where(eq(appAuth.id, AUTH_SINGLETON_ID))
-		.get();
-	return Boolean(record);
+		.limit(1);
+	return Boolean(rows[0]);
 }
 
 export async function setupInitialPassword(password: string): Promise<void> {
+	await ensureDatabaseReady();
 	const saltHex = crypto.randomBytes(16).toString('hex');
 	const passwordHash = await hashPasswordWithSalt(password, saltHex);
 	const nowIso = new Date().toISOString();
 
-	db.transaction((tx) => {
-		const existing = tx
+	await db.transaction(async (tx) => {
+		const existing = await tx
 			.select()
 			.from(appAuth)
 			.where(eq(appAuth.id, AUTH_SINGLETON_ID))
-			.get();
-		if (existing) {
+			.limit(1);
+
+		if (existing[0]) {
 			throw new Error('رمز عبور قبلاً تنظیم شده است');
 		}
-		tx.insert(appAuth)
-			.values({
-				id: AUTH_SINGLETON_ID,
-				passwordHash,
-				passwordSalt: saltHex,
-				updatedAtIso: nowIso
-			})
-			.run();
+
+		await tx.insert(appAuth).values({
+			id: AUTH_SINGLETON_ID,
+			passwordHash,
+			passwordSalt: saltHex,
+			updatedAtIso: nowIso
+		});
 	});
 }
 
 export async function verifyPassword(password: string): Promise<boolean> {
-	const record = db
+	await ensureDatabaseReady();
+	const rows = await db
 		.select()
 		.from(appAuth)
 		.where(eq(appAuth.id, AUTH_SINGLETON_ID))
-		.get();
+		.limit(1);
 
+	const record = rows[0];
 	if (!record) return false;
 
 	const candidateHash = await hashPasswordWithSalt(password, record.passwordSalt);
@@ -87,79 +91,81 @@ export async function changeMasterPassword(
 	newPassword: string,
 	keepRawToken?: string | null
 ): Promise<void> {
+	await ensureDatabaseReady();
 	const saltHex = crypto.randomBytes(16).toString('hex');
 	const passwordHash = await hashPasswordWithSalt(newPassword, saltHex);
 	const nowIso = new Date().toISOString();
 
-	db.transaction((tx) => {
-		tx.update(appAuth)
+	await db.transaction(async (tx) => {
+		await tx
+			.update(appAuth)
 			.set({
 				passwordHash,
 				passwordSalt: saltHex,
 				updatedAtIso: nowIso
 			})
-			.where(eq(appAuth.id, AUTH_SINGLETON_ID))
-			.run();
+			.where(eq(appAuth.id, AUTH_SINGLETON_ID));
 
 		if (keepRawToken) {
 			const currentSessionId = hashSessionToken(keepRawToken);
-			tx.delete(authSessions).where(ne(authSessions.id, currentSessionId)).run();
+			await tx.delete(authSessions).where(ne(authSessions.id, currentSessionId));
 		} else {
-			tx.delete(authSessions).run();
+			await tx.delete(authSessions);
 		}
 	});
 }
 
-export function createAuthSession(): {
+export async function createAuthSession(): Promise<{
 	token: string;
 	expiresAt: Date;
-} {
+}> {
+	await ensureDatabaseReady();
 	const now = new Date();
 	const nowIso = now.toISOString();
 	const expiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
 	const expiresAtIso = expiresAt.toISOString();
 
-	db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso)).run();
+	await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 
 	const rawToken = crypto.randomBytes(32).toString('hex');
 	const sessionId = hashSessionToken(rawToken);
 
-	db.insert(authSessions)
-		.values({
-			id: sessionId,
-			createdAtIso: nowIso,
-			expiresAtIso,
-			lastSeenAtIso: nowIso
-		})
-		.run();
+	await db.insert(authSessions).values({
+		id: sessionId,
+		createdAtIso: nowIso,
+		expiresAtIso,
+		lastSeenAtIso: nowIso
+	});
 
 	return { token: rawToken, expiresAt };
 }
 
-export function validateAndExtendSession(
+export async function validateAndExtendSession(
 	rawToken: string,
 	forceRefresh = false
-): {
+): Promise<{
 	valid: boolean;
 	shouldRefreshCookie: boolean;
 	expiresAt: Date;
-} {
+}> {
+	await ensureDatabaseReady();
 	const now = new Date();
 	const nowIso = now.toISOString();
 	const sessionId = hashSessionToken(rawToken);
 
-	const session = db
+	const rows = await db
 		.select()
 		.from(authSessions)
 		.where(eq(authSessions.id, sessionId))
-		.get();
+		.limit(1);
 
+	const session = rows[0];
 	if (!session) {
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 
 	if (session.expiresAtIso <= nowIso) {
-		db.delete(authSessions).where(eq(authSessions.id, sessionId)).run();
+		await db.delete(authSessions).where(eq(authSessions.id, sessionId));
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 
@@ -169,13 +175,13 @@ export function validateAndExtendSession(
 
 	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1;
 	if (shouldRefreshCookie) {
-		db.update(authSessions)
+		await db
+			.update(authSessions)
 			.set({
 				expiresAtIso: newExpiresAt.toISOString(),
 				lastSeenAtIso: nowIso
 			})
-			.where(eq(authSessions.id, sessionId))
-			.run();
+			.where(eq(authSessions.id, sessionId));
 	}
 
 	return {
@@ -185,7 +191,8 @@ export function validateAndExtendSession(
 	};
 }
 
-export function revokeAuthSession(rawToken: string): void {
+export async function revokeAuthSession(rawToken: string): Promise<void> {
+	await ensureDatabaseReady();
 	const sessionId = hashSessionToken(rawToken);
-	db.delete(authSessions).where(eq(authSessions.id, sessionId)).run();
+	await db.delete(authSessions).where(eq(authSessions.id, sessionId));
 }

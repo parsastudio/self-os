@@ -1,6 +1,14 @@
-import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+	boolean,
+	doublePrecision,
+	index,
+	integer,
+	pgTable,
+	text,
+	uniqueIndex
+} from 'drizzle-orm/pg-core';
 
-export const habits = sqliteTable(
+export const habits = pgTable(
 	'habits',
 	{
 		id: text('id').primaryKey(),
@@ -13,7 +21,7 @@ export const habits = sqliteTable(
 		timeSlot: text('time_slot', { enum: ['morning', 'day', 'night'] })
 			.notNull()
 			.default('day'),
-		isSituational: integer('is_situational', { mode: 'boolean' }).notNull().default(false),
+		isSituational: boolean('is_situational').notNull().default(false),
 		status: text('status', { enum: ['active', 'paused', 'archived'] })
 			.notNull()
 			.default('active'),
@@ -24,7 +32,9 @@ export const habits = sqliteTable(
 		goldDesc: text('gold_desc'),
 		emergencyMinDesc: text('emergency_min_desc'),
 		defaultIntervals: integer('default_intervals').notNull().default(2),
-		defaultMinutesPerInterval: real('default_minutes_per_interval').notNull().default(10),
+		defaultMinutesPerInterval: doublePrecision('default_minutes_per_interval')
+			.notNull()
+			.default(10),
 		cadenceWindowMinutes: integer('cadence_window_minutes').notNull().default(60),
 		sortOrder: integer('sort_order').notNull().default(0),
 		createdAtIso: text('created_at_iso').notNull(),
@@ -36,14 +46,14 @@ export const habits = sqliteTable(
 	]
 );
 
-export const cadencePlans = sqliteTable(
+export const cadencePlans = pgTable(
 	'cadence_plans',
 	{
 		id: text('id').primaryKey(),
 		dateIso: text('date_iso').notNull(),
 		habitId: text('habit_id').notNull(),
 		plannedIntervals: integer('planned_intervals').notNull(),
-		plannedMinutesPerInterval: real('planned_minutes_per_interval').notNull(),
+		plannedMinutesPerInterval: doublePrecision('planned_minutes_per_interval').notNull(),
 		cadenceWindowMinutes: integer('cadence_window_minutes').notNull().default(60),
 		updatedAtIso: text('updated_at_iso')
 	},
@@ -53,7 +63,7 @@ export const cadencePlans = sqliteTable(
 	]
 );
 
-export const dailyEntries = sqliteTable(
+export const dailyEntries = pgTable(
 	'daily_entries',
 	{
 		id: text('id').primaryKey(),
@@ -69,7 +79,7 @@ export const dailyEntries = sqliteTable(
 	(t) => [index('idx_daily_entries_updated_at').on(t.updatedAtIso)]
 );
 
-export const habitLogs = sqliteTable(
+export const habitLogs = pgTable(
 	'habit_logs',
 	{
 		id: text('id').primaryKey(),
@@ -80,10 +90,10 @@ export const habitLogs = sqliteTable(
 		achievedRuleSnapshot: text('achieved_rule_snapshot'),
 		habitSnapshotJson: text('habit_snapshot_json'),
 		completedIntervals: integer('completed_intervals'),
-		actualMinutesPerInterval: real('actual_minutes_per_interval'),
-		totalActualMinutes: real('total_actual_minutes'),
+		actualMinutesPerInterval: doublePrecision('actual_minutes_per_interval'),
+		totalActualMinutes: doublePrecision('total_actual_minutes'),
 		plannedIntervalsSnapshot: integer('planned_intervals_snapshot'),
-		plannedMinutesSnapshot: real('planned_minutes_snapshot'),
+		plannedMinutesSnapshot: doublePrecision('planned_minutes_snapshot'),
 		updatedAtIso: text('updated_at_iso')
 	},
 	(t) => [
@@ -93,7 +103,7 @@ export const habitLogs = sqliteTable(
 	]
 );
 
-export const habitLifecycleEvents = sqliteTable(
+export const habitLifecycleEvents = pgTable(
 	'habit_lifecycle_events',
 	{
 		id: text('id').primaryKey(),
@@ -120,13 +130,13 @@ export const habitLifecycleEvents = sqliteTable(
 	(t) => [index('idx_lifecycle_events_habit_id').on(t.habitId)]
 );
 
-export const reflectionTags = sqliteTable('reflection_tags', {
+export const reflectionTags = pgTable('reflection_tags', {
 	id: text('id').primaryKey(),
 	label: text('label').notNull().unique(),
 	sortOrder: integer('sort_order').notNull().default(0)
 });
 
-export const books = sqliteTable(
+export const books = pgTable(
 	'books',
 	{
 		id: text('id').primaryKey(),
@@ -148,7 +158,7 @@ export const books = sqliteTable(
 	]
 );
 
-export const mediaLogs = sqliteTable(
+export const mediaLogs = pgTable(
 	'media_logs',
 	{
 		id: text('id').primaryKey(),
@@ -172,7 +182,7 @@ export const mediaLogs = sqliteTable(
 	]
 );
 
-export const calendarEvents = sqliteTable(
+export const calendarEvents = pgTable(
 	'calendar_events',
 	{
 		id: text('id').primaryKey(),
@@ -182,11 +192,11 @@ export const calendarEvents = sqliteTable(
 		})
 			.notNull()
 			.default('occasion'),
-		isAnnual: integer('is_annual', { mode: 'boolean' }).notNull().default(false),
+		isAnnual: boolean('is_annual').notNull().default(false),
 		dateIso: text('date_iso'),
 		jalaliMonth: integer('jalali_month').notNull(),
 		jalaliDay: integer('jalali_day').notNull(),
-		isCompleted: integer('is_completed', { mode: 'boolean' }).notNull().default(false),
+		isCompleted: boolean('is_completed').notNull().default(false),
 		notes: text('notes'),
 		createdAtIso: text('created_at_iso').notNull(),
 		updatedAtIso: text('updated_at_iso')
@@ -198,28 +208,28 @@ export const calendarEvents = sqliteTable(
 	]
 );
 
-export const notes = sqliteTable(
+export const notes = pgTable(
 	'notes',
 	{
 		id: text('id').primaryKey(),
 		title: text('title').notNull().default(''),
 		content: text('content').notNull(),
 		category: text('category').notNull().default('عمومی'),
-		isPinned: integer('is_pinned', { mode: 'boolean' }).notNull().default(false),
+		isPinned: boolean('is_pinned').notNull().default(false),
 		createdAtIso: text('created_at_iso').notNull(),
 		updatedAtIso: text('updated_at_iso').notNull()
 	},
 	(t) => [index('idx_notes_updated_at').on(t.updatedAtIso)]
 );
 
-export const appAuth = sqliteTable('app_auth', {
+export const appAuth = pgTable('app_auth', {
 	id: text('id').primaryKey(),
 	passwordHash: text('password_hash').notNull(),
 	passwordSalt: text('password_salt').notNull(),
 	updatedAtIso: text('updated_at_iso').notNull()
 });
 
-export const authSessions = sqliteTable(
+export const authSessions = pgTable(
 	'auth_sessions',
 	{
 		id: text('id').primaryKey(),

@@ -6,7 +6,7 @@ import {
 	SESSION_COOKIE_NAME
 } from '../repositories/auth.repo';
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
 	const pathname = event.path || '';
 
 	const isPublicAuthApi =
@@ -28,14 +28,14 @@ export default defineEventHandler((event) => {
 		return;
 	}
 
-	const passwordConfigured = isPasswordConfigured();
+	const passwordConfigured = await isPasswordConfigured();
 	const rawToken = getCookie(event, SESSION_COOKIE_NAME) || null;
 	let isAuthenticated = false;
 
 	const isSecure = process.env.NODE_ENV === 'production';
 
 	if (passwordConfigured && rawToken) {
-		const sessionStatus = validateAndExtendSession(rawToken);
+		const sessionStatus = await validateAndExtendSession(rawToken);
 		isAuthenticated = sessionStatus.valid;
 
 		if (sessionStatus.valid && sessionStatus.shouldRefreshCookie) {

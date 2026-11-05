@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
 		});
 	}
 
-	const result = importDatabaseFromJson(parsed.data, 'merge');
+	const result = await importDatabaseFromJson(parsed.data, 'merge');
 	return {
 		success: true,
 		importedCount: result.importedRecordsCount,

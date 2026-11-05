@@ -1,17 +1,37 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: personal-os-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-personal_os}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-personal_os}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   personal-os:
-    container_name: personal-os
+    container_name: personal-os-app
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${APP_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - NITRO_HOST=0.0.0.0
       - NITRO_PORT=3000
-      - DATABASE_URL=/app/data/local.db
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/personal_os}
       - TZ=Asia/Tehran
-    volumes:
-      - ./data:/app/data
+
+volumes:
+  pgdata:
