@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { useSyncEngine } from '~/composables/useSyncEngine';
-import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, WifiOff } from 'lucide-vue-next';
+import { toPersianDigits } from '~/domain/calendar';
+import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, Timer, WifiOff } from 'lucide-vue-next';
 
 definePageMeta({
 	layout: false
@@ -24,14 +25,79 @@ function resolvePostLoginPath(): string {
 
 const password = ref('');
 const confirmPassword = ref('');
+const honeypotWebsite = ref('');
 const showPassword = ref(false);
 const isSubmitting = ref(false);
 const errorMessage = ref<string | null>(null);
+const failedAttempts = ref(0);
+const activeAttemptNumber = ref(0);
+const countdownRemainingMs = ref(0);
+const countdownTotalMs = ref(0);
+let countdownInterval: ReturnType<typeof setInterval> | null = null;
+
 const isClientOffline = computed(() => !syncEngine.isOnline.value);
+
+const showMinimalTimer = computed(
+	() => activeAttemptNumber.value >= 4 && countdownRemainingMs.value > 0
+);
+
+const formattedCountdownSeconds = computed(() => {
+	const secs = (countdownRemainingMs.value / 1000).toFixed(1);
+	return toPersianDigits(secs);
+});
+
+const timerProgressPercent = computed(() => {
+	if (countdownTotalMs.value <= 0) return 0;
+	return Math.max(0, Math.min(100, (countdownRemainingMs.value / countdownTotalMs.value) * 100));
+});
+
+function resolveAttemptDelayMs(attemptNumber: number): number {
+	if (attemptNumber <= 1) return 0;
+	if (attemptNumber === 2) return 2000;
+	if (attemptNumber === 3) return 3000;
+	return 5000;
+}
+
+function stopCountdownTimer() {
+	if (countdownInterval) {
+		clearInterval(countdownInterval);
+		countdownInterval = null;
+	}
+	countdownRemainingMs.value = 0;
+	countdownTotalMs.value = 0;
+}
+
+function startCountdownTimer(durationMs: number): Promise<void> {
+	stopCountdownTimer();
+	if (durationMs <= 0) return Promise.resolve();
+
+	countdownTotalMs.value = durationMs;
+	countdownRemainingMs.value = durationMs;
+	const endTime = Date.now() + durationMs;
+
+	return new Promise((resolve) => {
+		countdownInterval = setInterval(() => {
+			const remaining = Math.max(0, endTime - Date.now());
+			countdownRemainingMs.value = remaining;
+			if (remaining <= 0) {
+				stopCountdownTimer();
+				resolve();
+			}
+		}, 80);
+	});
+}
 
 function extractErrorText(err: unknown, fallback: string): string {
 	if (err && typeof err === 'object' && 'data' in err) {
-		const data = (err as { data?: { statusMessage?: string } }).data;
+		const data = (err as {
+			data?: {
+				statusMessage?: string;
+				data?: { failedAttempts?: number };
+			};
+		}).data;
+		if (typeof data?.data?.failedAttempts === 'number') {
+			failedAttempts.value = Math.max(failedAttempts.value, data.data.failedAttempts);
+		}
 		if (data?.statusMessage) return data.statusMessage;
 	}
 	return err instanceof Error ? err.message : fallback;
@@ -45,37 +111,78 @@ onMounted(async () => {
 	}
 });
 
+onUnmounted(() => {
+	stopCountdownTimer();
+});
+
 async function handleLogin() {
 	if (!password.value.trim() || isSubmitting.value) return;
+
+	if (honeypotWebsite.value.trim().length > 0) {
+		isSubmitting.value = true;
+		errorMessage.value = null;
+		await new Promise((r) => setTimeout(r, 2000));
+		errorMessage.value = 'رمز عبور وارد شده نادرست است';
+		isSubmitting.value = false;
+		return;
+	}
+
 	isSubmitting.value = true;
 	errorMessage.value = null;
 
+	const currentAttempt = failedAttempts.value + 1;
+	activeAttemptNumber.value = currentAttempt;
+	const delayMs = resolveAttemptDelayMs(currentAttempt);
+	const timerPromise = startCountdownTimer(delayMs);
+
 	try {
 		if (navigator.onLine) {
-			await $fetch('/api/auth/login', {
-				method: 'POST',
-				body: { password: password.value }
-			});
+			const [res] = await Promise.all([
+				$fetch('/api/auth/login', {
+					method: 'POST',
+					body: {
+						password: password.value,
+						website: honeypotWebsite.value
+					}
+				}),
+				timerPromise
+			]);
 
-			await clientAuth.saveClientCredential(password.value);
-			router.push(resolvePostLoginPath());
-			return;
+			if (res) {
+				failedAttempts.value = 0;
+				await clientAuth.saveClientCredential(password.value);
+				router.push(resolvePostLoginPath());
+				return;
+			}
 		}
 
-		const offlineRes = await clientAuth.loginOffline(password.value);
+		const [offlineRes] = await Promise.all([
+			clientAuth.loginOffline(password.value),
+			timerPromise
+		]);
+
 		if (offlineRes.success) {
+			failedAttempts.value = 0;
 			router.push(resolvePostLoginPath());
 		} else {
+			failedAttempts.value = currentAttempt;
 			errorMessage.value = offlineRes.error || 'رمز عبور وارد شده نادرست است';
 		}
 	} catch (err: unknown) {
-		errorMessage.value = extractErrorText(err, 'رمز عبور نادرست است');
+		await timerPromise;
+		failedAttempts.value = Math.max(failedAttempts.value, currentAttempt);
+		errorMessage.value = extractErrorText(err, 'رمز عبور وارد شده نادرست است');
 	} finally {
+		stopCountdownTimer();
 		isSubmitting.value = false;
 	}
 }
 
 async function handleSetup() {
+	if (honeypotWebsite.value.trim().length > 0) {
+		errorMessage.value = 'درخواست نامعتبر است';
+		return;
+	}
 	if (password.value !== confirmPassword.value) {
 		errorMessage.value = 'رمز عبور و تکرار آن یکسان نیستند';
 		return;
@@ -88,7 +195,8 @@ async function handleSetup() {
 			method: 'POST',
 			body: {
 				password: password.value,
-				confirmPassword: confirmPassword.value
+				confirmPassword: confirmPassword.value,
+				website: honeypotWebsite.value
 			}
 		});
 
@@ -124,12 +232,8 @@ async function handleSetup() {
 					</span>
 				</div>
 
-				<p class="mt-1.5 text-xs leading-6 font-bold text-fg-secondary">
-					{{
-						clientAuth.isPasswordConfigured.value
-							? 'با وارد کردن رمز عبور، نشست شما تا یک سال روی این دستگاه به صورت امن فعال می‌ماند.'
-							: 'برای محافظت از اطلاعات شخصی، یک رمز عبور امن برای دسترسی تعیین کنید.'
-					}}
+				<p v-if="!clientAuth.isPasswordConfigured.value" class="mt-1.5 text-xs leading-6 font-bold text-fg-secondary">
+					یک رمز عبور برای محافظت از اطلاعات شخصی خود تعیین کنید.
 				</p>
 			</div>
 
@@ -139,6 +243,19 @@ async function handleSetup() {
 
 			<!-- فرم لاگین -->
 			<form v-if="clientAuth.isPasswordConfigured.value" class="space-y-4" @submit.prevent="handleLogin">
+				<!-- فیلد مخفی تله برای ربات‌ها (Honeypot) -->
+				<div class="pointer-events-none absolute -z-10 h-0 w-0 overflow-hidden opacity-0" aria-hidden="true">
+					<label for="login-website">Website</label>
+					<input
+						id="login-website"
+						v-model="honeypotWebsite"
+						type="text"
+						name="website"
+						tabindex="-1"
+						autocomplete="off"
+					/>
+				</div>
+
 				<div>
 					<label for="login-pass" class="mb-1.5 block text-xs font-extrabold text-fg">رمز عبور</label>
 					<div class="relative">
@@ -163,18 +280,51 @@ async function handleSetup() {
 					</div>
 				</div>
 
+				<!-- تایمر مینیمال از تلاش چهارم به بعد -->
+				<div
+					v-if="showMinimalTimer"
+					class="overflow-hidden rounded-2xl border border-border bg-elevated px-3.5 py-2.5 transition-all"
+				>
+					<div class="flex items-center justify-between text-xs font-extrabold text-fg-secondary">
+						<span class="inline-flex items-center gap-1.5">
+							<Timer class="h-3.5 w-3.5 text-accent-text animate-pulse" />
+							<span>بررسی امنیتی</span>
+						</span>
+						<span class="font-mono text-fg">{{ formattedCountdownSeconds }} ثانیه</span>
+					</div>
+					<div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface">
+						<div
+							class="h-full rounded-full bg-accent transition-all duration-75"
+							:style="{ width: `${timerProgressPercent}%` }"
+						></div>
+					</div>
+				</div>
+
 				<button
 					type="submit"
 					:disabled="isSubmitting"
 					class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-accent text-sm font-extrabold text-accent-fg shadow-xs transition hover:opacity-90 active:scale-98 disabled:opacity-60"
 				>
 					<KeyRound class="h-4 w-4" />
-					<span>{{ isSubmitting ? 'در حال بررسی...' : 'ورود و ذخیره نشست' }}</span>
+					<span>{{ isSubmitting ? 'در حال بررسی...' : 'ورود' }}</span>
 				</button>
 			</form>
 
 			<!-- فرم تعریف رمز اولیه -->
 			<form v-else class="space-y-4" @submit.prevent="handleSetup">
+				<!-- فیلد مخفی تله برای ربات‌ها (Honeypot) -->
+				<div class="pointer-events-none absolute -z-10 h-0 w-0 overflow-hidden opacity-0" aria-hidden="true">
+					<label for="setup-website">Website</label>
+					<input
+						id="setup-website"
+						v-model="honeypotWebsite"
+						type="text"
+						name="website"
+						tabindex="-1"
+						autocomplete="off"
+					/>
+				</div>
+
 				<div>
 					<label for="setup-pass" class="mb-1.5 block text-xs font-extrabold text-fg">رمز عبور جدید</label>
 					<input

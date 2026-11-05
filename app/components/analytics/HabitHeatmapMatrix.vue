@@ -77,7 +77,7 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 
 			<div class="space-y-2 border-t border-border pt-4">
 				<div class="text-xs font-extrabold text-fg-secondary">
-					ماتریس حرارتی روزهای بازه (از راست به چپ):
+					ماتریس روزهای بازه
 				</div>
 				<div class="flex flex-wrap gap-1.5">
 					<div
@@ -118,26 +118,26 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 			</div>
 
 			<div v-if="report.bestWeekday || report.weakestWeekday" class="grid grid-cols-2 gap-2.5 border-t border-border pt-3.5 text-xs">
-				<div v-if="report.bestWeekday" class="rounded-2xl border border-optimal-border bg-optimal-soft p-3">
-					<div class="text-[11px] font-bold text-optimal">نقطه قوت هفتگی</div>
-					<div class="mt-0.5 font-black text-fg">{{ report.bestWeekday.weekdayLabel }}‌ها</div>
-					<div class="mt-0.5 text-[11px] font-bold text-optimal">
-						میانگین کیفیت: %{{ toPersianDigits(report.bestWeekday.avgScore) }}
+				<div v-if="report.bestWeekday" class="flex items-center justify-between rounded-2xl border border-optimal-border bg-optimal-soft p-3">
+					<div>
+						<div class="text-[11px] font-bold text-optimal">بهترین روز</div>
+						<div class="mt-0.5 font-black text-fg">{{ report.bestWeekday.weekdayLabel }}</div>
 					</div>
+					<span class="font-mono text-sm font-black text-optimal">%{{ toPersianDigits(report.bestWeekday.avgScore) }}</span>
 				</div>
-				<div v-if="report.weakestWeekday && report.weakestWeekday.weekdayIndex !== report.bestWeekday?.weekdayIndex" class="rounded-2xl border border-failed-border bg-failed-soft p-3">
-					<div class="text-[11px] font-bold text-failed">نقطه آسیب‌پذیر هفتگی</div>
-					<div class="mt-0.5 font-black text-fg">{{ report.weakestWeekday.weekdayLabel }}‌ها</div>
-					<div class="mt-0.5 text-[11px] font-bold text-failed">
-						میانگین کیفیت: %{{ toPersianDigits(report.weakestWeekday.avgScore) }}
+				<div v-if="report.weakestWeekday && report.weakestWeekday.weekdayIndex !== report.bestWeekday?.weekdayIndex" class="flex items-center justify-between rounded-2xl border border-failed-border bg-failed-soft p-3">
+					<div>
+						<div class="text-[11px] font-bold text-failed">ضعیف‌ترین روز</div>
+						<div class="mt-0.5 font-black text-fg">{{ report.weakestWeekday.weekdayLabel }}</div>
 					</div>
+					<span class="font-mono text-sm font-black text-failed">%{{ toPersianDigits(report.weakestWeekday.avgScore) }}</span>
 				</div>
 			</div>
 
 			<div v-if="report.tagCorrelations.length > 0" class="space-y-2 border-t border-border pt-3.5">
 				<div class="flex items-center gap-1.5 text-xs font-extrabold text-fg-secondary">
 					<Hash class="h-3.5 w-3.5 text-accent-text" />
-					<span>همبستگی تگ‌های روزانه با عملکرد این طرح:</span>
+					<span>تاثیر تگ‌ها</span>
 				</div>
 				<div class="flex flex-wrap gap-1.5">
 					<span

@@ -12,7 +12,7 @@ import {
 import { toPersianDigits } from '~/domain/calendar';
 import { getOutcomeBadgeMeta } from '~/domain/constants';
 import type { HabitDailyPoint, SelectedHabitAnalytics } from '~/domain/schemas';
-import { GitCommitHorizontal, Info, Sparkles } from 'lucide-vue-next';
+import { GitCommitHorizontal } from 'lucide-vue-next';
 
 interface Props {
 	report: SelectedHabitAnalytics;
@@ -129,25 +129,16 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 <template>
 	<section class="rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:p-6">
 		<div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-			<div>
-				<div class="flex flex-wrap items-center gap-2">
-					<h2 class="text-base font-black text-fg sm:text-lg">
-						نمودار روند زمانی و تکامل «{{ report.habit.title }}»
-					</h2>
-					<span
-						v-if="report.parentTitle"
-						class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 text-[11px] font-bold text-fg-secondary"
-					>
-						زیرمجموعه {{ report.parentTitle }}
-					</span>
-				</div>
-				<p class="mt-0.5 text-xs font-bold text-fg-secondary">
-					{{
-						isCadence
-							? 'ستون‌ها نشان‌دهنده دقایق انجام‌شده در هر روز و خط نقطه‌چین نشان‌دهنده هدف تعیین‌شده است'
-							: 'ستون‌ها سطح کسب‌شده در هر روز و خط ممتد منحنی میانگین متحرک ۷ روزه (روند کلی) را نشان می‌دهد'
-					}}
-				</p>
+			<div class="flex flex-wrap items-center gap-2">
+				<h2 class="text-base font-black text-fg sm:text-lg">
+					روند زمانی «{{ report.habit.title }}»
+				</h2>
+				<span
+					v-if="report.parentTitle"
+					class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 text-[11px] font-bold text-fg-secondary"
+				>
+					{{ report.parentTitle }}
+				</span>
 			</div>
 
 			<div class="flex flex-wrap items-center gap-3 text-[11px] font-extrabold">
@@ -346,12 +337,10 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 					</span>
 				</div>
 
-				<p v-if="inspectedPoint.ruleSnapshot" class="text-xs font-semibold text-fg-secondary">
-					<Info class="ml-1 inline h-3.5 w-3.5 text-fg-muted" />
-					<span>قانون و وضعیت ثبت‌شده در این روز: </span>
-					<strong class="font-extrabold text-fg">{{ inspectedPoint.ruleSnapshot }}</strong>
+				<p v-if="inspectedPoint.ruleSnapshot" class="text-xs font-extrabold text-fg">
+					{{ inspectedPoint.ruleSnapshot }}
 				</p>
-				<p v-else class="text-xs text-fg-muted">در این تاریخ عملکردی برای این طرح ثبت نشده است.</p>
+				<p v-else class="text-xs text-fg-muted">عملکردی ثبت نشده است.</p>
 
 				<div v-if="inspectedPoint.lifecycleEventsOnDay.length > 0" class="mt-2 flex flex-wrap items-center gap-2 pt-1">
 					<span
@@ -360,13 +349,12 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 						class="inline-flex items-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-3 py-1 text-xs font-extrabold text-accent-text"
 					>
 						<GitCommitHorizontal class="h-3.5 w-3.5" />
-						<span>رویداد تغییر در این روز: {{ ev.summary }}</span>
+						<span>{{ ev.summary }}</span>
 					</span>
 				</div>
 			</div>
 
 			<div v-if="inspectedPoint.dayTags.length > 0" class="flex flex-wrap items-center gap-1.5">
-				<span class="text-[11px] font-bold text-fg-muted">تگ‌های روز:</span>
 				<span
 					v-for="tag in inspectedPoint.dayTags"
 					:key="tag"
@@ -374,10 +362,6 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 				>
 					#{{ tag }}
 				</span>
-			</div>
-			<div v-else-if="inspectedPoint.outcome === 'gold'" class="flex items-center gap-1.5 text-xs font-extrabold text-gold-text">
-				<Sparkles class="h-4 w-4" />
-				<span>عملکرد ایده‌آل</span>
 			</div>
 		</div>
 	</section>

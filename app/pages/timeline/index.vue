@@ -28,10 +28,7 @@ const filteredEvents = computed(() =>
 				<div class="flex h-11 w-11 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text">
 					<GitCommitHorizontal class="h-6 w-6" />
 				</div>
-				<div>
-					<h1 class="text-xl font-black text-fg sm:text-2xl">تاریخچه وقایع و تغییرات قوانین</h1>
-					<p class="text-xs font-bold text-fg-secondary">ردیابی دقیق جهش‌ها، دلایل تغییر شروط عادات و تکامل سیستم</p>
-				</div>
+				<h1 class="text-xl font-black text-fg sm:text-2xl">تاریخچه تغییرات</h1>
 			</div>
 
 			<div class="flex flex-wrap items-center gap-1.5 text-xs">
@@ -80,7 +77,12 @@ const filteredEvents = computed(() =>
 						<span class="text-xs font-medium text-fg-muted">{{ formatJalaliHuman(ev.effectiveDateIso).fullLabel }}</span>
 					</div>
 
-					<p class="mt-2.5 text-xs font-semibold text-fg">{{ ev.summary }}</p>
+					<p
+						v-if="ev.eventType === 'CONVERTED_TO_SUBHABIT' || ev.eventType === 'CADENCE_UPDATED' || ev.eventType === 'STATUS_CHANGED'"
+						class="mt-2 text-xs font-semibold text-fg-secondary"
+					>
+						{{ ev.summary }}
+					</p>
 
 					<!-- جزئیات تغییرات و مقادیر قبلی/جدید (Diff View) -->
 					<div v-if="extractLifecycleRuleDiffs(ev.previousStateJson, ev.newStateJson).length > 0" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -98,8 +100,8 @@ const filteredEvents = computed(() =>
 						</div>
 					</div>
 
-					<div v-if="ev.reason" class="mt-2.5 rounded-xl border border-border bg-elevated px-3 py-2 text-xs text-fg-secondary">
-						<strong class="font-extrabold text-fg">دلیل ثبت‌شده: </strong>
+					<div v-if="ev.reason && ev.reason !== 'تعریف طرح جدید'" class="mt-2.5 rounded-xl border border-border bg-elevated px-3 py-2 text-xs text-fg-secondary">
+						<strong class="font-extrabold text-fg">دلیل: </strong>
 						<span>{{ ev.reason }}</span>
 					</div>
 				</div>

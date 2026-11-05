@@ -249,13 +249,10 @@ async function handleLogout() {
 	<div class="mx-auto max-w-3xl space-y-8 pb-16">
 		<div class="flex items-center justify-between rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:px-7">
 			<div class="flex items-center gap-3.5">
-				<div class="flex h-12 w-12 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text">
-					<Settings class="h-6 w-6" />
+				<div class="flex h-11 w-11 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text">
+					<Settings class="h-5 w-5" />
 				</div>
-				<div>
-					<h1 class="text-xl font-black text-fg sm:text-2xl">تنظیمات و پشتیبان‌گیری</h1>
-					<p class="text-xs font-bold text-fg-secondary">مدیریت تم، پشتیبان‌گیری کامل از داده‌ها، امنیت و نشست دستگاه</p>
-				</div>
+				<h1 class="text-xl font-black text-fg sm:text-2xl">تنظیمات و پشتیبان‌گیری</h1>
 			</div>
 		</div>
 
@@ -277,10 +274,7 @@ async function handleLogout() {
 						<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-surface">
 							<Sun class="h-5 w-5" />
 						</div>
-						<div>
-							<div class="text-sm font-extrabold">پوسته روشن (Light)</div>
-							<div class="text-xs opacity-80">زمینه روشن با تفکیک بصری نرم</div>
-						</div>
+						<div class="text-sm font-extrabold">پوسته روشن</div>
 					</div>
 					<Check v-if="!theme.isDark.value" class="h-4 w-4" />
 				</button>
@@ -295,10 +289,7 @@ async function handleLogout() {
 						<div class="flex h-10 w-10 items-center justify-center rounded-xl bg-surface">
 							<Moon class="h-5 w-5" />
 						</div>
-						<div>
-							<div class="text-sm font-extrabold">پوسته تاریک (Dark)</div>
-							<div class="text-xs opacity-80">زمینه مخملی تیره برای تمرکز شبانه</div>
-						</div>
+						<div class="text-sm font-extrabold">پوسته تاریک</div>
 					</div>
 					<Check v-if="theme.isDark.value" class="h-4 w-4" />
 				</button>
@@ -310,7 +301,7 @@ async function handleLogout() {
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3.5">
 				<div class="flex items-center gap-2.5">
 					<Database class="h-5 w-5 text-accent-text" />
-					<h2 class="text-base font-black text-fg">پشتیبان‌گیری کامل از داده‌ها (JSON)</h2>
+					<h2 class="text-base font-black text-fg">پشتیبان‌گیری از داده‌ها</h2>
 				</div>
 				<span class="rounded-xl border border-border bg-elevated px-3 py-1 font-mono text-xs font-bold text-fg-secondary">
 					{{ toPersianDigits(habits.length) }} طرح • {{ toPersianDigits(entries.length) }} روز ثبت‌شده
@@ -323,14 +314,9 @@ async function handleLogout() {
 
 			<div class="grid grid-cols-1 gap-5 md:grid-cols-2">
 				<div class="flex flex-col justify-between rounded-2xl border border-border bg-elevated p-5">
-					<div class="space-y-2">
-						<div class="flex items-center gap-2 text-sm font-black text-fg">
-							<HardDriveDownload class="h-4 w-4 text-accent-text" />
-							<span>خروجی و دانلود بکاپ (Export)</span>
-						</div>
-						<p class="text-xs leading-6 text-fg-secondary">
-							یک فایل استاندارد <code class="font-mono text-fg">.json</code> شامل تمام داده‌های ذخیره‌شده در دیتابیس محلی شما دانلود می‌شود.
-						</p>
+					<div class="flex items-center gap-2 text-sm font-black text-fg">
+						<HardDriveDownload class="h-4 w-4 text-accent-text" />
+						<span>دریافت فایل پشتیبان</span>
 					</div>
 
 					<button
@@ -340,24 +326,19 @@ async function handleLogout() {
 						@click="exportLocalBackup"
 					>
 						<Download class="h-4 w-4" />
-						<span>{{ isExporting ? 'در حال آماده‌سازی...' : 'دانلود فایل پشتیبان (JSON)' }}</span>
+						<span>{{ isExporting ? 'در حال آماده‌سازی...' : 'دانلود فایل پشتیبان' }}</span>
 					</button>
 				</div>
 
 				<div class="flex flex-col justify-between rounded-2xl border border-border bg-elevated p-5">
-					<div class="space-y-2">
-						<div class="flex items-center gap-2 text-sm font-black text-fg">
-							<HardDriveUpload class="h-4 w-4 text-gold-text" />
-							<span>بازیابی فایل بکاپ (Import)</span>
-						</div>
-						<p class="text-xs leading-6 text-fg-secondary">
-							بارگذاری فایل بکاپ برای بازگردانی اطلاعات یا انتقال به یک مرورگر/دستگاه جدید.
-						</p>
+					<div class="flex items-center gap-2 text-sm font-black text-fg">
+						<HardDriveUpload class="h-4 w-4 text-gold-text" />
+						<span>بازیابی از فایل پشتیبان</span>
 					</div>
 
 					<div class="mt-4 space-y-3">
 						<label class="flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-border bg-surface px-4 text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg">
-							<span class="truncate">{{ selectedFile ? selectedFile.name : 'انتخاب فایل JSON...' }}</span>
+							<span class="truncate">{{ selectedFile ? selectedFile.name : 'انتخاب فایل پشتیبان...' }}</span>
 							<input type="file" accept=".json,application/json" class="hidden" @change="handleFileSelected" />
 						</label>
 
@@ -380,7 +361,7 @@ async function handleLogout() {
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3.5">
 				<div class="flex items-center gap-2.5">
 					<FlaskConical class="h-5 w-5 text-accent-text" />
-					<h2 class="text-base font-black text-fg">داده‌های آزمایشی (Demo Seed)</h2>
+					<h2 class="text-base font-black text-fg">داده‌های آزمایشی</h2>
 				</div>
 				<span
 					class="rounded-xl border px-3 py-1 text-xs font-extrabold"
@@ -397,10 +378,6 @@ async function handleLogout() {
 					}}
 				</span>
 			</div>
-
-			<p class="text-xs leading-6 text-fg-secondary">
-				برای بررسی سریع نمودارهای آمار، تقویم، کتابخانه و طرح‌های تکرارشونده می‌توانید یک مجموعه دادهٔ آزمایشی سبک اضافه کنید. تمامی رکوردهای آزمایشی با شناسهٔ مجزا ثبت می‌شوند و هر زمان که بخواهید، با زدن دکمهٔ حذف، <strong class="font-extrabold text-fg">فقط و فقط داده‌های آزمایشی</strong> پاک می‌شوند و به اطلاعات شخصی شما آسیبی نمی‌رسد.
-			</p>
 
 			<div
 				v-if="demoSeedMessage"
@@ -422,7 +399,7 @@ async function handleLogout() {
 					@click="handleInjectDemoSeed"
 				>
 					<Plus class="h-4 w-4" />
-					<span>افزودن داده‌های آزمایشی (Seed)</span>
+					<span>افزودن داده‌های آزمایشی</span>
 				</button>
 
 				<button
@@ -432,7 +409,7 @@ async function handleLogout() {
 					@click="handleRemoveDemoSeed"
 				>
 					<Trash2 class="h-4 w-4" />
-					<span>حذف دقیق داده‌های آزمایشی</span>
+					<span>حذف داده‌های آزمایشی</span>
 				</button>
 			</div>
 		</section>
@@ -503,8 +480,7 @@ async function handleLogout() {
 				</div>
 			</form>
 
-			<div class="flex items-center justify-between border-t border-border pt-4">
-				<div class="text-xs font-bold text-fg-secondary">خروج از نشست و پاک‌سازی داده‌های حافظه محلی این مرورگر</div>
+			<div class="flex items-center justify-end border-t border-border pt-4">
 				<button
 					type="button"
 					class="flex h-10 items-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-extrabold text-failed transition hover:opacity-90 active:scale-95"

@@ -305,7 +305,8 @@ export type UpsertNoteInput = z.infer<typeof UpsertNoteInputSchema>;
 export const SetupPasswordInputSchema = z
 	.object({
 		password: z.string().min(4, 'رمز عبور باید حداقل ۴ کاراکتر باشد'),
-		confirmPassword: z.string().min(4, 'تکرار رمز عبور الزامی است')
+		confirmPassword: z.string().min(4, 'تکرار رمز عبور الزامی است'),
+		website: z.string().optional()
 	})
 	.refine((data) => data.password === data.confirmPassword, {
 		message: 'رمز عبور و تکرار آن یکسان نیستند',
@@ -313,7 +314,8 @@ export const SetupPasswordInputSchema = z
 	});
 
 export const LoginInputSchema = z.object({
-	password: z.string().min(1, 'لطفاً رمز عبور را وارد کنید')
+	password: z.string().min(1, 'لطفاً رمز عبور را وارد کنید'),
+	website: z.string().optional()
 });
 
 export const ChangePasswordInputSchema = z

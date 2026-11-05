@@ -7,7 +7,6 @@ import BaseModal from '~/components/ui/BaseModal.vue';
 import {
 	ArrowLeft,
 	BookOpen,
-	CalendarPlus,
 	Check,
 	ChevronDown,
 	ChevronUp,
@@ -113,16 +112,9 @@ function toggleHabitExpanded(habitId: string) {
 		<!-- فرم افزودن رویداد به این تاریخ -->
 		<form
 			v-if="showAddEventForm"
-			class="space-y-3.5 rounded-2xl border border-accent-border bg-accent-soft p-4"
+			class="space-y-3 rounded-2xl border border-accent-border bg-accent-soft p-4"
 			@submit.prevent="handleAddEvent"
 		>
-			<div class="flex items-center justify-between">
-				<span class="flex items-center gap-1.5 text-xs font-black text-accent-text">
-					<CalendarPlus class="h-4 w-4" />
-					<span>رویداد جدید برای {{ day.fullHumanLabel }}</span>
-				</span>
-			</div>
-
 			<div>
 				<input
 					v-model="eventTitleInput"
@@ -261,16 +253,7 @@ function toggleHabitExpanded(habitId: string) {
 		<!-- عملکرد عادات در این تاریخ -->
 		<div class="space-y-2.5 border-t border-border pt-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
-				<div class="flex items-center gap-2">
-					<h3 class="text-xs font-extrabold text-fg-secondary">عملکرد طرح‌ها در این روز</h3>
-					<span
-						v-if="day.entry"
-						class="rounded-xl px-2 py-0.5 text-[10px] font-black"
-						:class="getDayStatusMeta(day.entry.dayStatus).softBadgeClasses"
-					>
-						{{ getDayStatusMeta(day.entry.dayStatus).shortBadgeLabel }}
-					</span>
-				</div>
+				<h3 class="text-xs font-extrabold text-fg-secondary">عملکرد طرح‌ها</h3>
 
 				<button
 					v-if="day.habitPerformances.length > 0"
@@ -372,8 +355,7 @@ function toggleHabitExpanded(habitId: string) {
 						</p>
 					</div>
 
-					<div class="flex items-center gap-1.5 text-xs font-bold text-fg-secondary shrink-0">
-						<span class="text-[11px]">{{ expandedHabitId === perf.habitId ? 'بستن' : 'قوانین' }}</span>
+					<div class="flex items-center text-fg-secondary shrink-0">
 						<ChevronUp v-if="expandedHabitId === perf.habitId" class="h-4 w-4 text-accent-text" />
 						<ChevronDown v-else class="h-4 w-4 text-fg-muted" />
 					</div>

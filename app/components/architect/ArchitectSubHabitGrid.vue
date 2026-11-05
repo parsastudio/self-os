@@ -15,9 +15,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-	<div class="mt-6 space-y-3 border-t border-border pt-5">
-		<div class="text-xs font-extrabold text-fg-muted">زیرطرح‌های وابسته:</div>
-
+	<div class="mt-5 border-t border-border pt-4">
 		<div class="grid grid-cols-1 gap-3 md:grid-cols-3">
 			<div
 				v-for="sub in children"

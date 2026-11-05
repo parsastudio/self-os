@@ -142,7 +142,10 @@ export function createAuthSession(): {
 	return { token: rawToken, expiresAt };
 }
 
-export function validateAndExtendSession(rawToken: string): {
+export function validateAndExtendSession(
+	rawToken: string,
+	forceRefresh = false
+): {
 	valid: boolean;
 	shouldRefreshCookie: boolean;
 	expiresAt: Date;
@@ -170,7 +173,7 @@ export function validateAndExtendSession(rawToken: string): {
 	const lastSeenMs = new Date(session.lastSeenAtIso).getTime();
 	const hoursSinceLastSeen = (now.getTime() - lastSeenMs) / (1000 * 60 * 60);
 
-	const shouldRefreshCookie = hoursSinceLastSeen >= 1;
+	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1;
 	if (shouldRefreshCookie) {
 		db.update(authSessions)
 			.set({

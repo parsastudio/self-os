@@ -180,12 +180,7 @@ function goToToday() {
 						<CalendarIcon class="h-5 w-5" />
 					</div>
 
-					<div>
-						<h1 class="text-lg font-black tracking-tight text-fg sm:text-2xl">تقویم و رویدادها</h1>
-						<p class="text-xs font-bold text-fg-secondary">
-							آرشیو عملکرد روزانه، مناسبت‌ها، خاطرات و یادداشت‌ها
-						</p>
-					</div>
+					<h1 class="text-lg font-black tracking-tight text-fg sm:text-2xl">تقویم و رویدادها</h1>
 				</div>
 
 				<div class="flex flex-wrap items-center justify-between gap-2 sm:justify-end">

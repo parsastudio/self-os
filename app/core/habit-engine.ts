@@ -494,7 +494,7 @@ export function buildCreatedHabitWithLifecycle(params: {
 		summary: habit.parentId
 			? `ایجاد زیرطرح «${habit.title}»`
 			: `ایجاد طرح «${habit.title}»`,
-		reason: input.reason?.trim() || 'تعریف طرح جدید',
+		reason: input.reason?.trim() || null,
 		previousStateJson: null,
 		newStateJson: JSON.stringify(habit),
 		createdAtIso: nowIso

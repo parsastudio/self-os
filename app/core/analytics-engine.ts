@@ -532,15 +532,8 @@ export function buildFullAnalyticsReport(params: {
 		const parent = h.parentId ? habitById.get(h.parentId) : null;
 		const children = childrenByParentId.get(h.id) ?? [];
 		const isComposite = children.length > 0;
-		const prefix = parent ? `↳ ${h.title} (${parent.title})` : h.title;
-		const suffix =
-			h.status === 'archived'
-				? ' [بایگانی]'
-				: isComposite
-					? ' [مجموعه‌طرح]'
-					: h.trackingMode === 'interval_cadence'
-						? ' [تکرارشونده]'
-						: '';
+		const prefix = parent ? `↳ ${h.title}` : h.title;
+		const suffix = h.status === 'archived' ? ' (بایگانی)' : '';
 
 		return {
 			habit: h,

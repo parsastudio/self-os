@@ -22,6 +22,11 @@ export default defineEventHandler(async (event) => {
 		});
 	}
 
+	if (parsed.data.website && parsed.data.website.trim().length > 0) {
+		await new Promise((resolve) => setTimeout(resolve, 2000));
+		throw createError({ statusCode: 400, statusMessage: 'درخواست نامعتبر است' });
+	}
+
 	await setupInitialPassword(parsed.data.password);
 	const session = createAuthSession();
 	const isSecure = process.env.NODE_ENV === 'production';

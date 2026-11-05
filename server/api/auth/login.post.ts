@@ -7,14 +7,25 @@ import {
 	SESSION_COOKIE_NAME
 } from '../../repositories/auth.repo';
 
-const failedLoginAttemptsByIp = new Map<string, { count: number; firstAttemptMs: number }>();
-const MAX_ATTEMPTS = 5;
-const WINDOW_MS = 10 * 60 * 1000;
+const failedLoginAttemptsByIp = new Map<string, { failedCount: number; lastAttemptMs: number }>();
+const RESET_WINDOW_MS = 30 * 60 * 1000;
+
+function resolveProgressiveDelayMs(attemptNumber: number): number {
+	if (attemptNumber <= 1) return 0;
+	if (attemptNumber === 2) return 2000;
+	if (attemptNumber === 3) return 3000;
+	return 5000;
+}
+
+function sleep(ms: number): Promise<void> {
+	if (ms <= 0) return Promise.resolve();
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function pruneExpiredLoginAttempts(now: number): void {
 	if (failedLoginAttemptsByIp.size < 100) return;
 	for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
-		if (now - entry.firstAttemptMs >= WINDOW_MS) {
+		if (now - entry.lastAttemptMs >= RESET_WINDOW_MS) {
 			failedLoginAttemptsByIp.delete(key);
 		}
 	}
@@ -24,19 +35,10 @@ export default defineEventHandler(async (event) => {
 	const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown';
 	const now = Date.now();
 	pruneExpiredLoginAttempts(now);
-	const record = failedLoginAttemptsByIp.get(ip);
 
-	if (record) {
-		if (now - record.firstAttemptMs < WINDOW_MS && record.count >= MAX_ATTEMPTS) {
-			const remainingMinutes = Math.max(1, Math.ceil((WINDOW_MS - (now - record.firstAttemptMs)) / 60000));
-			throw createError({
-				statusCode: 429,
-				statusMessage: `تلاش‌های ناموفق بیش از حد مجاز است. لطفاً ${remainingMinutes} دقیقه دیگر تلاش کنید.`
-			});
-		}
-		if (now - record.firstAttemptMs >= WINDOW_MS) {
-			failedLoginAttemptsByIp.delete(ip);
-		}
+	const existingRecord = failedLoginAttemptsByIp.get(ip);
+	if (existingRecord && now - existingRecord.lastAttemptMs >= RESET_WINDOW_MS) {
+		failedLoginAttemptsByIp.delete(ip);
 	}
 
 	const body = await readBody(event);
@@ -48,15 +50,42 @@ export default defineEventHandler(async (event) => {
 		});
 	}
 
+	// Honeypot check: reject bots that fill the hidden field
+	if (parsed.data.website && parsed.data.website.trim().length > 0) {
+		await sleep(3000);
+		throw createError({
+			statusCode: 401,
+			statusMessage: 'رمز عبور وارد شده نادرست است'
+		});
+	}
+
+	const previousFailures = failedLoginAttemptsByIp.get(ip)?.failedCount ?? 0;
+	const currentAttemptNumber = previousFailures + 1;
+	const requiredDelayMs = resolveProgressiveDelayMs(currentAttemptNumber);
+
+	const startedAt = Date.now();
 	const isValid = await verifyPassword(parsed.data.password);
+	const elapsedMs = Date.now() - startedAt;
+
+	if (requiredDelayMs > elapsedMs) {
+		await sleep(requiredDelayMs - elapsedMs);
+	}
+
 	if (!isValid) {
-		const cur = failedLoginAttemptsByIp.get(ip);
-		if (!cur || now - cur.firstAttemptMs >= WINDOW_MS) {
-			failedLoginAttemptsByIp.set(ip, { count: 1, firstAttemptMs: now });
-		} else {
-			cur.count++;
-		}
-		throw createError({ statusCode: 401, statusMessage: 'رمز عبور وارد شده نادرست است' });
+		const updatedFailures = previousFailures + 1;
+		failedLoginAttemptsByIp.set(ip, {
+			failedCount: updatedFailures,
+			lastAttemptMs: Date.now()
+		});
+
+		throw createError({
+			statusCode: 401,
+			statusMessage: 'رمز عبور وارد شده نادرست است',
+			data: {
+				failedAttempts: updatedFailures,
+				nextDelaySeconds: resolveProgressiveDelayMs(updatedFailures + 1) / 1000
+			}
+		});
 	}
 
 	failedLoginAttemptsByIp.delete(ip);

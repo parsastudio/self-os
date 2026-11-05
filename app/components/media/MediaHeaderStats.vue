@@ -23,10 +23,10 @@ const emit = defineEmits<{
 }>();
 
 const sortOptions: ReadonlyArray<{ value: MediaSortBy; label: string }> = [
-	{ value: 'rating_desc', label: 'مرتب‌سازی: بیشترین ستاره ★' },
-	{ value: 'newest', label: 'مرتب‌سازی: جدیدترین‌ها' },
-	{ value: 'oldest', label: 'مرتب‌سازی: قدیمی‌ترین‌ها' },
-	{ value: 'title_asc', label: 'مرتب‌سازی: حروف الفبا' }
+	{ value: 'rating_desc', label: 'بیشترین امتیاز' },
+	{ value: 'newest', label: 'جدیدترین‌ها' },
+	{ value: 'oldest', label: 'قدیمی‌ترین‌ها' },
+	{ value: 'title_asc', label: 'حروف الفبا' }
 ];
 </script>
 
@@ -83,7 +83,7 @@ const sortOptions: ReadonlyArray<{ value: MediaSortBy; label: string }> = [
 					</button>
 				</div>
 
-				<div class="w-full sm:w-52">
+				<div class="w-full sm:w-40">
 					<CustomSelect
 						:model-value="sortBy"
 						:options="sortOptions"

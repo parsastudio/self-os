@@ -58,7 +58,7 @@ const silverDesc = ref(props.editingHabit?.silverDesc ?? '');
 const goldDesc = ref(props.editingHabit?.goldDesc ?? '');
 const emergencyMinDesc = ref(props.editingHabit?.emergencyMinDesc ?? '');
 const notes = ref(props.editingHabit?.notes ?? '');
-const reason = ref(props.mode === 'create' ? 'تعریف طرح جدید' : '');
+const reason = ref('');
 
 const modalTitle = computed(() =>
 	props.mode === 'edit' && props.editingHabit
@@ -142,7 +142,7 @@ function handleSubmit() {
 			defaultIntervals: 1,
 			defaultMinutesPerInterval: 10,
 			cadenceWindowMinutes: 60,
-			reason: reason.value.trim() || 'تعریف طرح جدید'
+			reason: reason.value.trim() || undefined
 		});
 	}
 }
@@ -219,12 +219,8 @@ function handleSubmit() {
 
 			<!-- شرایط سطوح طرح رتبه‌ای -->
 			<div v-if="structureKind === 'tiered'" class="space-y-3 rounded-2xl border border-border bg-elevated p-4">
-				<div class="text-xs font-extrabold text-fg-secondary">
-					شرایط سطوح (سطح برنزی همان حداقلِ انجام طرح است؛ نقره‌ای و طلایی اختیاری‌اند)
-				</div>
-
 				<div>
-					<label for="h-bronze" class="mb-1 block text-xs font-bold text-bronze-text">برنز (سطح ۱ - حداقل)</label>
+					<label for="h-bronze" class="mb-1 block text-xs font-bold text-bronze-text">برنز (حداقل)</label>
 					<input
 						id="h-bronze"
 						v-model="bronzeDesc"
@@ -235,7 +231,7 @@ function handleSubmit() {
 				</div>
 
 				<div>
-					<label for="h-silver" class="mb-1 block text-xs font-bold text-silver-text">نقره (سطح ۲ - اختیاری)</label>
+					<label for="h-silver" class="mb-1 block text-xs font-bold text-silver-text">نقره (اختیاری)</label>
 					<input
 						id="h-silver"
 						v-model="silverDesc"
@@ -245,7 +241,7 @@ function handleSubmit() {
 				</div>
 
 				<div>
-					<label for="h-gold" class="mb-1 block text-xs font-bold text-gold-text">طلا (سطح ۳ - اختیاری)</label>
+					<label for="h-gold" class="mb-1 block text-xs font-bold text-gold-text">طلا (اختیاری)</label>
 					<input
 						id="h-gold"
 						v-model="goldDesc"
@@ -254,45 +250,27 @@ function handleSubmit() {
 					/>
 				</div>
 
-				<label class="mt-3 flex cursor-pointer items-start gap-4 rounded-2xl border border-border bg-surface p-4 transition hover:border-border-strong">
+				<label class="mt-2 flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface px-3.5 py-3 transition hover:border-border-strong">
 					<input
 						v-model="isSituational"
 						type="checkbox"
-						class="mt-0.5 h-5 w-5 shrink-0 rounded-lg accent-accent"
+						class="h-4.5 w-4.5 shrink-0 rounded-lg accent-accent"
 					/>
-					<div class="space-y-1.5">
-						<div class="text-xs font-extrabold text-fg">
-							طرح رویدادی / موقعیتی (گزینهٔ «پیش نیامد» داشته باشد)
-						</div>
-						<div class="text-xs leading-relaxed text-fg-secondary">
-							مخصوص طرح‌هایی که هر روز اتفاق نمی‌افتند (مانند رویدادها، تماشای موقعیت خاص یا رژیم‌های اقتضایی)
-						</div>
-					</div>
+					<span class="text-xs font-extrabold text-fg">
+						طرح موقعیتی (دارای گزینهٔ «پیش نیامد»)
+					</span>
 				</label>
 			</div>
 
-			<!-- بنر راهنمای مجموعه‌طرح -->
-			<div
-				v-else-if="structureKind === 'composite'"
-				class="rounded-2xl border border-gold-border bg-gold-soft p-4 text-xs font-bold leading-relaxed text-gold-text"
-			>
-				این مورد یک «مجموعه‌طرح» است و خودش به تنهایی شرط برنز/نقره/طلا ندارد. پس از ایجاد، زیرطرح‌های آن را اضافه کنید تا امتیاز آن از ترکیب زیرطرح‌ها محاسبه شود.
-			</div>
-
 			<!-- تنظیمات حداقل اضطراری طرح ریتمی -->
-			<div v-else class="space-y-3 rounded-2xl border border-accent-border bg-accent-soft p-4">
-				<div class="text-xs font-bold text-accent-text">
-					مقدار هدف این طرح تکرارشونده هر شب برای روز بعد تعیین می‌شود.
-				</div>
-				<div>
-					<label for="h-emerg" class="mb-1 block text-xs font-bold text-fg">حداقل اضطراری (در روزهای بحرانی)</label>
-					<input
-						id="h-emerg"
-						v-model="emergencyMinDesc"
-						placeholder="مثلاً: ۱۰ دقیقه برای کار"
-						class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-sm font-semibold text-fg"
-					/>
-				</div>
+			<div v-else-if="structureKind === 'interval_cadence'" class="rounded-2xl border border-border bg-elevated p-4">
+				<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>
+				<input
+					id="h-emerg"
+					v-model="emergencyMinDesc"
+					placeholder="مثلاً: ۱۰ دقیقه برای روزهای شلوغ"
+					class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-sm font-semibold text-fg"
+				/>
 			</div>
 
 			<div>

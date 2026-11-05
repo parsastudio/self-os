@@ -94,12 +94,8 @@ const isComposite = computed(() => props.children && props.children.length > 0);
 			</div>
 
 			<!-- جزئیات قوانین طرح ریتمی -->
-			<div v-if="habit.trackingMode === 'interval_cadence'" class="mt-4 space-y-1.5 text-xs">
+			<div v-if="habit.trackingMode === 'interval_cadence' && habit.emergencyMinDesc" class="mt-4 space-y-1.5 text-xs">
 				<div class="flex items-center justify-between rounded-xl bg-elevated px-3.5 py-2.5">
-					<span class="font-bold text-accent-text">نحوه هدف‌گذاری:</span>
-					<span class="font-semibold text-fg">تعیین دقیقه از شب قبل</span>
-				</div>
-				<div v-if="habit.emergencyMinDesc" class="flex items-center justify-between rounded-xl bg-elevated px-3.5 py-2.5">
 					<span class="font-bold text-fg-secondary">حداقل اضطراری:</span>
 					<span class="font-semibold text-fg">{{ habit.emergencyMinDesc }}</span>
 				</div>

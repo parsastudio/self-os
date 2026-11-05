@@ -38,7 +38,7 @@ const statusMeta = computed(
 
 				<h3 class="truncate text-sm font-black text-fg sm:text-base">{{ item.title }}</h3>
 
-				<span class="rounded-lg px-2.5 py-0.5 text-[11px] font-extrabold" :class="statusMeta.badgeClasses">
+				<span v-if="item.status !== 'completed'" class="rounded-lg px-2.5 py-0.5 text-[11px] font-extrabold" :class="statusMeta.badgeClasses">
 					{{ statusMeta.badgeLabel }}
 				</span>
 

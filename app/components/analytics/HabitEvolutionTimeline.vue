@@ -18,10 +18,7 @@ defineProps<Props>();
 				<div class="flex h-9 w-9 items-center justify-center rounded-xl border border-accent-border bg-accent-soft text-accent-text">
 					<GitCommitHorizontal class="h-5 w-5" />
 				</div>
-				<div>
-					<h3 class="text-base font-black text-fg">تاریخچه تغییرات و تکامل «{{ habitTitle }}» در طول زمان</h3>
-					<p class="text-xs font-bold text-fg-secondary">بررسی تغییرات قوانین، سطوح و تاثیر هر تغییر روی میانگین موفقیت طرح</p>
-				</div>
+				<h3 class="text-base font-black text-fg">تاریخچه تغییرات «{{ habitTitle }}»</h3>
 			</div>
 
 			<span class="rounded-xl border border-border bg-elevated px-3 py-1 text-xs font-extrabold text-fg-secondary">

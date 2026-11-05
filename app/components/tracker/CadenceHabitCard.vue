@@ -66,14 +66,13 @@ const quickPresets = computed(() => {
 				</div>
 
 				<div class="space-y-0.5">
-					<div class="flex flex-wrap items-center gap-2">
-						<h3 class="text-base font-black text-fg sm:text-lg">{{ habit.title }}</h3>
-						<span class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 text-xs font-extrabold text-fg">
-							{{ toPersianDigits(effectiveTotalMinutes) }}
-							<span class="text-fg-muted">/ {{ toPersianDigits(plannedMinutes) }} دقیقه</span>
-						</span>
-					</div>
-					<p v-if="habit.scheduleLabel" class="text-xs font-semibold text-fg-secondary">{{ habit.scheduleLabel }}</p>
+					<h3 class="text-base font-black text-fg sm:text-lg">{{ habit.title }}</h3>
+					<p v-if="habit.scheduleLabel" class="text-xs font-semibold text-fg-secondary">
+						{{ habit.scheduleLabel }} • هدف: {{ toPersianDigits(plannedMinutes) }} دقیقه
+					</p>
+					<p v-else class="text-xs font-semibold text-fg-secondary">
+						هدف: {{ toPersianDigits(plannedMinutes) }} دقیقه
+					</p>
 				</div>
 			</div>
 

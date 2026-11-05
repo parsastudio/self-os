@@ -97,25 +97,22 @@ const activeNotesBadgeCount = computed(
 		</div>
 
 		<!-- کشوی علت‌ها و یادداشت روز -->
-		<div v-if="showReflectionDrawer" class="mt-4 space-y-4 border-t border-border pt-4">
-			<div class="space-y-2">
-				<div class="text-xs font-bold text-fg-secondary">تگ‌های سریع علت کاهش یا افزایش:</div>
-				<div class="flex flex-wrap gap-1.5">
-					<button
-						v-for="tag in availableTags"
-						:key="tag"
-						type="button"
-						class="h-9 rounded-xl border px-3 text-xs font-bold transition"
-						:class="
-							selectedTags.includes(tag)
-								? 'border-accent-border bg-accent text-accent-fg'
-								: 'border-border bg-elevated text-fg-secondary hover:text-fg'
-						"
-						@click="emit('toggleTag', tag)"
-					>
-						#{{ tag }}
-					</button>
-				</div>
+		<div v-if="showReflectionDrawer" class="mt-4 space-y-3.5 border-t border-border pt-4">
+			<div class="flex flex-wrap gap-1.5">
+				<button
+					v-for="tag in availableTags"
+					:key="tag"
+					type="button"
+					class="h-9 rounded-xl border px-3 text-xs font-bold transition"
+					:class="
+						selectedTags.includes(tag)
+							? 'border-accent-border bg-accent text-accent-fg'
+							: 'border-border bg-elevated text-fg-secondary hover:text-fg'
+					"
+					@click="emit('toggleTag', tag)"
+				>
+					#{{ tag }}
+				</button>
 			</div>
 
 			<div>
@@ -132,11 +129,9 @@ const activeNotesBadgeCount = computed(
 		<!-- کشوی تنظیم ریتم فردا -->
 		<div v-if="showTomorrowDrawer && cadenceHabits.length > 0" class="mt-4 space-y-4 border-t border-border pt-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
-				<div>
-					<h3 class="text-sm font-black text-fg">
-						تعیین هدف طرح‌های تکرارشونده برای فردا ({{ tomorrowHuman.fullLabel }})
-					</h3>
-				</div>
+				<h3 class="text-sm font-black text-fg">
+					هدف فردا ({{ tomorrowHuman.fullLabel }})
+				</h3>
 
 				<button
 					type="button"

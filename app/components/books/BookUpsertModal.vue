@@ -178,7 +178,7 @@ function handleSubmit() {
 
 			<div>
 				<label for="bk-notes" class="mb-1.5 block text-xs font-bold text-fg-secondary">
-					نکات کلیدی یا خلاصه برداشت (نوبت مطالعه، خلاصه، نقل‌قول و...)
+					یادداشت (اختیاری)
 				</label>
 				<textarea
 					id="bk-notes"

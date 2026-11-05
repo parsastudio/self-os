@@ -83,8 +83,10 @@ export function useClientAuth() {
 		if (serverAuthenticated === true) {
 			isAuthenticated.value = true;
 			isPasswordConfigured.value = serverPasswordConfigured ?? true;
-			if (record && record.expiresAtIso < nowIso) {
+			if (record) {
+				record.isAuthenticated = true;
 				record.expiresAtIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+				record.updatedAtIso = nowIso;
 				await db.localAuth.put(record);
 			}
 			isInitialized.value = true;
@@ -108,6 +110,10 @@ export function useClientAuth() {
 		}
 
 		if (record && record.isAuthenticated && record.expiresAtIso > nowIso) {
+			record.expiresAtIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+			record.updatedAtIso = nowIso;
+			await db.localAuth.put(record);
+
 			isAuthenticated.value = true;
 			isPasswordConfigured.value = record.isPasswordConfigured;
 			isInitialized.value = true;

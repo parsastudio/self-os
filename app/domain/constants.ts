@@ -17,7 +17,7 @@ export const TIER_SCORES = {
 	GOLD: 3
 } as const;
 
-export const COMPOSITE_FULL_LABEL = '3 (کامل)';
+export const COMPOSITE_FULL_LABEL = 'کامل';
 
 export const CADENCE_DEFAULTS = {
 	INTERVALS: 1,
@@ -52,22 +52,22 @@ export interface DayStatusMetaItem {
 export const DAY_STATUS_META: Record<DayStatusColor, DayStatusMetaItem> = {
 	optimal: {
 		value: 'optimal',
-		label: 'سبز (مطلوب / افزایش)',
-		shortBadgeLabel: 'سبز (مطلوب)',
+		label: 'مطلوب',
+		shortBadgeLabel: 'مطلوب',
 		dotClass: 'bg-optimal',
 		softBadgeClasses: 'bg-optimal-soft text-optimal'
 	},
 	partial: {
 		value: 'partial',
-		label: 'زرد (ترکیبی)',
-		shortBadgeLabel: 'زرد (ترکیبی)',
+		label: 'ترکیبی',
+		shortBadgeLabel: 'ترکیبی',
 		dotClass: 'bg-partial',
 		softBadgeClasses: 'bg-partial-soft text-partial'
 	},
 	failed: {
 		value: 'failed',
-		label: 'قرمز (کاهش / شکست)',
-		shortBadgeLabel: 'قرمز (کاهش)',
+		label: 'نامطلوب',
+		shortBadgeLabel: 'نامطلوب',
 		dotClass: 'bg-failed',
 		softBadgeClasses: 'bg-failed-soft text-failed'
 	}
@@ -198,11 +198,11 @@ export const MEDIA_STATUS_OPTIONS: ReadonlyArray<{
 ] as const;
 
 export const BOOK_RATING_OPTIONS = [
-	{ value: 5, label: '★★★★★ (۵)' },
-	{ value: 4, label: '★★★★☆ (۴)' },
-	{ value: 3, label: '★★★☆☆ (۳)' },
-	{ value: 2, label: '★★☆☆☆ (۲)' },
-	{ value: 1, label: '★☆☆☆☆ (۱)' }
+	{ value: 5, label: '۵ ستاره' },
+	{ value: 4, label: '۴ ستاره' },
+	{ value: 3, label: '۳ ستاره' },
+	{ value: 2, label: '۲ ستاره' },
+	{ value: 1, label: '۱ ستاره' }
 ] as const;
 
 export function getTierBadgeMeta(tier: number | null | undefined): {

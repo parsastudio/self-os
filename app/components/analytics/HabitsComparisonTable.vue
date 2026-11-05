@@ -25,10 +25,7 @@ const sortedRows = computed(() => [...props.rows].sort((a, b) => b.avgQualitySco
 				<div class="flex h-9 w-9 items-center justify-center rounded-xl border border-accent-border bg-accent-soft text-accent-text">
 					<BarChart3 class="h-5 w-5" />
 				</div>
-				<div>
-					<h3 class="text-base font-black text-fg">مقایسه جامع همه طرح‌ها در این بازه</h3>
-					<p class="text-xs font-bold text-fg-secondary">روی هر طرح کلیک کنید تا نمودار روند و جزئیات تکاملی آن در بالا باز شود</p>
-				</div>
+				<h3 class="text-base font-black text-fg">مقایسه همه طرح‌ها</h3>
 			</div>
 		</div>
 
@@ -49,10 +46,7 @@ const sortedRows = computed(() => [...props.rows].sort((a, b) => b.avgQualitySco
 					<div class="flex flex-wrap items-center gap-2">
 						<span class="text-sm font-black text-fg">{{ row.habit.title }}</span>
 						<span v-if="row.parentTitle" class="rounded-lg border border-border bg-surface px-2 py-0.5 text-[10px] font-bold text-fg-muted">
-							زیرطرحِ {{ row.parentTitle }}
-						</span>
-						<span v-else-if="row.isComposite" class="rounded-lg border border-gold-border bg-gold-soft px-2 py-0.5 text-[10px] font-extrabold text-gold-text">
-							مجموعه‌طرح
+							{{ row.parentTitle }}
 						</span>
 						<span v-if="row.habit.status === 'archived'" class="rounded-lg border border-border bg-surface px-2 py-0.5 text-[10px] font-bold text-fg-muted">
 							بایگانی

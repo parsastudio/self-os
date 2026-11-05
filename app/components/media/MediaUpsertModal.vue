@@ -200,7 +200,7 @@ function handleSubmit() {
 
 			<div>
 				<label for="md-notes" class="mb-1.5 block text-xs font-bold text-fg-secondary">
-					یادداشت کوتاه (برداشت، نوبت تماشا، اپیزود یا نکته داستان...)
+					یادداشت (اختیاری)
 				</label>
 				<textarea
 					id="md-notes"

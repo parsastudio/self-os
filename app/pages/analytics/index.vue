@@ -80,49 +80,39 @@ function selectHabitAndScroll(habitId: string) {
 		<section class="rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:p-6">
 			<div class="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
 				<div class="flex items-center gap-3.5">
-					<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text">
-						<BarChart3 class="h-6 w-6" />
+					<div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text">
+						<BarChart3 class="h-5 w-5" />
 					</div>
-					<div>
-						<div class="flex flex-wrap items-center gap-2">
-							<h1 class="text-xl font-black tracking-tight text-fg sm:text-2xl">آمار و مهندسی روند طرح‌ها</h1>
-							<span dir="ltr" class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 font-mono text-xs font-bold text-fg-secondary">
-								{{ toPersianDigits(isoToJalaliSlash(report.startDateIso)) }} → {{ toPersianDigits(isoToJalaliSlash(report.endDateIso)) }}
-							</span>
-						</div>
-						<p class="mt-0.5 text-xs font-bold text-fg-secondary">
-							تحلیل عمیق استمرار، کیفیت سطوح و تاثیر تغییرات قوانین هر طرح در طول زمان
-						</p>
+					<div class="flex flex-wrap items-center gap-2.5">
+						<h1 class="text-xl font-black tracking-tight text-fg sm:text-2xl">آمار و روند طرح‌ها</h1>
+						<span dir="ltr" class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 font-mono text-xs font-bold text-fg-secondary">
+							{{ toPersianDigits(isoToJalaliSlash(report.startDateIso)) }} → {{ toPersianDigits(isoToJalaliSlash(report.endDateIso)) }}
+						</span>
 					</div>
 				</div>
 
-				<div class="flex flex-wrap items-center gap-2.5">
+				<div class="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
+					<div v-if="habitSelectOptions.length > 0" class="w-full sm:w-64">
+						<CustomSelect
+							:model-value="selectedHabitId"
+							:options="habitSelectOptions"
+							trigger-class="h-11 text-fg"
+							@select="selectHabitAndScroll(String($event))"
+						/>
+					</div>
+
 					<div class="flex items-center gap-1 rounded-2xl border border-border bg-elevated p-1">
 						<button
 							v-for="opt in rangeOptions"
 							:key="opt.value"
 							type="button"
-							class="rounded-xl px-3 py-2 text-xs font-extrabold transition"
+							class="flex-1 rounded-xl px-3 py-2 text-xs font-extrabold whitespace-nowrap transition sm:flex-initial"
 							:class="selectedRange === opt.value ? 'border border-accent-border bg-accent-soft text-accent-text shadow-xs' : 'text-fg-secondary hover:text-fg'"
 							@click="setRange(opt.value)"
 						>
 							{{ opt.label }}
 						</button>
 					</div>
-				</div>
-			</div>
-
-			<div v-if="habitSelectOptions.length > 0" class="mt-5 flex flex-col justify-between gap-3 border-t border-border pt-4 sm:flex-row sm:items-center">
-				<div class="flex items-center gap-2">
-					<span class="text-xs font-black text-fg">انتخاب طرح برای کاوش عمیق:</span>
-				</div>
-				<div class="w-full sm:w-80">
-					<CustomSelect
-						:model-value="selectedHabitId"
-						:options="habitSelectOptions"
-						trigger-class="h-11 text-fg"
-						@select="selectHabitAndScroll(String($event))"
-					/>
 				</div>
 			</div>
 		</section>
