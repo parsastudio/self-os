@@ -1,6 +1,4 @@
-import * as _jalaali from 'jalaali-js';
-
-const jalaali = ((_jalaali as Record<string, unknown>).default || _jalaali) as typeof _jalaali;
+import * as jalaali from 'jalaali-js';
 
 export interface JalaliParts {
 	jy: number;
