@@ -2,6 +2,7 @@ import { getAppDatabase, type LocalDailyEntryRecord, type LocalHabitLogRecord, t
 import {
 	buildCreatedHabitWithLifecycle,
 	buildUpdatedHabitWithLifecycle,
+	isDailyEntryEmpty,
 	resolveHabitRuleSnapshot,
 	serializeHabitSpecSnapshot
 } from '~/core/habit-engine';
@@ -80,15 +81,7 @@ export function useLocalRepository() {
 			const nowIso = input.updatedAtIso || new Date().toISOString();
 			const outboxId = `daily:${input.dateIso}`;
 
-			const isClearState =
-				(!input.reflectionNote || input.reflectionNote.trim() === '') &&
-				(!input.journalText || input.journalText.trim() === '') &&
-				input.tags.length === 0 &&
-				input.logs.every(
-					(l) =>
-						(l.achievedTier === null || l.achievedTier === undefined) &&
-						(l.totalActualMinutes === null || l.totalActualMinutes === 0 || l.totalActualMinutes === undefined)
-				);
+			const isClearState = isDailyEntryEmpty(input);
 
 			const mutation: SyncOutboxMutation = {
 				id: outboxId,
@@ -295,26 +288,51 @@ export function useLocalRepository() {
 		}
 	};
 
-	const books = {
-		async create(input: CreateBookInput): Promise<BookEntity> {
-			const { startedAtIso, finishedAtIso } = resolveCompletedRangeDates({
-				startedJalali: input.startedJalali,
-				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed'
-			});
-
-			const nowIso = new Date().toISOString();
-			const newBook: BookEntity = {
-				id: crypto.randomUUID(),
-				title: input.title.trim(),
-				author: input.author?.trim() || null,
-				status: input.status,
+	function buildTrackedItemMeta(params: {
+		id?: string;
+		title: string;
+		startedJalali?: string;
+		finishedJalali?: string;
+		isCompleted: boolean;
+		rating: number | null;
+		notes?: string;
+		existingCreatedAtIso?: string;
+	}) {
+		const { startedAtIso, finishedAtIso } = resolveCompletedRangeDates({
+			startedJalali: params.startedJalali,
+			finishedJalali: params.finishedJalali,
+			isCompleted: params.isCompleted
+		});
+		const nowIso = new Date().toISOString();
+		return {
+			nowIso,
+			base: {
+				id: params.id || crypto.randomUUID(),
+				title: params.title.trim(),
 				startedAtIso,
 				finishedAtIso,
-				rating: input.rating,
-				notes: input.notes?.trim() || null,
-				createdAtIso: nowIso,
+				rating: params.rating,
+				notes: params.notes?.trim() || null,
+				createdAtIso: params.existingCreatedAtIso || nowIso,
 				updatedAtIso: nowIso
+			}
+		};
+	}
+
+	const books = {
+		async create(input: CreateBookInput): Promise<BookEntity> {
+			const { nowIso, base } = buildTrackedItemMeta({
+				title: input.title,
+				startedJalali: input.startedJalali,
+				finishedJalali: input.finishedJalali,
+				isCompleted: input.status === 'completed',
+				rating: input.rating,
+				notes: input.notes
+			});
+			const newBook: BookEntity = {
+				...base,
+				author: input.author?.trim() || null,
+				status: input.status
 			};
 
 			await stageMutation(
@@ -334,24 +352,20 @@ export function useLocalRepository() {
 
 		async update(input: UpdateBookInput): Promise<void> {
 			const existing = await db.books.get(input.bookId);
-			const { startedAtIso, finishedAtIso } = resolveCompletedRangeDates({
+			const { nowIso, base } = buildTrackedItemMeta({
+				id: input.bookId,
+				title: input.title,
 				startedJalali: input.startedJalali,
 				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed'
-			});
-
-			const nowIso = new Date().toISOString();
-			const updated: BookEntity = {
-				id: input.bookId,
-				title: input.title.trim(),
-				author: input.author?.trim() || null,
-				status: input.status,
-				startedAtIso,
-				finishedAtIso,
+				isCompleted: input.status === 'completed',
 				rating: input.rating,
-				notes: input.notes?.trim() || null,
-				createdAtIso: existing?.createdAtIso || nowIso,
-				updatedAtIso: nowIso
+				notes: input.notes,
+				existingCreatedAtIso: existing?.createdAtIso
+			});
+			const updated: BookEntity = {
+				...base,
+				author: input.author?.trim() || null,
+				status: input.status
 			};
 
 			await stageMutation(
@@ -411,24 +425,18 @@ export function useLocalRepository() {
 
 	const media = {
 		async create(input: CreateMediaInput): Promise<MediaEntity> {
-			const { startedAtIso, finishedAtIso } = resolveCompletedRangeDates({
+			const { nowIso, base } = buildTrackedItemMeta({
+				title: input.title,
 				startedJalali: input.startedJalali,
 				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed'
-			});
-
-			const nowIso = new Date().toISOString();
-			const newMedia: MediaEntity = {
-				id: crypto.randomUUID(),
-				title: input.title.trim(),
-				category: input.category,
-				status: input.status,
-				startedAtIso,
-				finishedAtIso,
+				isCompleted: input.status === 'completed',
 				rating: input.rating,
-				notes: input.notes?.trim() || null,
-				createdAtIso: nowIso,
-				updatedAtIso: nowIso
+				notes: input.notes
+			});
+			const newMedia: MediaEntity = {
+				...base,
+				category: input.category,
+				status: input.status
 			};
 
 			await stageMutation(
@@ -448,24 +456,20 @@ export function useLocalRepository() {
 
 		async update(input: UpdateMediaInput): Promise<void> {
 			const existing = await db.media.get(input.mediaId);
-			const { startedAtIso, finishedAtIso } = resolveCompletedRangeDates({
+			const { nowIso, base } = buildTrackedItemMeta({
+				id: input.mediaId,
+				title: input.title,
 				startedJalali: input.startedJalali,
 				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed'
-			});
-
-			const nowIso = new Date().toISOString();
-			const updated: MediaEntity = {
-				id: input.mediaId,
-				title: input.title.trim(),
-				category: input.category,
-				status: input.status,
-				startedAtIso,
-				finishedAtIso,
+				isCompleted: input.status === 'completed',
 				rating: input.rating,
-				notes: input.notes?.trim() || null,
-				createdAtIso: existing?.createdAtIso || nowIso,
-				updatedAtIso: nowIso
+				notes: input.notes,
+				existingCreatedAtIso: existing?.createdAtIso
+			});
+			const updated: MediaEntity = {
+				...base,
+				category: input.category,
+				status: input.status
 			};
 
 			await stageMutation(

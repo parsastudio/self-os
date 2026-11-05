@@ -9,7 +9,11 @@ import {
 import { and, asc, eq } from 'drizzle-orm';
 import { getAllHabits } from './habits.repo';
 import { bumpServerStructuralVersion } from './sync.repo';
-import { resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
+import {
+	isDailyEntryEmpty,
+	resolveHabitRuleSnapshot,
+	serializeHabitSpecSnapshot
+} from '~/core/habit-engine';
 import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
 import type {
 	HabitEntity,
@@ -77,17 +81,7 @@ export function saveDailyEntryAndLogs(
 				.run();
 		}
 
-		const isCompletelyEmpty =
-			(!input.reflectionNote || input.reflectionNote.trim() === '') &&
-			(!input.journalText || input.journalText.trim() === '') &&
-			input.tags.length === 0 &&
-			input.logs.every(
-				(l) =>
-					(l.achievedTier === null || l.achievedTier === undefined) &&
-					(l.totalActualMinutes === null || l.totalActualMinutes === 0 || l.totalActualMinutes === undefined)
-			);
-
-		if (isCompletelyEmpty) {
+		if (isDailyEntryEmpty(input)) {
 			tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso)).run();
 			tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso)).run();
 			bumpServerStructuralVersion(entryUpdatedAtIso);

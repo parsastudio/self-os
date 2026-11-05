@@ -97,6 +97,52 @@ function getOptionStyle(selected: number | null, target: number): string {
 	if (target === TIER_SCORES.SILVER) return 'bg-silver text-on-solid font-extrabold shadow-xs';
 	return 'bg-gold text-on-solid font-black shadow-xs';
 }
+
+interface TierButtonDescriptor {
+	tier: number;
+	label: string;
+	minWidthClass: string;
+}
+
+function getTierButtons(
+	supportedMaxTier: 1 | 2 | 3,
+	situational: boolean,
+	useBinaryBronzeLabel = false
+): TierButtonDescriptor[] {
+	const items: TierButtonDescriptor[] = [];
+	if (situational) {
+		items.push({
+			tier: TIER_SCORES.SKIPPED,
+			label: 'پیش نیامد',
+			minWidthClass: 'sm:px-3'
+		});
+	}
+	items.push({
+		tier: TIER_SCORES.FAILED,
+		label: 'نشد',
+		minWidthClass: 'sm:min-w-14 sm:px-3.5'
+	});
+	items.push({
+		tier: TIER_SCORES.BRONZE,
+		label: useBinaryBronzeLabel && supportedMaxTier === TIER_SCORES.BRONZE ? 'انجام شد' : 'برنز',
+		minWidthClass: 'sm:min-w-16 sm:px-3.5'
+	});
+	if (supportedMaxTier >= TIER_SCORES.SILVER) {
+		items.push({
+			tier: TIER_SCORES.SILVER,
+			label: 'نقره',
+			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+		});
+	}
+	if (supportedMaxTier === TIER_SCORES.GOLD) {
+		items.push({
+			tier: TIER_SCORES.GOLD,
+			label: 'طلا',
+			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+		});
+	}
+	return items;
+}
 </script>
 
 <template>
@@ -155,47 +201,14 @@ function getOptionStyle(selected: number | null, target: number): string {
 			<div v-if="hasChildren" class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
 				<div class="flex flex-wrap items-center gap-1 border border-border min-w-0 flex-1 rounded-2xl bg-elevated p-1 sm:w-auto sm:flex-initial sm:gap-1.5 sm:p-1.5">
 					<button
-						v-if="hasSituationalGroup"
+						v-for="btn in getTierButtons(maxChildSupportedTier, hasSituationalGroup, false)"
+						:key="btn.tier"
 						type="button"
-						class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11 sm:px-3"
-						:class="getOptionStyle(uniformChildrenTier, TIER_SCORES.SKIPPED)"
-						@click.stop="emit('selectGroupTier', node.id, TIER_SCORES.SKIPPED)"
+						class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11"
+						:class="[btn.minWidthClass, getOptionStyle(uniformChildrenTier, btn.tier)]"
+						@click.stop="emit('selectGroupTier', node.id, btn.tier)"
 					>
-						پیش نیامد
-					</button>
-					<button
-						type="button"
-						class="flex-1 text-xs transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-14 sm:px-3.5"
-						:class="getOptionStyle(uniformChildrenTier, TIER_SCORES.FAILED)"
-						@click.stop="emit('selectGroupTier', node.id, TIER_SCORES.FAILED)"
-					>
-						نشد
-					</button>
-					<button
-						type="button"
-						class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-16 sm:px-3.5"
-						:class="getOptionStyle(uniformChildrenTier, TIER_SCORES.BRONZE)"
-						@click.stop="emit('selectGroupTier', node.id, TIER_SCORES.BRONZE)"
-					>
-						برنز
-					</button>
-					<button
-						v-if="maxChildSupportedTier >= TIER_SCORES.SILVER"
-						type="button"
-						class="flex-1 text-xs transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-16 sm:px-3.5"
-						:class="getOptionStyle(uniformChildrenTier, TIER_SCORES.SILVER)"
-						@click.stop="emit('selectGroupTier', node.id, TIER_SCORES.SILVER)"
-					>
-						نقره
-					</button>
-					<button
-						v-if="maxChildSupportedTier === TIER_SCORES.GOLD"
-						type="button"
-						class="flex-1 text-xs transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-16 sm:px-3.5"
-						:class="getOptionStyle(uniformChildrenTier, TIER_SCORES.GOLD)"
-						@click.stop="emit('selectGroupTier', node.id, TIER_SCORES.GOLD)"
-					>
-						طلا
+						{{ btn.label }}
 					</button>
 				</div>
 
@@ -213,47 +226,14 @@ function getOptionStyle(selected: number | null, target: number): string {
 			<!-- دکمه‌های سطوح عادت مستقل -->
 			<div v-else class="flex flex-wrap items-center gap-1 border border-border min-w-0 flex-1 rounded-2xl bg-elevated p-1 sm:w-auto sm:flex-initial sm:gap-1.5 sm:p-1.5">
 				<button
-					v-if="node.isSituational"
+					v-for="btn in getTierButtons(maxTier, Boolean(node.isSituational), true)"
+					:key="btn.tier"
 					type="button"
-					class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11 sm:px-3"
-					:class="getOptionStyle(currentTier, TIER_SCORES.SKIPPED)"
-					@click.stop="emit('selectTier', node.id, TIER_SCORES.SKIPPED)"
+					class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11"
+					:class="[btn.minWidthClass, getOptionStyle(currentTier, btn.tier)]"
+					@click.stop="emit('selectTier', node.id, btn.tier)"
 				>
-					پیش نیامد
-				</button>
-				<button
-					type="button"
-					class="flex-1 text-xs transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-14 sm:px-3.5"
-					:class="getOptionStyle(currentTier, TIER_SCORES.FAILED)"
-					@click.stop="emit('selectTier', node.id, TIER_SCORES.FAILED)"
-				>
-					نشد
-				</button>
-				<button
-					type="button"
-					class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-16 sm:px-3.5"
-					:class="getOptionStyle(currentTier, TIER_SCORES.BRONZE)"
-					@click.stop="emit('selectTier', node.id, TIER_SCORES.BRONZE)"
-				>
-					{{ maxTier === TIER_SCORES.BRONZE ? 'انجام شد' : 'برنز' }}
-				</button>
-				<button
-					v-if="maxTier >= TIER_SCORES.SILVER"
-					type="button"
-					class="flex-1 text-xs transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-16 sm:px-3.5"
-					:class="getOptionStyle(currentTier, TIER_SCORES.SILVER)"
-					@click.stop="emit('selectTier', node.id, TIER_SCORES.SILVER)"
-				>
-					نقره
-				</button>
-				<button
-					v-if="maxTier === TIER_SCORES.GOLD"
-					type="button"
-					class="flex-1 text-xs transition h-10 rounded-xl px-2.5 sm:h-11 sm:min-w-16 sm:px-3.5"
-					:class="getOptionStyle(currentTier, TIER_SCORES.GOLD)"
-					@click.stop="emit('selectTier', node.id, TIER_SCORES.GOLD)"
-				>
-					طلا
+					{{ btn.label }}
 				</button>
 			</div>
 		</div>
@@ -283,47 +263,14 @@ function getOptionStyle(selected: number | null, target: number): string {
 
 				<div class="flex flex-wrap items-center gap-1 border border-border w-full rounded-xl bg-surface p-1 sm:w-auto">
 					<button
-						v-if="sub.isSituational || node.isSituational"
-						type="button"
-						class="flex-1 text-xs whitespace-nowrap transition h-9 rounded-lg px-2 sm:px-2.5"
-						:class="getOptionStyle(logsByHabitId[sub.id]?.achievedTier ?? null, TIER_SCORES.SKIPPED)"
-						@click.stop="emit('selectTier', sub.id, TIER_SCORES.SKIPPED)"
-					>
-						پیش نیامد
-					</button>
-					<button
-						type="button"
-						class="flex-1 text-xs transition h-9 rounded-lg px-2.5 sm:px-3"
-						:class="getOptionStyle(logsByHabitId[sub.id]?.achievedTier ?? null, TIER_SCORES.FAILED)"
-						@click.stop="emit('selectTier', sub.id, TIER_SCORES.FAILED)"
-					>
-						نشد
-					</button>
-					<button
+						v-for="btn in getTierButtons(getMaxSupportedTier(sub), Boolean(sub.isSituational || node.isSituational), false)"
+						:key="btn.tier"
 						type="button"
 						class="flex-1 text-xs whitespace-nowrap transition h-9 rounded-lg px-2.5 sm:px-3"
-						:class="getOptionStyle(logsByHabitId[sub.id]?.achievedTier ?? null, TIER_SCORES.BRONZE)"
-						@click.stop="emit('selectTier', sub.id, TIER_SCORES.BRONZE)"
+						:class="getOptionStyle(logsByHabitId[sub.id]?.achievedTier ?? null, btn.tier)"
+						@click.stop="emit('selectTier', sub.id, btn.tier)"
 					>
-						برنز
-					</button>
-					<button
-						v-if="getMaxSupportedTier(sub) >= TIER_SCORES.SILVER"
-						type="button"
-						class="flex-1 text-xs transition h-9 rounded-lg px-2.5 sm:px-3"
-						:class="getOptionStyle(logsByHabitId[sub.id]?.achievedTier ?? null, TIER_SCORES.SILVER)"
-						@click.stop="emit('selectTier', sub.id, TIER_SCORES.SILVER)"
-					>
-						نقره
-					</button>
-					<button
-						v-if="getMaxSupportedTier(sub) === TIER_SCORES.GOLD"
-						type="button"
-						class="flex-1 text-xs transition h-9 rounded-lg px-2.5 sm:px-3"
-						:class="getOptionStyle(logsByHabitId[sub.id]?.achievedTier ?? null, TIER_SCORES.GOLD)"
-						@click.stop="emit('selectTier', sub.id, TIER_SCORES.GOLD)"
-					>
-						طلا
+						{{ btn.label }}
 					</button>
 				</div>
 			</div>

@@ -8,8 +8,26 @@ import type {
 	HabitRuleDiffItem,
 	HabitTreeNode,
 	LifecycleEventEntity,
-	MutateHabitStructureInput
+	MutateHabitStructureInput,
+	SaveDailyEntryInput
 } from '~/domain/schemas';
+
+export function isDailyEntryEmpty(
+	input: Pick<SaveDailyEntryInput, 'reflectionNote' | 'journalText' | 'tags' | 'logs'>
+): boolean {
+	return (
+		(!input.reflectionNote || input.reflectionNote.trim() === '') &&
+		(!input.journalText || input.journalText.trim() === '') &&
+		input.tags.length === 0 &&
+		input.logs.every(
+			(l) =>
+				(l.achievedTier === null || l.achievedTier === undefined) &&
+				(l.totalActualMinutes === null ||
+					l.totalActualMinutes === 0 ||
+					l.totalActualMinutes === undefined)
+		)
+	);
+}
 
 export function resolveEffectiveCadenceMinutes(
 	log:

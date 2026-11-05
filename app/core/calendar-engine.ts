@@ -144,33 +144,63 @@ export function assembleJalaliMonthArchive(params: {
 		logsByIso.set(log.dateIso, list);
 	}
 
+	const annualEventsByJalaliKey = new Map<string, CalendarEventEntity[]>();
+	const datedEventsByIso = new Map<string, CalendarEventEntity[]>();
+	for (const ev of eventsInMonth) {
+		if (ev.isAnnual) {
+			const key = `${ev.jalaliMonth}-${ev.jalaliDay}`;
+			const list = annualEventsByJalaliKey.get(key) ?? [];
+			list.push(ev);
+			annualEventsByJalaliKey.set(key, list);
+		} else if (ev.dateIso) {
+			const list = datedEventsByIso.get(ev.dateIso) ?? [];
+			list.push(ev);
+			datedEventsByIso.set(ev.dateIso, list);
+		}
+	}
+
+	const booksActivityByIso = new Map<string, CalendarDayAggregate['booksActivity']>();
+	for (const b of booksInMonth) {
+		if (b.finishedAtIso) {
+			const list = booksActivityByIso.get(b.finishedAtIso) ?? [];
+			list.push({ book: b, activityKind: 'finished' });
+			booksActivityByIso.set(b.finishedAtIso, list);
+		} else if (b.startedAtIso) {
+			const list = booksActivityByIso.get(b.startedAtIso) ?? [];
+			list.push({ book: b, activityKind: 'started' });
+			booksActivityByIso.set(b.startedAtIso, list);
+		}
+	}
+
+	const mediaActivityByIso = new Map<string, CalendarDayAggregate['mediaActivity']>();
+	for (const m of mediaInMonth) {
+		if (m.finishedAtIso) {
+			const list = mediaActivityByIso.get(m.finishedAtIso) ?? [];
+			list.push({ media: m, activityKind: 'finished' });
+			mediaActivityByIso.set(m.finishedAtIso, list);
+		} else if (m.startedAtIso) {
+			const list = mediaActivityByIso.get(m.startedAtIso) ?? [];
+			list.push({ media: m, activityKind: 'started' });
+			mediaActivityByIso.set(m.startedAtIso, list);
+		}
+	}
+
 	const daysAggregate: CalendarDayAggregate[] = grid.days.map((cell) => {
 		const rawEntry = entryByIso.get(cell.iso);
 		const rawLogs = logsByIso.get(cell.iso) ?? [];
 		const human = formatJalaliHuman(cell.iso, todayIso);
 
-		const dayEvents = eventsInMonth.filter((ev) => {
-			if (ev.isAnnual) return ev.jalaliMonth === cell.jm && ev.jalaliDay === cell.jd;
-			return ev.dateIso === cell.iso;
-		});
+		const annualDayEvents = annualEventsByJalaliKey.get(`${cell.jm}-${cell.jd}`) ?? [];
+		const specificDayEvents = datedEventsByIso.get(cell.iso) ?? [];
+		const dayEvents =
+			annualDayEvents.length > 0 && specificDayEvents.length > 0
+				? [...annualDayEvents, ...specificDayEvents]
+				: annualDayEvents.length > 0
+					? annualDayEvents
+					: specificDayEvents;
 
-		const booksActivity: CalendarDayAggregate['booksActivity'] = [];
-		for (const b of booksInMonth) {
-			if (b.finishedAtIso === cell.iso) {
-				booksActivity.push({ book: b, activityKind: 'finished' });
-			} else if (b.startedAtIso === cell.iso) {
-				booksActivity.push({ book: b, activityKind: 'started' });
-			}
-		}
-
-		const mediaActivity: CalendarDayAggregate['mediaActivity'] = [];
-		for (const m of mediaInMonth) {
-			if (m.finishedAtIso === cell.iso) {
-				mediaActivity.push({ media: m, activityKind: 'finished' });
-			} else if (m.startedAtIso === cell.iso) {
-				mediaActivity.push({ media: m, activityKind: 'started' });
-			}
-		}
+		const booksActivity = booksActivityByIso.get(cell.iso) ?? [];
+		const mediaActivity = mediaActivityByIso.get(cell.iso) ?? [];
 
 		const habitPerformances: DayHabitPerformanceItem[] = [];
 		for (const log of rawLogs) {
