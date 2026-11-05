@@ -25,7 +25,8 @@ export default defineNuxtConfig({
     head: {
       htmlAttrs: {
         lang: 'fa',
-        dir: 'rtl'
+        dir: 'rtl',
+        class: 'dark'
       },
       title: 'ردیابی طرح‌ها و سیستم عامل فردی',
       meta: [
@@ -37,7 +38,8 @@ export default defineNuxtConfig({
         { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' }
       ],
       link: [
-        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'preload', href: '/Vazirmatn.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }
       ]
     }
   }

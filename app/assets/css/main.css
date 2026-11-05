@@ -1,0 +1,273 @@
+@import 'tailwindcss';
+
+@font-face {
+	font-family: 'Vazirmatn';
+	src: url('/Vazirmatn.woff2') format('woff2-variations'),
+		url('/Vazirmatn.woff2') format('woff2');
+	font-weight: 100 900;
+	font-style: normal;
+	font-display: swap;
+}
+
+:root {
+	color-scheme: light;
+
+	/* Warm Sand Canvas + Crisp Ivory Surfaces for clear Light Mode depth */
+	--bg-canvas: oklch(0.952 0.012 80);
+	--bg-surface: oklch(0.996 0.003 85);
+	--bg-subtle: oklch(0.928 0.014 80);
+	--bg-interactive: oklch(0.895 0.016 80);
+	--bg-overlay: oklch(0.14 0.02 258 / 0.55);
+
+	--text-primary: oklch(0.18 0.02 255);
+	--text-secondary: oklch(0.42 0.02 255);
+	--text-muted: oklch(0.56 0.015 255);
+	--text-on-solid: oklch(0.995 0.003 85);
+
+	--border-hairline: oklch(0.875 0.014 80);
+	--border-focus: oklch(0.45 0.11 182);
+
+	/* Soft Botanical Teal / Sage Primary Accent */
+	--surface-accent: oklch(0.44 0.1 182);
+	--surface-accent-soft: oklch(0.93 0.035 182);
+	--border-accent: oklch(0.78 0.06 182);
+	--text-accent: oklch(0.32 0.09 182);
+	--text-accent-fg: oklch(0.99 0.005 182);
+
+	/* Tier Gold: Warm Honey Amber */
+	--tier-gold: oklch(0.62 0.14 78);
+	--tier-gold-soft: oklch(0.95 0.045 82);
+	--tier-gold-border: oklch(0.82 0.1 80);
+	--tier-gold-text: oklch(0.42 0.12 72);
+
+	/* Tier Silver: Soft Cool Lavender-Slate */
+	--tier-silver: oklch(0.52 0.06 260);
+	--tier-silver-soft: oklch(0.94 0.025 260);
+	--tier-silver-border: oklch(0.82 0.05 260);
+	--tier-silver-text: oklch(0.38 0.06 260);
+
+	/* Tier Bronze: Soft Terracotta Peach */
+	--tier-bronze: oklch(0.58 0.12 46);
+	--tier-bronze-soft: oklch(0.94 0.035 48);
+	--tier-bronze-border: oklch(0.82 0.075 46);
+	--tier-bronze-text: oklch(0.42 0.11 44);
+
+	/* Semantic States */
+	--state-optimal: oklch(0.52 0.13 156);
+	--state-optimal-soft: oklch(0.94 0.035 156);
+	--state-optimal-border: oklch(0.8 0.08 156);
+
+	--state-partial: oklch(0.62 0.14 78);
+	--state-partial-soft: oklch(0.95 0.045 82);
+	--state-partial-border: oklch(0.82 0.09 80);
+
+	--state-failed: oklch(0.55 0.16 22);
+	--state-failed-soft: oklch(0.94 0.035 22);
+	--state-failed-border: oklch(0.82 0.08 22);
+
+	--shadow-soft: 0 4px 20px -2px oklch(0.2 0.02 60 / 0.06), 0 2px 6px -1px oklch(0.2 0.02 60 / 0.04);
+	--shadow-card: 0 2px 12px -2px oklch(0.2 0.02 60 / 0.05), 0 1px 4px -1px oklch(0.2 0.02 60 / 0.03);
+	--shadow-modal: 0 24px 48px -12px oklch(0.15 0.02 258 / 0.25);
+}
+
+.dark {
+	color-scheme: dark;
+
+	/* Deep Midnight Slate Canvas + Elevated Velvet Cards */
+	--bg-canvas: oklch(0.145 0.018 258);
+	--bg-surface: oklch(0.2 0.022 258);
+	--bg-subtle: oklch(0.245 0.025 258);
+	--bg-interactive: oklch(0.29 0.028 258);
+	--bg-overlay: oklch(0.08 0.015 258 / 0.72);
+
+	--text-primary: oklch(0.95 0.008 85);
+	--text-secondary: oklch(0.74 0.015 255);
+	--text-muted: oklch(0.56 0.015 255);
+	--text-on-solid: oklch(0.995 0.003 85);
+
+	--border-hairline: oklch(0.285 0.024 258);
+	--border-focus: oklch(0.72 0.11 178);
+
+	/* Soft Mint-Teal Primary Accent */
+	--surface-accent: oklch(0.72 0.11 178);
+	--surface-accent-soft: oklch(0.25 0.045 180);
+	--border-accent: oklch(0.42 0.08 178);
+	--text-accent: oklch(0.82 0.09 178);
+	--text-accent-fg: oklch(0.14 0.02 258);
+
+	/* Tier Gold: Soft Champagne Gold */
+	--tier-gold: oklch(0.78 0.13 82);
+	--tier-gold-soft: oklch(0.255 0.045 80);
+	--tier-gold-border: oklch(0.45 0.09 80);
+	--tier-gold-text: oklch(0.86 0.11 84);
+
+	/* Tier Silver: Soft Periwinkle Silver */
+	--tier-silver: oklch(0.74 0.06 262);
+	--tier-silver-soft: oklch(0.255 0.035 262);
+	--tier-silver-border: oklch(0.44 0.06 262);
+	--tier-silver-text: oklch(0.85 0.05 262);
+
+	/* Tier Bronze: Warm Rose-Copper */
+	--tier-bronze: oklch(0.72 0.11 48);
+	--tier-bronze-soft: oklch(0.255 0.04 46);
+	--tier-bronze-border: oklch(0.44 0.08 46);
+	--tier-bronze-text: oklch(0.84 0.09 50);
+
+	/* Semantic States */
+	--state-optimal: oklch(0.72 0.13 156);
+	--state-optimal-soft: oklch(0.25 0.045 156);
+	--state-optimal-border: oklch(0.42 0.08 156);
+
+	--state-partial: oklch(0.78 0.13 82);
+	--state-partial-soft: oklch(0.255 0.045 80);
+	--state-partial-border: oklch(0.44 0.09 80);
+
+	--state-failed: oklch(0.68 0.15 22);
+	--state-failed-soft: oklch(0.25 0.045 22);
+	--state-failed-border: oklch(0.44 0.09 22);
+
+	--shadow-soft: 0 8px 28px -4px oklch(0.06 0.01 260 / 0.55);
+	--shadow-card: 0 4px 18px -2px oklch(0.05 0.01 260 / 0.45);
+	--shadow-modal: 0 24px 56px -12px oklch(0.02 0.01 260 / 0.75);
+}
+
+@theme inline {
+	--font-*: initial;
+	--font-sans: 'Vazirmatn', system-ui, -apple-system, sans-serif;
+	--font-mono: 'Vazirmatn', monospace;
+
+	--color-*: initial;
+
+	--color-surface: var(--bg-surface);
+	--color-elevated: var(--bg-subtle);
+	--color-muted: var(--bg-interactive);
+	--color-overlay: var(--bg-overlay);
+
+	--color-fg: var(--text-primary);
+	--color-fg-secondary: var(--text-secondary);
+	--color-fg-muted: var(--text-muted);
+	--color-on-solid: var(--text-on-solid);
+
+	--color-border: var(--border-hairline);
+	--color-border-strong: var(--border-focus);
+
+	--color-accent: var(--surface-accent);
+	--color-accent-soft: var(--surface-accent-soft);
+	--color-accent-border: var(--border-accent);
+	--color-accent-text: var(--text-accent);
+	--color-accent-fg: var(--text-accent-fg);
+
+	--color-gold: var(--tier-gold);
+	--color-gold-soft: var(--tier-gold-soft);
+	--color-gold-border: var(--tier-gold-border);
+	--color-gold-text: var(--tier-gold-text);
+
+	--color-silver: var(--tier-silver);
+	--color-silver-soft: var(--tier-silver-soft);
+	--color-silver-border: var(--tier-silver-border);
+	--color-silver-text: var(--tier-silver-text);
+
+	--color-bronze: var(--tier-bronze);
+	--color-bronze-soft: var(--tier-bronze-soft);
+	--color-bronze-border: var(--tier-bronze-border);
+	--color-bronze-text: var(--tier-bronze-text);
+
+	--color-optimal: var(--state-optimal);
+	--color-optimal-soft: var(--state-optimal-soft);
+	--color-optimal-border: var(--state-optimal-border);
+
+	--color-partial: var(--state-partial);
+	--color-partial-soft: var(--state-partial-soft);
+	--color-partial-border: var(--state-partial-border);
+
+	--color-failed: var(--state-failed);
+	--color-failed-soft: var(--state-failed-soft);
+	--color-failed-border: var(--state-failed-border);
+}
+
+@utility bg-base {
+	background-color: var(--bg-canvas);
+}
+
+@utility text-fg {
+	color: var(--text-primary);
+}
+
+@utility text-fg-secondary {
+	color: var(--text-secondary);
+}
+
+@utility text-fg-muted {
+	color: var(--text-muted);
+}
+
+@layer base {
+	html,
+	body {
+		background-color: var(--bg-canvas);
+		color: var(--text-primary);
+		font-family: var(--font-sans);
+		font-feature-settings: 'ss01' on, 'tnum' on;
+		font-variant-numeric: tabular-nums;
+		-webkit-font-smoothing: antialiased;
+		overflow-x: clip;
+	}
+
+	input,
+	textarea,
+	select,
+	button {
+		font-family: var(--font-sans);
+		font-feature-settings: 'ss01' on, 'tnum' on;
+		font-variant-numeric: tabular-nums;
+	}
+
+	pre,
+	code,
+	kbd,
+	samp {
+		font-family: var(--font-sans);
+		font-feature-settings: 'ss01' off, 'tnum' on;
+	}
+
+	button:not(:disabled),
+	[role='button']:not(:disabled),
+	a,
+	select:not(:disabled),
+	summary {
+		cursor: pointer;
+	}
+
+	button:disabled,
+	[role='button']:disabled,
+	select:disabled,
+	input:disabled,
+	textarea:disabled {
+		cursor: not-allowed;
+	}
+
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: var(--border-hairline) transparent;
+	}
+
+	*::-webkit-scrollbar {
+		width: 7px;
+		height: 7px;
+	}
+
+	*::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	*::-webkit-scrollbar-thumb {
+		background-color: var(--border-hairline);
+		border-radius: 9999px;
+		border: 2px solid transparent;
+		background-clip: padding-box;
+	}
+
+	*::-webkit-scrollbar-thumb:hover {
+		background-color: var(--text-muted);
+	}
+}
