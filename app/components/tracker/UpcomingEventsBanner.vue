@@ -17,6 +17,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
 	(e: 'toggleComplete', eventId: string, isCompleted: boolean): void;
+	(e: 'openCalendarDate', dateIso: string): void;
 }>();
 
 const hasAnythingToShow = computed(
@@ -64,25 +65,27 @@ function getRelativeText(days: number): string {
 					</button>
 				</div>
 
-				<NuxtLink
+				<button
 					v-for="item in upcomingItems.filter((u) => !selectedDayEvents.some((s) => s.id === u.id))"
 					:key="item.id + item.occurrenceDateIso"
-					:to="`/calendar?date=${item.occurrenceDateIso}`"
+					type="button"
 					class="flex items-center gap-2 rounded-2xl border border-border bg-elevated px-3 py-1.5 text-xs font-bold text-fg transition hover:border-border-strong"
+					@click="emit('openCalendarDate', item.occurrenceDateIso)"
 				>
 					<span class="h-2 w-2 shrink-0 rounded-full bg-accent"></span>
 					<span class="font-extrabold text-accent-text"> {{ getRelativeText(item.daysRemaining) }}: </span>
 					<span>{{ item.title }}</span>
-				</NuxtLink>
+				</button>
 			</div>
 
-			<NuxtLink
-				:to="`/calendar?date=${currentDateIso}`"
+			<button
+				type="button"
 				class="flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3 py-1.5 text-xs font-extrabold text-fg-secondary transition hover:border-border-strong hover:text-fg"
+				@click="emit('openCalendarDate', currentDateIso)"
 			>
 				<Clock class="h-3.5 w-3.5 text-accent-text" />
 				<span>مشاهده در تقویم</span>
-			</NuxtLink>
+			</button>
 		</div>
 	</section>
 </template>

@@ -295,6 +295,7 @@ function goToToday() {
 					@create-event="handleCreateEvent"
 					@toggle-event-complete="handleToggleEventComplete"
 					@delete-event="handleDeleteEvent"
+					@open-tracker-date="(iso) => router.push({ path: '/', query: { date: iso } })"
 				/>
 			</div>
 		</div>

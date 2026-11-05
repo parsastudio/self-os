@@ -12,6 +12,7 @@ import {
 	reflectionTags
 } from '../database/schema';
 import { like } from 'drizzle-orm';
+import type { SQLiteColumn, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { bumpServerStructuralVersion } from './sync.repo';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
@@ -61,18 +62,16 @@ export function importDatabaseFromJson(
 		}
 
 		const upsertRows = <T extends Record<string, unknown>>(
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			table: any,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			targetCol: any,
+			table: SQLiteTable,
+			targetCol: SQLiteColumn,
 			rows: ReadonlyArray<T>
 		) => {
 			for (const row of rows) {
 				tx.insert(table)
-					.values(row)
+					.values(row as Record<string, unknown>)
 					.onConflictDoUpdate({
 						target: targetCol,
-						set: row
+						set: row as Record<string, unknown>
 					})
 					.run();
 				totalImported++;

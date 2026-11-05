@@ -32,6 +32,7 @@ const emit = defineEmits<{
 	(e: 'createEvent', payload: CreateCalendarEventInput): void;
 	(e: 'toggleEventComplete', eventId: string, isCompleted: boolean): void;
 	(e: 'deleteEvent', eventId: string): void;
+	(e: 'openTrackerDate', dateIso: string): void;
 }>();
 
 const isAnnualChecked = ref(false);
@@ -97,14 +98,15 @@ function toggleHabitExpanded(habitId: string) {
 					<span>ثبت رویداد</span>
 				</button>
 
-				<NuxtLink
-					:to="`/?date=${day.iso}`"
+				<button
+					type="button"
 					class="flex h-10 items-center gap-1 rounded-2xl border border-border bg-elevated px-3 text-xs font-extrabold text-fg transition hover:border-border-strong"
 					title="باز کردن در صفحه ثبت روزانه"
+					@click="emit('openTrackerDate', day.iso)"
 				>
 					<span>ثبت روزانه</span>
 					<ArrowLeft class="h-3.5 w-3.5" />
-				</NuxtLink>
+				</button>
 			</div>
 		</div>
 

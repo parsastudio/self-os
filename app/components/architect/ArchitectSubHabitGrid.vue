@@ -10,6 +10,7 @@ defineProps<Props>();
 
 const emit = defineEmits<{
 	(e: 'editSubHabit', habit: HabitEntity): void;
+	(e: 'openStats', habitId: string): void;
 }>();
 </script>
 
@@ -30,14 +31,15 @@ const emit = defineEmits<{
 							<h3 class="text-base font-extrabold text-fg">{{ sub.title }}</h3>
 						</div>
 						<div class="flex items-center gap-1.5">
-							<NuxtLink
-								:to="`/analytics?habit=${sub.id}`"
+							<button
+								type="button"
 								class="flex items-center gap-1 rounded-lg border border-accent-border bg-accent-soft px-2 py-1 text-xs font-extrabold text-accent-text transition hover:opacity-90"
 								title="مشاهده آمار این زیرطرح"
+								@click="emit('openStats', sub.id)"
 							>
 								<BarChart3 class="h-3 w-3" />
 								<span>آمار</span>
-							</NuxtLink>
+							</button>
 							<button
 								type="button"
 								class="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-bold text-fg-secondary transition hover:text-fg"

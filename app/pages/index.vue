@@ -100,6 +100,7 @@ const groupedTieredSections = computed(() => {
 			:selected-day-events="activeSelectedDayEvents"
 			:current-date-iso="currentDateIso"
 			@toggle-complete="handleToggleCalendarEvent"
+			@open-calendar-date="(iso) => router.push({ path: '/calendar', query: { date: iso } })"
 		/>
 
 		<div v-if="tracker.habits.isLoading.value" class="space-y-4" aria-busy="true">
@@ -144,7 +145,7 @@ const groupedTieredSections = computed(() => {
 					:key="habit.id"
 					:habit="habit"
 					:log="tracker.logsByHabitId.value[habit.id]"
-					@update-actual="(id, intervals, mins) => tracker.updateCadenceActual(id, intervals, mins)"
+					@update-actual="(id, mins) => tracker.updateCadenceActual(id, mins)"
 				/>
 			</div>
 
@@ -179,6 +180,7 @@ const groupedTieredSections = computed(() => {
 			<DailyJournalSection
 				v-model="tracker.journalText.value"
 				@change="tracker.scheduleAutoSave(750)"
+				@open-memories="router.push('/memories')"
 			/>
 		</template>
 	</div>

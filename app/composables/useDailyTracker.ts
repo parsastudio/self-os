@@ -359,19 +359,17 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		scheduleAutoSave(0);
 	}
 
-	function updateCadenceActual(habitId: string, intervals: number | null, minutesPerInterval: number) {
+	function updateCadenceActual(habitId: string, minutesPerInterval: number) {
 		const current = logsByHabitId.value[habitId];
 		if (!current) return;
 		const nowIso = new Date().toISOString();
-		const safeIntervals =
-			intervals === null || Number.isNaN(intervals) || intervals <= 0 ? null : Math.floor(intervals);
 		const safeMinutes = Math.max(0, Number.isNaN(minutesPerInterval) ? 0 : minutesPerInterval);
 
 		logsByHabitId.value[habitId] = {
 			...current,
-			completedIntervals: safeIntervals,
+			completedIntervals: null,
 			actualMinutesPerInterval: safeMinutes,
-			totalActualMinutes: safeIntervals !== null ? Number((safeIntervals * safeMinutes).toFixed(1)) : safeMinutes,
+			totalActualMinutes: safeMinutes,
 			updatedAtIso: nowIso
 		};
 		manualDayStatus.value = null;

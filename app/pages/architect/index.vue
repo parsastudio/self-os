@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -9,6 +10,7 @@ import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.
 import HabitUpsertModal from '~/components/architect/HabitUpsertModal.vue';
 import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
 
+const router = useRouter();
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
 const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
@@ -111,6 +113,7 @@ async function handleUpdateHabit(payload: MutateHabitStructureInput) {
 				:children="getChildren(habit.id)"
 				@create-sub-habit="openCreateModal"
 				@edit-habit="openEditModal"
+				@open-stats="(habitId) => router.push({ path: '/analytics', query: { habit: habitId } })"
 			/>
 		</div>
 

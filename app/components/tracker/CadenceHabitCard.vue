@@ -14,7 +14,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const emit = defineEmits<{
-	(e: 'updateActual', habitId: string, intervals: number | null, minutes: number): void;
+	(e: 'updateActual', habitId: string, minutes: number): void;
 }>();
 
 const plannedMinutes = computed(() =>
@@ -101,7 +101,7 @@ const quickPresets = computed(() => {
 								? `هدف تعیین‌شده (${toPersianDigits(preset)} دقیقه)`
 								: ''
 					"
-					@click="emit('updateActual', habit.id, null, actualMinutes === preset && preset !== 0 ? 0 : preset)"
+					@click="emit('updateActual', habit.id, actualMinutes === preset && preset !== 0 ? 0 : preset)"
 				>
 					{{ preset === 0 ? 'صفر' : toPersianDigits(preset) }}
 				</button>
@@ -116,7 +116,7 @@ const quickPresets = computed(() => {
 							: 'text-bronze-text hover:bg-surface'
 					"
 					:title="habit.emergencyMinDesc"
-					@click="emit('updateActual', habit.id, null, CADENCE_DEFAULTS.EMERGENCY_MINUTES)"
+					@click="emit('updateActual', habit.id, CADENCE_DEFAULTS.EMERGENCY_MINUTES)"
 				>
 					<Flame class="h-3.5 w-3.5" />
 					<span>{{ toPersianDigits(CADENCE_DEFAULTS.EMERGENCY_MINUTES) }}</span>

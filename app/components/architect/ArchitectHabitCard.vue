@@ -15,6 +15,7 @@ const props = defineProps<Props>();
 const emit = defineEmits<{
 	(e: 'createSubHabit', parentId: string): void;
 	(e: 'editHabit', habit: HabitEntity): void;
+	(e: 'openStats', habitId: string): void;
 }>();
 
 const isComposite = computed(() => props.children && props.children.length > 0);
@@ -57,14 +58,15 @@ const isComposite = computed(() => props.children && props.children.length > 0);
 				</div>
 
 				<div class="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
-					<NuxtLink
-						:to="`/analytics?habit=${habit.id}`"
+					<button
+						type="button"
 						class="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-3 text-xs font-extrabold text-accent-text transition hover:opacity-90 sm:flex-initial"
 						title="مشاهده نمودار روند و آمار این طرح"
+						@click="emit('openStats', habit.id)"
 					>
 						<BarChart3 class="h-3.5 w-3.5 shrink-0" />
 						<span>آمار</span>
-					</NuxtLink>
+					</button>
 
 					<button
 						v-if="habit.trackingMode === 'tiered'"
@@ -117,7 +119,12 @@ const isComposite = computed(() => props.children && props.children.length > 0);
 			</div>
 
 			<!-- گرید زیرطرح‌های وابسته در مجموعه‌طرح -->
-			<ArchitectSubHabitGrid v-if="isComposite" :children="children" @edit-sub-habit="emit('editHabit', $event)" />
+			<ArchitectSubHabitGrid
+				v-if="isComposite"
+				:children="children"
+				@edit-sub-habit="emit('editHabit', $event)"
+				@open-stats="emit('openStats', $event)"
+			/>
 		</div>
 
 		<div v-if="habit.notes" class="mt-4 border-t border-border pt-3 text-xs text-fg-secondary">

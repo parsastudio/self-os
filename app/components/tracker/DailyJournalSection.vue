@@ -10,6 +10,7 @@ defineProps<Props>();
 const emit = defineEmits<{
 	(e: 'update:modelValue', value: string): void;
 	(e: 'change'): void;
+	(e: 'openMemories'): void;
 }>();
 </script>
 
@@ -22,9 +23,13 @@ const emit = defineEmits<{
 				<BookHeart class="h-4 w-4 text-accent-text" />
 				<span>خاطره و روایت امروز</span>
 			</label>
-			<NuxtLink to="/memories" class="text-xs font-bold text-fg-secondary transition hover:text-accent-text">
+			<button
+				type="button"
+				class="text-xs font-bold text-fg-secondary transition hover:text-accent-text"
+				@click="emit('openMemories')"
+			>
 				مشاهده دفتر خاطرات ←
-			</NuxtLink>
+			</button>
 		</div>
 
 		<textarea
