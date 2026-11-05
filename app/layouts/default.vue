@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { preloadRouteComponents } from '#app';
 import { computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useSyncEngine } from '~/composables/useSyncEngine';
@@ -18,11 +19,6 @@ const theme = useTheme();
 
 const isLoginPage = computed(() => route.path.startsWith('/login'));
 
-onMounted(() => {
-	theme.init();
-	syncEngine.init();
-});
-
 const navItems = [
 	{ href: '/', label: 'ثبت روزانه' },
 	{ href: '/calendar', label: 'تقویم' },
@@ -32,6 +28,31 @@ const navItems = [
 	{ href: '/books', label: 'کتابخانه' },
 	{ href: '/media', label: 'فیلم و انیمه' }
 ];
+
+const allAppRoutes = [
+	...navItems.map((i) => i.href),
+	'/analytics',
+	'/timeline',
+	'/settings',
+	'/login'
+];
+
+onMounted(() => {
+	theme.init();
+	syncEngine.init();
+
+	const warmUpRoutes = () => {
+		for (const path of allAppRoutes) {
+			void preloadRouteComponents(path);
+		}
+	};
+
+	if ('requestIdleCallback' in window) {
+		window.requestIdleCallback(warmUpRoutes);
+	} else {
+		setTimeout(warmUpRoutes, 800);
+	}
+});
 
 function isActive(href: string, currentPath: string): boolean {
 	if (href === '/') return currentPath === '/';
