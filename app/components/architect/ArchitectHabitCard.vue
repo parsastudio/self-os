@@ -27,66 +27,69 @@ const isComposite = computed(() => props.children && props.children.length > 0);
 		:class="{ 'md:col-span-2': isComposite }"
 	>
 		<div>
-			<div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-start sm:gap-4">
-				<div class="min-w-0 space-y-1.5">
-					<div class="flex flex-wrap items-center gap-2">
-						<h2 class="text-lg font-black text-fg sm:text-xl">{{ habit.title }}</h2>
+			<div class="flex flex-col gap-3">
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<div class="flex flex-wrap items-center gap-1.5">
 						<span
 							v-if="habit.trackingMode === 'interval_cadence'"
-							class="rounded-xl border border-accent-border bg-accent-soft px-3 py-1 text-xs font-extrabold text-accent-text"
+							class="rounded-xl border border-accent-border bg-accent-soft px-2.5 py-1 text-xs font-extrabold text-accent-text"
 						>
 							تکرارشونده
 						</span>
 						<span
 							v-else-if="isComposite"
-							class="rounded-xl border border-gold-border bg-gold-soft px-3 py-1 text-xs font-extrabold text-gold-text"
+							class="rounded-xl border border-gold-border bg-gold-soft px-2.5 py-1 text-xs font-extrabold text-gold-text"
 						>
 							مجموعه‌طرح ({{ toPersianDigits(children.length) }} زیرطرح)
 						</span>
 						<span
 							v-if="habit.isSituational"
-							class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 text-xs font-bold text-fg-secondary"
+							class="rounded-xl border border-border bg-elevated px-2.5 py-1 text-xs font-bold text-fg-secondary"
 						>
 							رویدادی
 						</span>
 					</div>
 
-					<div v-if="habit.scheduleLabel" class="flex items-center gap-1.5 text-sm text-fg-secondary">
-						<Clock class="h-4 w-4 text-fg-muted" />
-						<span>{{ habit.scheduleLabel }}</span>
+					<div class="mr-auto flex items-center gap-1.5 sm:gap-2">
+						<button
+							type="button"
+							class="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-3 text-xs font-extrabold text-accent-text transition hover:opacity-90"
+							title="مشاهده نمودار روند و آمار این طرح"
+							@click="emit('openStats', habit.id)"
+						>
+							<BarChart3 class="h-3.5 w-3.5 shrink-0" />
+							<span>آمار</span>
+						</button>
+
+						<button
+							v-if="habit.trackingMode === 'tiered'"
+							type="button"
+							class="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3 text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg"
+							title="افزودن زیرطرح به این طرح"
+							@click="emit('createSubHabit', habit.id)"
+						>
+							<Plus class="h-3.5 w-3.5 shrink-0" />
+							<span>زیرطرح</span>
+						</button>
+
+						<button
+							type="button"
+							class="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3.5 text-xs font-bold text-fg transition hover:border-border-strong hover:bg-muted"
+							@click="emit('editHabit', habit)"
+						>
+							<Pencil class="h-3.5 w-3.5 shrink-0" />
+							<span>ویرایش</span>
+						</button>
 					</div>
 				</div>
 
-				<div class="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
-					<button
-						type="button"
-						class="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-3 text-xs font-extrabold text-accent-text transition hover:opacity-90 sm:flex-initial"
-						title="مشاهده نمودار روند و آمار این طرح"
-						@click="emit('openStats', habit.id)"
-					>
-						<BarChart3 class="h-3.5 w-3.5 shrink-0" />
-						<span>آمار</span>
-					</button>
+				<div class="min-w-0 space-y-1">
+					<h2 class="text-base font-black leading-snug text-fg sm:text-lg">{{ habit.title }}</h2>
 
-					<button
-						v-if="habit.trackingMode === 'tiered'"
-						type="button"
-						class="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3.5 text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg sm:flex-initial"
-						title="افزودن زیرطرح به این طرح"
-						@click="emit('createSubHabit', habit.id)"
-					>
-						<Plus class="h-3.5 w-3.5 shrink-0" />
-						<span>زیرطرح</span>
-					</button>
-
-					<button
-						type="button"
-						class="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-4 text-xs font-bold text-fg transition hover:border-border-strong hover:bg-muted sm:flex-initial"
-						@click="emit('editHabit', habit)"
-					>
-						<Pencil class="h-3.5 w-3.5 shrink-0" />
-						<span>ویرایش</span>
-					</button>
+					<div v-if="habit.scheduleLabel" class="flex items-center gap-1.5 text-xs font-semibold text-fg-secondary">
+						<Clock class="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+						<span>{{ habit.scheduleLabel }}</span>
+					</div>
 				</div>
 			</div>
 
