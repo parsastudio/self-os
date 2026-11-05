@@ -1,0 +1,18 @@
+{
+  "name": "ردیابی طرح‌ها و سیستم‌عامل فردی",
+  "short_name": "new-life",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#171b26",
+  "theme_color": "#171b26",
+  "dir": "rtl",
+  "lang": "fa",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

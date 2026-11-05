@@ -45,6 +45,8 @@ export default defineNuxtConfig({
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'manifest', href: '/manifest.webmanifest' },
+        { rel: 'apple-touch-icon', href: '/favicon.svg' },
         { rel: 'preload', href: '/Vazirmatn.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }
       ]
     }
