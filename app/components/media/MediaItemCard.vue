@@ -18,11 +18,11 @@ const emit = defineEmits<{
 }>();
 
 const categoryMeta = computed(
-	() => MEDIA_CATEGORY_OPTIONS.find((c) => c.value === props.item.category) ?? MEDIA_CATEGORY_OPTIONS[0]
+	() => MEDIA_CATEGORY_OPTIONS.find((c) => c.value === props.item.category) ?? MEDIA_CATEGORY_OPTIONS[0]!
 );
 
 const statusMeta = computed(
-	() => MEDIA_STATUS_OPTIONS.find((s) => s.value === props.item.status) ?? MEDIA_STATUS_OPTIONS[0]
+	() => MEDIA_STATUS_OPTIONS.find((s) => s.value === props.item.status) ?? MEDIA_STATUS_OPTIONS[0]!
 );
 </script>
 

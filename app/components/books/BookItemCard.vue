@@ -18,7 +18,7 @@ const emit = defineEmits<{
 }>();
 
 const statusMeta = computed(
-	() => BOOK_STATUS_OPTIONS.find((s) => s.value === props.book.status) ?? BOOK_STATUS_OPTIONS[0]
+	() => BOOK_STATUS_OPTIONS.find((s) => s.value === props.book.status) ?? BOOK_STATUS_OPTIONS[0]!
 );
 </script>
 

@@ -74,9 +74,12 @@ function handleKeydown(e: KeyboardEvent) {
 			e.key === 'ArrowDown'
 				? (currentIndex + 1) % props.options.length
 				: (currentIndex - 1 + props.options.length) % props.options.length;
-		const nextVal = props.options[targetIndex].value;
-		emit('update:modelValue', nextVal);
-		emit('select', nextVal);
+		const targetOpt = props.options[targetIndex];
+		if (targetOpt) {
+			const nextVal = targetOpt.value;
+			emit('update:modelValue', nextVal);
+			emit('select', nextVal);
+		}
 	}
 }
 

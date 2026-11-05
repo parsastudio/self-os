@@ -33,7 +33,8 @@ const activePointIndex = computed<number | null>(() => {
 	}
 
 	for (let i = series.length - 1; i >= 0; i--) {
-		if (series[i].outcome !== 'unlogged') {
+		const item = series[i];
+		if (item && item.outcome !== 'unlogged') {
 			return i;
 		}
 	}

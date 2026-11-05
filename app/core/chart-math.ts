@@ -54,6 +54,7 @@ export function buildRollingPolylinePoints(
 	const pts: string[] = [];
 	for (let i = 0; i < series.length; i++) {
 		const pt = series[i];
+		if (!pt) continue;
 		const x = getChartX(i, series.length);
 		if (isCadence) {
 			if (pt.plannedMinutes !== null && pt.plannedMinutes > 0) {
@@ -77,6 +78,7 @@ export function buildRollingAreaPath(
 	const coords: Array<{ x: number; y: number }> = [];
 	for (let i = 0; i < series.length; i++) {
 		const pt = series[i];
+		if (!pt) continue;
 		const x = getChartX(i, series.length);
 		if (!isCadence && pt.rollingAvgScore !== null) {
 			coords.push({ x, y: getChartYFromScore(pt.rollingAvgScore) });
@@ -88,6 +90,7 @@ export function buildRollingAreaPath(
 	const baselineY = PAD_TOP + PLOT_H;
 	const first = coords[0];
 	const last = coords[coords.length - 1];
+	if (!first || !last) return '';
 	const lineSegments = coords.map((c) => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
 	return `M ${first.x.toFixed(1)} ${baselineY} ${lineSegments} L ${last.x.toFixed(1)} ${baselineY} Z`;
 }

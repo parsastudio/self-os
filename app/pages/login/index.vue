@@ -16,6 +16,7 @@ const confirmPassword = ref('');
 const showPassword = ref(false);
 const isSubmitting = ref(false);
 const errorMessage = ref<string | null>(null);
+const isClientOffline = computed(() => import.meta.client && !navigator.onLine);
 
 onMounted(async () => {
 	try {
@@ -119,7 +120,7 @@ async function handleSetup() {
 						{{ clientAuth.isPasswordConfigured.value ? 'ورود به فضای شخصی' : 'تعیین رمز عبور اولیه' }}
 					</h1>
 					<span
-						v-if="typeof navigator !== 'undefined' && !navigator.onLine"
+						v-if="isClientOffline"
 						class="inline-flex items-center gap-1 rounded-lg border border-gold-border bg-gold-soft px-2 py-0.5 text-[10px] font-black text-gold-text"
 					>
 						<WifiOff class="h-3 w-3" />

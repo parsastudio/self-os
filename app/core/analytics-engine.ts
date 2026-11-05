@@ -445,7 +445,9 @@ function computeStreaksFromSeries(
 
 	let currentStreak = 0;
 	for (let i = series.length - 1; i >= 0; i--) {
-		const out = series[i].outcome;
+		const pt = series[i];
+		if (!pt) break;
+		const out = pt.outcome;
 		if (out === 'gold' || out === 'silver' || out === 'bronze') {
 			currentStreak++;
 		} else if (out === 'failed') {
@@ -852,8 +854,8 @@ export function buildFullAnalyticsReport(params: {
 					? Number((totalPlannedMinutes / cadenceLoggedDays).toFixed(1))
 					: targetHabit.defaultMinutesPerInterval,
 			weekdayStats,
-			bestWeekday,
-			weakestWeekday,
+			bestWeekday: bestWeekday ?? null,
+			weakestWeekday: weakestWeekday ?? null,
 			tagCorrelations,
 			evolutionTimeline
 		};

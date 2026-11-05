@@ -157,11 +157,12 @@ const activeNotesBadgeCount = computed(
 					<label class="flex items-center gap-2">
 						<input
 							v-if="tomorrowPlans[habit.id]"
-							v-model.number="tomorrowPlans[habit.id].plannedMinutesPerInterval"
+							:value="tomorrowPlans[habit.id]?.plannedMinutesPerInterval"
 							type="number"
 							min="0"
 							step="1"
 							class="h-10 w-20 rounded-xl border border-border bg-surface px-3 text-center font-mono text-base font-black text-fg focus:border-border-strong focus:outline-none"
+							@input="tomorrowPlans[habit.id] && (tomorrowPlans[habit.id]!.plannedMinutesPerInterval = Number(($event.target as HTMLInputElement).value))"
 						/>
 						<span class="text-xs font-bold text-fg-secondary">دقیقه</span>
 					</label>

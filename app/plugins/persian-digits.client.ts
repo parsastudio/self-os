@@ -18,11 +18,11 @@ export default defineNuxtPlugin((nuxtApp) => {
 				}
 			};
 
-			(el as Record<string, unknown>)._persianHandler = handleInput;
+			(el as unknown as Record<string, unknown>)._persianHandler = handleInput;
 			el.addEventListener('input', handleInput);
 		},
 		unmounted(el: HTMLInputElement | HTMLTextAreaElement) {
-			const handler = (el as Record<string, unknown>)._persianHandler as ((e: Event) => void) | undefined;
+			const handler = (el as unknown as Record<string, unknown>)._persianHandler as ((e: Event) => void) | undefined;
 			if (handler) {
 				el.removeEventListener('input', handler);
 			}

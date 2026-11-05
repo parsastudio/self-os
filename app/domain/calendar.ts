@@ -68,8 +68,8 @@ export function normalizeDigits(input: string): string {
 
 export function toPersianDigits(input: string | number): string {
 	return String(input)
-		.replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)])
-		.replace(/[٠-٩]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)]);
+		.replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)] ?? d)
+		.replace(/[٠-٩]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)] ?? d);
 }
 
 export function dateToIso(date: Date): string {
@@ -80,7 +80,7 @@ export function dateToIso(date: Date): string {
 }
 
 export function isoToDate(iso: string): Date {
-	const [y, m, d] = iso.split('-').map(Number);
+	const [y = 1970, m = 1, d = 1] = iso.split('-').map(Number);
 	return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);
 }
 
@@ -99,7 +99,7 @@ export function shiftIsoDate(iso: string, deltaDays: number): string {
 }
 
 export function isoToJalaliParts(iso: string): JalaliParts {
-	const [gy, gm, gd] = iso.split('-').map(Number);
+	const [gy = 1970, gm = 1, gd = 1] = iso.split('-').map(Number);
 	return jalaali.toJalaali(gy, gm, gd);
 }
 
@@ -177,8 +177,8 @@ export function formatJalaliHuman(
 	else if (iso === tomorrowIso) relativeBadge = 'فردا';
 
 	return {
-		weekday,
-		weekdayShort,
+		weekday: weekday ?? '',
+		weekdayShort: weekdayShort ?? '',
 		day: jd,
 		monthName,
 		year: jy,
@@ -235,7 +235,7 @@ export function buildRecentCalendarDays<TStatus extends string>(params: {
 		list.push({
 			iso,
 			jd,
-			weekdayShort: JALALI_GRID_WEEKDAYS_SHORT[getPersianWeekdayIndex(dt)],
+			weekdayShort: JALALI_GRID_WEEKDAYS_SHORT[getPersianWeekdayIndex(dt)] ?? '',
 			monthName: PERSIAN_MONTHS[jm - 1] ?? '',
 			isSelected,
 			visualState
@@ -289,7 +289,7 @@ export function buildJalaliMonthGrid(
 			jy,
 			jm,
 			jd,
-			weekdayLabel: JALALI_GRID_WEEKDAYS[weekdayIdx],
+			weekdayLabel: JALALI_GRID_WEEKDAYS[weekdayIdx] ?? '',
 			isToday: iso === todayIso
 		});
 	}

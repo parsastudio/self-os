@@ -108,6 +108,7 @@ export const HabitLogItemInputSchema = z.object({
 		.max(TIER_SCORES.GOLD)
 		.nullable(),
 	achievedRuleSnapshot: z.string().nullable().optional(),
+	habitSnapshotJson: z.string().nullable().optional(),
 	completedIntervals: z.number().int().min(0).nullable(),
 	actualMinutesPerInterval: z.number().min(0).nullable(),
 	totalActualMinutes: z.number().min(0).nullable(),

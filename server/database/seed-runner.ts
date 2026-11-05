@@ -196,10 +196,12 @@ export function seedDatabaseWithInitialData(
 		return logs;
 	}
 
-	const firstSheetDateIso = requireIsoFromJalali(SEED_DAILY_ROWS[0].jalaliDate);
-	const lastSheetDateIso = requireIsoFromJalali(
-		SEED_DAILY_ROWS[SEED_DAILY_ROWS.length - 1].jalaliDate
-	);
+	const firstRow = SEED_DAILY_ROWS[0];
+	const lastRow = SEED_DAILY_ROWS[SEED_DAILY_ROWS.length - 1];
+	if (!firstRow || !lastRow) return;
+
+	const firstSheetDateIso = requireIsoFromJalali(firstRow.jalaliDate);
+	const lastSheetDateIso = requireIsoFromJalali(lastRow.jalaliDate);
 	const totalDaysSpan = Math.max(1, getDaysUntilIso(firstSheetDateIso, lastSheetDateIso));
 
 	const runTx = client.transaction(() => {
