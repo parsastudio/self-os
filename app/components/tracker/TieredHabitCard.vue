@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue';
 import { getMaxSupportedTier, resolveHabitRuleSnapshot } from '~/core/habit-engine';
 import { COMPOSITE_FULL_LABEL, TIER_SCORES } from '~/domain/constants';
-import type { HabitEntity, HabitLogItemInput, HabitTreeNode } from '~/domain/schemas';
+import type { HabitLogItemInput, HabitTreeNode } from '~/domain/schemas';
 import { Check, ChevronDown, ChevronUp, Minus, X } from 'lucide-vue-next';
 
 interface Props {

@@ -3,8 +3,8 @@ import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDailyTracker } from '~/composables/useDailyTracker';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
-import { getYesterdayIso, toPersianDigits } from '~/domain/calendar';
+import { computeUpcomingEventsBanner } from '~/core/calendar-engine';
+import { getTodayIso, getYesterdayIso, toPersianDigits } from '~/domain/calendar';
 import type { HabitTimeSlot, HabitTreeNode } from '~/domain/schemas';
 import JalaliDateScrubber from '~/components/tracker/JalaliDateScrubber.vue';
 import UpcomingEventsBanner from '~/components/tracker/UpcomingEventsBanner.vue';
@@ -17,11 +17,9 @@ import { Moon, Sun, Sunrise } from 'lucide-vue-next';
 const route = useRoute();
 const router = useRouter();
 const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 async function handleToggleCalendarEvent(eventId: string, isCompleted: boolean) {
 	await localRepo.calendar.toggleComplete(eventId, isCompleted);
-	void syncEngine.notifyLocalMutationStaged();
 }
 
 const currentDateIso = computed(() => {
@@ -37,9 +35,6 @@ const tracker = useDailyTracker(currentDateIso);
 function navigateToDate(iso: string) {
 	router.push({ query: { ...route.query, date: iso } });
 }
-
-import { computeUpcomingEventsBanner } from '~/core/calendar-engine';
-import { getTodayIso } from '~/domain/calendar';
 
 const bannerCalculation = computed(() =>
 	computeUpcomingEventsBanner({

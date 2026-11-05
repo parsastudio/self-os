@@ -3,52 +3,25 @@ import type {
 	BookEntity,
 	CadencePlanEntity,
 	CalendarEventEntity,
-	DayStatusColor,
 	HabitEntity,
-	HabitLogItemInput,
 	LifecycleEventEntity,
+	LocalAuthRecord,
+	LocalDailyEntryRecord,
+	LocalHabitLogRecord,
+	LocalReflectionTagRecord,
 	MediaEntity,
 	NoteEntity,
+	SyncMetaRecord,
 	SyncOutboxMutation
 } from '~/domain/schemas';
 
-export interface LocalDailyEntryRecord {
-	dateIso: string;
-	dayStatus: DayStatusColor;
-	reflectionNote: string;
-	journalText: string | null;
-	tags: string[];
-	updatedAtIso: string;
-}
-
-export interface LocalHabitLogRecord extends HabitLogItemInput {
-	id: string;
-	dateIso: string;
-	updatedAtIso: string;
-}
-
-export interface LocalReflectionTagRecord {
-	id: string;
-	label: string;
-	sortOrder: number;
-}
-
-export interface SyncMetaRecord {
-	key: 'meta:sync';
-	clientId: string;
-	knownServerVersionIso: string | null;
-	lastSyncedAtIso: string | null;
-}
-
-export interface LocalAuthRecord {
-	key: 'auth:session';
-	isAuthenticated: boolean;
-	isPasswordConfigured: boolean;
-	expiresAtIso: string;
-	verifierSaltHex: string;
-	passwordVerifierHex: string;
-	updatedAtIso: string;
-}
+export type {
+	LocalAuthRecord,
+	LocalDailyEntryRecord,
+	LocalHabitLogRecord,
+	LocalReflectionTagRecord,
+	SyncMetaRecord
+};
 
 export class PersonalOSDatabase extends Dexie {
 	habits!: Table<HabitEntity, string>;

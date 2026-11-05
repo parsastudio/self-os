@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue';
+import { detectNoteSmartSignals } from '~/core/note-signals';
 import { isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
-import { detectNoteSmartSignals, type NoteEntity } from '~/domain/schemas';
+import type { NoteEntity } from '~/domain/schemas';
 import { Check, Copy, ExternalLink, Pencil, Pin, Trash2 } from 'lucide-vue-next';
 
 interface Props {

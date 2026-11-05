@@ -176,7 +176,7 @@ async function importBackup() {
 			text: 'پشتیبان با موفقیت بازگردانی شد و داده‌های محلی و سرور به‌روزرسانی شدند.'
 		};
 		selectedFile.value = null;
-	} catch (err) {
+	} catch {
 		importMessage.value = {
 			type: 'error',
 			text: 'خواندن فایل با خطا مواجه شد.'

@@ -551,15 +551,15 @@ export const AnalyticsRawLogSchema = z.object({
 	id: z.string(),
 	dateIso: z.string(),
 	habitId: z.string(),
-	habitTitleSnapshot: z.string().nullable(),
+	habitTitleSnapshot: z.string().nullable().optional(),
 	achievedTier: z.number().nullable(),
-	achievedRuleSnapshot: z.string().nullable(),
-	habitSnapshotJson: z.string().nullable(),
-	completedIntervals: z.number().nullable(),
-	actualMinutesPerInterval: z.number().nullable(),
-	totalActualMinutes: z.number().nullable(),
-	plannedIntervalsSnapshot: z.number().nullable(),
-	plannedMinutesSnapshot: z.number().nullable()
+	achievedRuleSnapshot: z.string().nullable().optional(),
+	habitSnapshotJson: z.string().nullable().optional(),
+	completedIntervals: z.number().nullable().optional(),
+	actualMinutesPerInterval: z.number().nullable().optional(),
+	totalActualMinutes: z.number().nullable().optional(),
+	plannedIntervalsSnapshot: z.number().nullable().optional(),
+	plannedMinutesSnapshot: z.number().nullable().optional()
 });
 export type AnalyticsRawLog = z.infer<typeof AnalyticsRawLogSchema>;
 
@@ -576,9 +576,53 @@ export const RawCalendarDayEntrySchema = z.object({
 	dayStatus: DayStatusColorSchema,
 	reflectionNote: z.string(),
 	journalText: z.string().nullable(),
-	tagsJson: z.string()
+	tags: z.array(z.string()).optional(),
+	tagsJson: z.string().optional()
 });
 export type RawCalendarDayEntry = z.infer<typeof RawCalendarDayEntrySchema>;
+
+export const LocalDailyEntryRecordSchema = z.object({
+	dateIso: z.string(),
+	dayStatus: DayStatusColorSchema,
+	reflectionNote: z.string(),
+	journalText: z.string().nullable(),
+	tags: z.array(z.string()),
+	updatedAtIso: z.string()
+});
+export type LocalDailyEntryRecord = z.infer<typeof LocalDailyEntryRecordSchema>;
+
+export const LocalHabitLogRecordSchema = HabitLogItemInputSchema.extend({
+	id: z.string(),
+	dateIso: z.string(),
+	updatedAtIso: z.string()
+});
+export type LocalHabitLogRecord = z.infer<typeof LocalHabitLogRecordSchema>;
+
+export const LocalReflectionTagRecordSchema = z.object({
+	id: z.string(),
+	label: z.string(),
+	sortOrder: z.number()
+});
+export type LocalReflectionTagRecord = z.infer<typeof LocalReflectionTagRecordSchema>;
+
+export const SyncMetaRecordSchema = z.object({
+	key: z.literal('meta:sync'),
+	clientId: z.string(),
+	knownServerVersionIso: z.string().nullable(),
+	lastSyncedAtIso: z.string().nullable()
+});
+export type SyncMetaRecord = z.infer<typeof SyncMetaRecordSchema>;
+
+export const LocalAuthRecordSchema = z.object({
+	key: z.literal('auth:session'),
+	isAuthenticated: z.boolean(),
+	isPasswordConfigured: z.boolean(),
+	expiresAtIso: z.string(),
+	verifierSaltHex: z.string(),
+	passwordVerifierHex: z.string(),
+	updatedAtIso: z.string()
+});
+export type LocalAuthRecord = z.infer<typeof LocalAuthRecordSchema>;
 
 export const HabitRuleDiffItemSchema = z.object({
 	fieldLabel: z.string(),
@@ -775,5 +819,4 @@ export const DatabaseBackupPayloadSchema = z.object({
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
 
-export { detectNoteSmartSignals } from '~/core/note-signals';
 export { parseTagsJson } from './tags';

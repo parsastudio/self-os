@@ -221,7 +221,7 @@ export function assembleJalaliMonthArchive(params: {
 						dayStatus: rawEntry.dayStatus,
 						reflectionNote: rawEntry.reflectionNote,
 						journalText: rawEntry.journalText ?? null,
-						tags: parseTagsJson(rawEntry.tagsJson)
+						tags: rawEntry.tags ?? parseTagsJson(rawEntry.tagsJson)
 					}
 				: null,
 			habitPerformances,

@@ -58,115 +58,35 @@ export function importDatabaseFromJson(
 			tx.delete(notes).run();
 		}
 
-		for (const h of data.habits) {
-			tx.insert(habits)
-				.values(h)
-				.onConflictDoUpdate({
-					target: habits.id,
-					set: h
-				})
-				.run();
-			totalImported++;
-		}
+		const upsertRows = <T extends Record<string, unknown>>(
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			table: any,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			targetCol: any,
+			rows: ReadonlyArray<T>
+		) => {
+			for (const row of rows) {
+				tx.insert(table)
+					.values(row)
+					.onConflictDoUpdate({
+						target: targetCol,
+						set: row
+					})
+					.run();
+				totalImported++;
+			}
+		};
 
-		for (const e of data.dailyEntries) {
-			tx.insert(dailyEntries)
-				.values(e)
-				.onConflictDoUpdate({
-					target: dailyEntries.id,
-					set: e
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const l of data.habitLogs) {
-			tx.insert(habitLogs)
-				.values(l)
-				.onConflictDoUpdate({
-					target: habitLogs.id,
-					set: l
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const c of data.cadencePlans) {
-			tx.insert(cadencePlans)
-				.values(c)
-				.onConflictDoUpdate({
-					target: cadencePlans.id,
-					set: c
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const b of data.books) {
-			tx.insert(books)
-				.values(b)
-				.onConflictDoUpdate({
-					target: books.id,
-					set: b
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const m of data.media) {
-			tx.insert(mediaLogs)
-				.values(m)
-				.onConflictDoUpdate({
-					target: mediaLogs.id,
-					set: m
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const n of data.notes) {
-			tx.insert(notes)
-				.values(n)
-				.onConflictDoUpdate({
-					target: notes.id,
-					set: n
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const ev of data.calendarEvents) {
-			tx.insert(calendarEvents)
-				.values(ev)
-				.onConflictDoUpdate({
-					target: calendarEvents.id,
-					set: ev
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const lc of data.lifecycleEvents) {
-			tx.insert(habitLifecycleEvents)
-				.values(lc)
-				.onConflictDoUpdate({
-					target: habitLifecycleEvents.id,
-					set: lc
-				})
-				.run();
-			totalImported++;
-		}
-
-		for (const tag of data.reflectionTags) {
-			tx.insert(reflectionTags)
-				.values(tag)
-				.onConflictDoUpdate({
-					target: reflectionTags.id,
-					set: tag
-				})
-				.run();
-			totalImported++;
-		}
+		upsertRows(habits, habits.id, data.habits);
+		upsertRows(dailyEntries, dailyEntries.id, data.dailyEntries);
+		upsertRows(habitLogs, habitLogs.id, data.habitLogs);
+		upsertRows(cadencePlans, cadencePlans.id, data.cadencePlans);
+		upsertRows(books, books.id, data.books);
+		upsertRows(mediaLogs, mediaLogs.id, data.media);
+		upsertRows(notes, notes.id, data.notes);
+		upsertRows(calendarEvents, calendarEvents.id, data.calendarEvents);
+		upsertRows(habitLifecycleEvents, habitLifecycleEvents.id, data.lifecycleEvents);
+		upsertRows(reflectionTags, reflectionTags.id, data.reflectionTags);
 	});
 
 	return { importedRecordsCount: totalImported };

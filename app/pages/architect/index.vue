@@ -3,7 +3,6 @@ import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import type { CreateHabitInput, HabitEntity, MutateHabitStructureInput } from '~/domain/schemas';
 import ArchitectHabitCard from '~/components/architect/ArchitectHabitCard.vue';
 import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.vue';
@@ -12,7 +11,6 @@ import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
 
 const activeModal = ref<'create' | 'edit' | null>(null);
@@ -49,7 +47,6 @@ async function handleCreateHabit(payload: CreateHabitInput) {
 	isSubmittingHabit.value = true;
 	try {
 		await localRepo.habits.create(payload);
-		void syncEngine.notifyLocalMutationStaged();
 		closeModal();
 	} finally {
 		isSubmittingHabit.value = false;
@@ -61,7 +58,6 @@ async function handleUpdateHabit(payload: MutateHabitStructureInput) {
 	isSubmittingHabit.value = true;
 	try {
 		await localRepo.habits.update(payload);
-		void syncEngine.notifyLocalMutationStaged();
 		closeModal();
 	} finally {
 		isSubmittingHabit.value = false;

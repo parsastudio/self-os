@@ -24,7 +24,7 @@ interface Props {
 	liveDayStatus: DayStatusColor;
 	isLiveDirty?: boolean;
 	hasExistingEntry?: boolean;
-	saveState?: 'idle' | 'pending' | 'saving' | 'saved' | 'error';
+	saveState?: 'idle' | 'saving' | 'saved' | 'error';
 	completionStats: { completed: number; goldCount: number; total: number; percent: number };
 }
 

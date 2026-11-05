@@ -24,7 +24,6 @@ export const CADENCE_DEFAULTS = {
 	MINUTES_PER_INTERVAL: 10,
 	WINDOW_MINUTES: 60,
 	MIN_WINDOW_MINUTES: 15,
-	MINUTE_STEP: 5,
 	EMERGENCY_MINUTES: 2
 } as const;
 
@@ -48,7 +47,6 @@ export interface DayStatusMetaItem {
 	shortBadgeLabel: string;
 	dotClass: string;
 	softBadgeClasses: string;
-	activeClasses: string;
 }
 
 export const DAY_STATUS_META: Record<DayStatusColor, DayStatusMetaItem> = {
@@ -57,32 +55,23 @@ export const DAY_STATUS_META: Record<DayStatusColor, DayStatusMetaItem> = {
 		label: 'سبز (مطلوب / افزایش)',
 		shortBadgeLabel: 'سبز (مطلوب)',
 		dotClass: 'bg-optimal',
-		softBadgeClasses: 'bg-optimal-soft text-optimal',
-		activeClasses: 'border-optimal bg-elevated text-optimal'
+		softBadgeClasses: 'bg-optimal-soft text-optimal'
 	},
 	partial: {
 		value: 'partial',
 		label: 'زرد (ترکیبی)',
 		shortBadgeLabel: 'زرد (ترکیبی)',
 		dotClass: 'bg-partial',
-		softBadgeClasses: 'bg-partial-soft text-partial',
-		activeClasses: 'border-partial bg-elevated text-partial'
+		softBadgeClasses: 'bg-partial-soft text-partial'
 	},
 	failed: {
 		value: 'failed',
 		label: 'قرمز (کاهش / شکست)',
 		shortBadgeLabel: 'قرمز (کاهش)',
 		dotClass: 'bg-failed',
-		softBadgeClasses: 'bg-failed-soft text-failed',
-		activeClasses: 'border-failed bg-elevated text-failed'
+		softBadgeClasses: 'bg-failed-soft text-failed'
 	}
 };
-
-export const DAY_STATUS_OPTIONS: ReadonlyArray<DayStatusMetaItem> = [
-	DAY_STATUS_META.optimal,
-	DAY_STATUS_META.partial,
-	DAY_STATUS_META.failed
-];
 
 export function getDayStatusMeta(status: DayStatusColor | null | undefined): DayStatusMetaItem {
 	if (status === 'optimal') return DAY_STATUS_META.optimal;

@@ -3,16 +3,15 @@ import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
+import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
-import { detectNoteSmartSignals, type NoteEntity, type NoteSmartFilter, type UpsertNoteInput } from '~/domain/schemas';
+import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
 import NoteItemCard from '~/components/notes/NoteItemCard.vue';
 import NoteUpsertModal from '~/components/notes/NoteUpsertModal.vue';
-import { Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
+import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 const rawNotes = useDexieLiveQuery(() => db.notes.orderBy('updatedAtIso').reverse().toArray(), []);
 
@@ -82,7 +81,6 @@ async function handleSaveNote(payload: UpsertNoteInput) {
 		} else {
 			await localRepo.notes.create(payload);
 		}
-		void syncEngine.notifyLocalMutationStaged();
 		closeModal();
 	} finally {
 		isSubmittingNote.value = false;
@@ -91,12 +89,10 @@ async function handleSaveNote(payload: UpsertNoteInput) {
 
 async function handleTogglePin(noteId: string, isPinned: boolean) {
 	await localRepo.notes.togglePin(noteId, isPinned);
-	void syncEngine.notifyLocalMutationStaged();
 }
 
 async function handleDeleteNote(noteId: string) {
 	await localRepo.notes.delete(noteId);
-	void syncEngine.notifyLocalMutationStaged();
 }
 </script>
 
@@ -166,6 +162,19 @@ async function handleDeleteNote(noteId: string) {
 					>
 						<Link2 class="h-3.5 w-3.5" />
 						<span>حاوی لینک</span>
+					</button>
+					<button
+						type="button"
+						class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-extrabold transition"
+						:class="
+							smartFilter === 'HAS_NUMBER'
+								? 'border border-accent-border bg-accent-soft text-accent-text shadow-xs'
+								: 'bg-elevated text-fg-secondary hover:text-fg'
+						"
+						@click="smartFilter = smartFilter === 'HAS_NUMBER' ? 'ALL' : 'HAS_NUMBER'"
+					>
+						<Hash class="h-3.5 w-3.5" />
+						<span>حاوی شماره</span>
 					</button>
 				</div>
 

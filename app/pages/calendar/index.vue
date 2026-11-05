@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import { assembleJalaliMonthArchive, computeUpcomingEventsBanner } from '~/core/calendar-engine';
 import {
 	JALALI_MONTH_NAMES,
@@ -14,7 +13,7 @@ import {
 	jalaliPartsToIso,
 	toPersianDigits
 } from '~/domain/calendar';
-import type { RawCalendarDayEntry, AnalyticsRawLog, CreateCalendarEventInput } from '~/domain/schemas';
+import type { CreateCalendarEventInput } from '~/domain/schemas';
 import CalendarMonthGrid from '~/components/calendar/CalendarMonthGrid.vue';
 import CalendarDayInspector from '~/components/calendar/CalendarDayInspector.vue';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
@@ -24,7 +23,6 @@ const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 const isSubmittingCalendarEvent = ref(false);
 
 async function handleCreateEvent(payload: CreateCalendarEventInput) {
@@ -32,7 +30,6 @@ async function handleCreateEvent(payload: CreateCalendarEventInput) {
 	isSubmittingCalendarEvent.value = true;
 	try {
 		await localRepo.calendar.create(payload);
-		void syncEngine.notifyLocalMutationStaged();
 	} finally {
 		isSubmittingCalendarEvent.value = false;
 	}
@@ -40,12 +37,10 @@ async function handleCreateEvent(payload: CreateCalendarEventInput) {
 
 async function handleToggleEventComplete(eventId: string, isCompleted: boolean) {
 	await localRepo.calendar.toggleComplete(eventId, isCompleted);
-	void syncEngine.notifyLocalMutationStaged();
 }
 
 async function handleDeleteEvent(eventId: string) {
 	await localRepo.calendar.delete(eventId);
-	void syncEngine.notifyLocalMutationStaged();
 }
 
 const todayIso = getTodayIso();
@@ -107,26 +102,6 @@ const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
 const userSelectedIso = ref<string | null>(null);
 
 const archiveData = computed(() => {
-	const entriesInMonth: RawCalendarDayEntry[] = monthEntries.value.map((e) => ({
-		dateIso: e.dateIso,
-		dayStatus: e.dayStatus,
-		reflectionNote: e.reflectionNote,
-		journalText: e.journalText,
-		tagsJson: JSON.stringify(e.tags)
-	}));
-
-	const logsInMonth: AnalyticsRawLog[] = monthLogs.value.map((l) => ({
-		...l,
-		habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-		achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-		habitSnapshotJson: l.habitSnapshotJson ?? null,
-		completedIntervals: l.completedIntervals ?? null,
-		actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-		totalActualMinutes: l.totalActualMinutes ?? null,
-		plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
-		plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null
-	}));
-
 	const { todayAndUpcoming } = computeUpcomingEventsBanner({
 		allEvents: allEvents.value,
 		referenceDateIso: todayIso,
@@ -140,8 +115,8 @@ const archiveData = computed(() => {
 		todayIso,
 		selectedIso: requestedDate.value ?? undefined,
 		allHabits: allHabits.value,
-		entriesInMonth,
-		logsInMonth,
+		entriesInMonth: monthEntries.value,
+		logsInMonth: monthLogs.value,
 		eventsInMonth: allEvents.value,
 		booksInMonth: allBooks.value,
 		mediaInMonth: allMedia.value,

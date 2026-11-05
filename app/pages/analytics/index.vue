@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
@@ -43,25 +43,11 @@ const rangeOptions: ReadonlyArray<{ value: AnalyticsTimeRange; label: string }> 
 	{ value: 'all', label: 'کل زمان' }
 ];
 
-const normalizedLogs = computed(() =>
-	rawLogs.value.map((l) => ({
-		...l,
-		habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-		achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-		habitSnapshotJson: l.habitSnapshotJson ?? null,
-		completedIntervals: l.completedIntervals ?? null,
-		actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-		totalActualMinutes: l.totalActualMinutes ?? null,
-		plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
-		plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null
-	}))
-);
-
 const report = computed(() =>
 	buildFullAnalyticsReport({
 		habits: habits.value,
 		entries: rawEntries.value,
-		logs: normalizedLogs.value,
+		logs: rawLogs.value,
 		lifecycleEvents: lifecycleEvents.value,
 		selectedHabitId: selectedHabitId.value,
 		range: selectedRange.value,

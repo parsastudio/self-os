@@ -2,7 +2,6 @@ import { ref, computed, watch, type Ref } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import {
 	buildHabitTree,
 	computeCompositeParentDisplay,
@@ -33,7 +32,6 @@ export interface CadenceDraftItem {
 export function useDailyTracker(dateIso: Ref<string>) {
 	const db = useAppDatabase();
 	const localRepo = useLocalRepository();
-	const syncEngine = useSyncEngine();
 
 	const tomorrowIso = computed(() => shiftIsoDate(dateIso.value, 1));
 
@@ -54,7 +52,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const manualDayStatus = ref<DayStatusColor | null>(null);
 	const logsByHabitId = ref<Record<string, HabitLogItemInput>>({});
 	const tomorrowPlansByHabitId = ref<Record<string, CadenceDraftItem>>({});
-	const saveState = ref<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
+	const saveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
 	const isDirty = ref(false);
 
 	let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -226,7 +224,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		try {
 			const payload = buildDailyInputObject();
 			await localRepo.daily.saveDailyEntry(payload);
-			void syncEngine.notifyLocalMutationStaged();
 			isDirty.value = false;
 			saveState.value = 'saved';
 		} catch {
@@ -393,7 +390,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			targetDateIso: tomorrowIso.value,
 			items
 		});
-		void syncEngine.notifyLocalMutationStaged();
 	}
 
 	function isNodeCompleted(habitId: string): boolean {

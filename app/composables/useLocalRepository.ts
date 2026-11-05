@@ -32,6 +32,15 @@ import type {
 	UpsertNoteInput
 } from '~/domain/schemas';
 
+const mutationStagedListeners = new Set<() => void>();
+
+export function onLocalMutationStaged(listener: () => void): () => void {
+	mutationStagedListeners.add(listener);
+	return () => {
+		mutationStagedListeners.delete(listener);
+	};
+}
+
 /**
  * Optimistic local operations repository using Dexie.js.
  * Every write operation writes instantly to indexed Dexie tables
@@ -60,6 +69,10 @@ export function useLocalRepository() {
 			await applyLocal();
 			await db.syncOutbox.put(mutation);
 		});
+
+		for (const listener of mutationStagedListeners) {
+			listener();
+		}
 	}
 
 	const daily = {

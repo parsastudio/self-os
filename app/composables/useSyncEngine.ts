@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { useLocalRepository } from '~/composables/useLocalRepository';
+import { onLocalMutationStaged, useLocalRepository } from '~/composables/useLocalRepository';
 import type { ServerSyncResponse } from '~/domain/schemas';
 
 export type SyncStatusVisual = 'synced' | 'local_pending' | 'syncing' | 'offline' | 'error';
@@ -158,6 +158,10 @@ export function useSyncEngine() {
 		if (!import.meta.client || isInitialized) return;
 		isInitialized = true;
 		isOnline.value = navigator.onLine;
+
+		onLocalMutationStaged(() => {
+			void notifyLocalMutationStaged();
+		});
 
 		window.addEventListener('online', () => {
 			isOnline.value = true;

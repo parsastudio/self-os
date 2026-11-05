@@ -3,7 +3,6 @@ import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter, UpdateMediaInput } from '~/domain/schemas';
 import MediaHeaderStats from '~/components/media/MediaHeaderStats.vue';
 import MediaItemCard from '~/components/media/MediaItemCard.vue';
@@ -12,7 +11,6 @@ import { Clapperboard, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 const mediaItems = useDexieLiveQuery(() => db.media.orderBy('createdAtIso').reverse().toArray(), []);
 
@@ -87,7 +85,6 @@ async function handleSaveMedia(payload: CreateMediaInput | UpdateMediaInput) {
 		} else {
 			await localRepo.media.create(payload);
 		}
-		void syncEngine.notifyLocalMutationStaged();
 		closeModal();
 	} finally {
 		isSubmittingMedia.value = false;
@@ -96,12 +93,10 @@ async function handleSaveMedia(payload: CreateMediaInput | UpdateMediaInput) {
 
 async function handleUpdateStatus(mediaId: string, status: 'completed') {
 	await localRepo.media.updateStatus(mediaId, status);
-	void syncEngine.notifyLocalMutationStaged();
 }
 
 async function handleDeleteMedia(mediaId: string) {
 	await localRepo.media.delete(mediaId);
-	void syncEngine.notifyLocalMutationStaged();
 }
 </script>
 

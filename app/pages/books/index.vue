@@ -3,7 +3,6 @@ import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
 import BookItemCard from '~/components/books/BookItemCard.vue';
@@ -12,7 +11,6 @@ import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 const books = useDexieLiveQuery(() => db.books.orderBy('createdAtIso').reverse().toArray(), []);
 
@@ -57,7 +55,6 @@ async function handleSaveBook(payload: CreateBookInput | UpdateBookInput) {
 		} else {
 			await localRepo.books.create(payload);
 		}
-		void syncEngine.notifyLocalMutationStaged();
 		closeModal();
 	} finally {
 		isSubmittingBook.value = false;
@@ -66,12 +63,10 @@ async function handleSaveBook(payload: CreateBookInput | UpdateBookInput) {
 
 async function handleUpdateStatus(bookId: string, status: 'completed') {
 	await localRepo.books.updateStatus(bookId, status);
-	void syncEngine.notifyLocalMutationStaged();
 }
 
 async function handleDeleteBook(bookId: string) {
 	await localRepo.books.delete(bookId);
-	void syncEngine.notifyLocalMutationStaged();
 }
 </script>
 
