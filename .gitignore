@@ -20,6 +20,13 @@ data/*.sqlite-shm
 *.db-wal
 *.db-shm
 
+# Personal backup files (do not commit private habit history)
+my-personal-backup.json
+*-backup.json
+*.html
+*.xlsx
+*.csv
+
 # Logs
 logs
 *.log
@@ -45,3 +52,6 @@ Thumbs.db
 
 # Tooling backups
 .fastpatch_backup
+
+# FastAgent artifacts
+.fastagent/
