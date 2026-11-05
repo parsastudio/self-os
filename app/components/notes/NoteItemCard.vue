@@ -1,0 +1,135 @@
+<script setup lang="ts">
+import { ref, computed, onUnmounted } from 'vue';
+import { isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
+import { detectNoteSmartSignals, type NoteEntity } from '~/domain/schemas';
+import { Check, Copy, ExternalLink, Pencil, Pin, Trash2 } from 'lucide-vue-next';
+
+interface Props {
+	note: NoteEntity;
+}
+
+const props = defineProps<Props>();
+
+const emit = defineEmits<{
+	(e: 'edit', note: NoteEntity): void;
+	(e: 'togglePin', noteId: string, isPinned: boolean): void;
+	(e: 'delete', noteId: string): void;
+}>();
+
+const copied = ref(false);
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+const signals = computed(() => detectNoteSmartSignals(`${props.note.title} ${props.note.content}`));
+
+async function copyContent() {
+	try {
+		await navigator.clipboard.writeText(
+			props.note.title ? `${props.note.title}\n${props.note.content}` : props.note.content
+		);
+		copied.value = true;
+		if (copyTimer) clearTimeout(copyTimer);
+		copyTimer = setTimeout(() => {
+			copied.value = false;
+			copyTimer = null;
+		}, 1600);
+	} catch {
+		// ignore
+	}
+}
+
+onUnmounted(() => {
+	if (copyTimer) clearTimeout(copyTimer);
+});
+</script>
+
+<template>
+	<article
+		class="group flex flex-col justify-between rounded-3xl border p-5 shadow-(--shadow-soft) transition hover:border-border-strong"
+		:class="
+			note.isPinned
+				? 'border-accent-border bg-surface ring-1 ring-accent-border/40'
+				: 'border-border bg-surface'
+		"
+	>
+		<div>
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<span class="rounded-lg border border-border bg-elevated px-2.5 py-0.5 text-[11px] font-extrabold text-fg-secondary">
+					{{ note.category }}
+				</span>
+
+				<div class="flex items-center gap-1">
+					<button
+						type="button"
+						class="flex h-7 w-7 items-center justify-center rounded-lg transition active:scale-95"
+						:class="
+							note.isPinned
+								? 'bg-accent-soft text-accent-text'
+								: 'text-fg-muted hover:bg-elevated hover:text-fg'
+						"
+						:title="note.isPinned ? 'برداشتن سنجاق' : 'سنجاق به بالای لیست'"
+						@click="emit('togglePin', note.id, !note.isPinned)"
+					>
+						<Pin class="h-3.5 w-3.5" :class="{ 'fill-current': note.isPinned }" />
+					</button>
+
+					<button
+						type="button"
+						class="flex h-7 w-7 items-center justify-center rounded-lg text-fg-muted transition hover:bg-elevated hover:text-fg active:scale-95"
+						title="کپی متن"
+						@click="copyContent"
+					>
+						<Check v-if="copied" class="h-3.5 w-3.5 text-optimal" />
+						<Copy v-else class="h-3.5 w-3.5" />
+					</button>
+				</div>
+			</div>
+
+			<h3 v-if="note.title" class="mt-3 text-base font-black text-fg">{{ note.title }}</h3>
+
+			<p
+				dir="auto"
+				class="mt-2.5 line-clamp-6 whitespace-pre-line break-words text-xs leading-6 font-medium text-fg-secondary select-text"
+			>
+				{{ note.content }}
+			</p>
+		</div>
+
+		<div class="mt-4 flex items-center justify-between border-t border-border pt-3 text-[11px] text-fg-muted">
+			<span dir="ltr" class="font-mono font-bold">
+				{{ toPersianDigits(isoToJalaliSlash(note.updatedAtIso.slice(0, 10))) }}
+			</span>
+
+			<div class="flex items-center gap-1.5">
+				<a
+					v-if="signals.firstUrl"
+					:href="signals.firstUrl"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="flex h-7 items-center gap-1 rounded-lg border border-accent-border bg-accent-soft px-2 text-[11px] font-extrabold text-accent-text transition hover:opacity-90"
+					title="باز کردن لینک"
+				>
+					<span>باز کردن</span>
+					<ExternalLink class="h-3 w-3" />
+				</a>
+
+				<button
+					type="button"
+					class="flex h-7 items-center gap-1 rounded-lg border border-border bg-elevated px-2.5 font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg"
+					@click="emit('edit', note)"
+				>
+					<Pencil class="h-3 w-3" />
+					<span>ویرایش</span>
+				</button>
+
+				<button
+					type="button"
+					class="flex h-7 w-7 items-center justify-center rounded-lg text-fg-muted transition hover:bg-failed-soft hover:text-failed active:scale-95"
+					title="حذف یادداشت"
+					@click="emit('delete', note.id)"
+				>
+					<Trash2 class="h-3.5 w-3.5" />
+				</button>
+			</div>
+		</div>
+	</article>
+</template>
