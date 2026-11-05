@@ -2,16 +2,21 @@
 import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
-import type { HabitEntity } from '~/domain/schemas';
+import { useLocalRepository } from '~/composables/useLocalRepository';
+import { useSyncEngine } from '~/composables/useSyncEngine';
+import type { CreateHabitInput, HabitEntity, MutateHabitStructureInput } from '~/domain/schemas';
 import ArchitectHabitCard from '~/components/architect/ArchitectHabitCard.vue';
 import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.vue';
 import HabitUpsertModal from '~/components/architect/HabitUpsertModal.vue';
 import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
+const localRepo = useLocalRepository();
+const syncEngine = useSyncEngine();
 const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
 
 const activeModal = ref<'create' | 'edit' | null>(null);
+const isSubmittingHabit = ref(false);
 const editingHabit = ref<HabitEntity | null>(null);
 const createParentId = ref('');
 
@@ -37,6 +42,30 @@ function closeModal() {
 	activeModal.value = null;
 	editingHabit.value = null;
 	createParentId.value = '';
+}
+
+async function handleCreateHabit(payload: CreateHabitInput) {
+	if (isSubmittingHabit.value) return;
+	isSubmittingHabit.value = true;
+	try {
+		await localRepo.habits.create(payload);
+		void syncEngine.notifyLocalMutationStaged();
+		closeModal();
+	} finally {
+		isSubmittingHabit.value = false;
+	}
+}
+
+async function handleUpdateHabit(payload: MutateHabitStructureInput) {
+	if (isSubmittingHabit.value) return;
+	isSubmittingHabit.value = true;
+	try {
+		await localRepo.habits.update(payload);
+		void syncEngine.notifyLocalMutationStaged();
+		closeModal();
+	} finally {
+		isSubmittingHabit.value = false;
+	}
 }
 </script>
 
@@ -97,6 +126,9 @@ function closeModal() {
 			:has-sub-habits="editingHabit ? getChildren(editingHabit.id).length > 0 : false"
 			:initial-parent-id="createParentId"
 			:root-habits="rootHabits"
+			:is-submitting="isSubmittingHabit"
+			@create="handleCreateHabit"
+			@update="handleUpdateHabit"
 			@close="closeModal"
 		/>
 	</div>

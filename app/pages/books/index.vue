@@ -4,7 +4,7 @@ import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { useSyncEngine } from '~/composables/useSyncEngine';
-import type { BookEntity } from '~/domain/schemas';
+import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
 import BookItemCard from '~/components/books/BookItemCard.vue';
 import BookUpsertModal from '~/components/books/BookUpsertModal.vue';
@@ -17,6 +17,7 @@ const syncEngine = useSyncEngine();
 const books = useDexieLiveQuery(() => db.books.orderBy('createdAtIso').reverse().toArray(), []);
 
 const isModalOpen = ref(false);
+const isSubmittingBook = ref(false);
 const editingBook = ref<BookEntity | null>(null);
 
 const completedCount = computed(() => books.value.filter((b) => b.status === 'completed').length);
@@ -45,6 +46,22 @@ function openEditModal(book: BookEntity) {
 function closeModal() {
 	isModalOpen.value = false;
 	editingBook.value = null;
+}
+
+async function handleSaveBook(payload: CreateBookInput | UpdateBookInput) {
+	if (isSubmittingBook.value) return;
+	isSubmittingBook.value = true;
+	try {
+		if ('bookId' in payload) {
+			await localRepo.books.update(payload);
+		} else {
+			await localRepo.books.create(payload);
+		}
+		void syncEngine.notifyLocalMutationStaged();
+		closeModal();
+	} finally {
+		isSubmittingBook.value = false;
+	}
 }
 
 async function handleUpdateStatus(bookId: string, status: 'completed') {
@@ -101,6 +118,8 @@ async function handleDeleteBook(bookId: string) {
 			:key="editingBook?.id ?? 'new'"
 			:editing-book="editingBook"
 			:existing-suggestions="existingSuggestions"
+			:is-submitting="isSubmittingBook"
+			@submit="handleSaveBook"
 			@close="closeModal"
 		/>
 	</div>

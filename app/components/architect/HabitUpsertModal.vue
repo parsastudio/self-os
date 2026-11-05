@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import type { HabitEntity, HabitStatus, HabitTimeSlot } from '~/domain/schemas';
+import type { CreateHabitInput, HabitEntity, HabitStatus, HabitTimeSlot, MutateHabitStructureInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
-import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 
 type FormStructureKind = 'tiered' | 'composite' | 'interval_cadence';
 
@@ -14,20 +12,21 @@ interface Props {
 	hasSubHabits?: boolean;
 	initialParentId?: string;
 	rootHabits: HabitEntity[];
+	isSubmitting?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
 	editingHabit: null,
 	hasSubHabits: false,
-	initialParentId: ''
+	initialParentId: '',
+	isSubmitting: false
 });
 
 const emit = defineEmits<{
 	(e: 'close'): void;
+	(e: 'create', payload: CreateHabitInput): void;
+	(e: 'update', payload: MutateHabitStructureInput): void;
 }>();
-
-const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 const structureKind = ref<FormStructureKind>(
 	props.mode === 'edit' && props.editingHabit
@@ -60,7 +59,6 @@ const goldDesc = ref(props.editingHabit?.goldDesc ?? '');
 const emergencyMinDesc = ref(props.editingHabit?.emergencyMinDesc ?? '');
 const notes = ref(props.editingHabit?.notes ?? '');
 const reason = ref(props.mode === 'create' ? 'تعریف طرح جدید' : '');
-const isSubmitting = ref(false);
 
 const modalTitle = computed(() =>
 	props.mode === 'edit' && props.editingHabit
@@ -107,53 +105,45 @@ const timeSlotOptions = [
 	{ value: 'night', label: 'شبانه' }
 ] as const;
 
-async function handleSubmit() {
-	if (!title.value.trim() || isSubmitting.value) return;
-	isSubmitting.value = true;
+function handleSubmit() {
+	if (!title.value.trim() || props.isSubmitting) return;
 
-	try {
-		if (props.mode === 'edit' && props.editingHabit) {
-			await localRepo.habits.update({
-				habitId: props.editingHabit.id,
-				title: title.value.trim(),
-				parentId: selectedParentId.value || null,
-				category: props.editingHabit.category,
-				timeSlot: selectedTimeSlot.value,
-				isSituational: isSituational.value,
-				status: selectedStatus.value,
-				scheduleLabel: scheduleLabel.value.trim() || null,
-				notes: notes.value.trim() || null,
-				bronzeDesc: bronzeDesc.value.trim() || null,
-				silverDesc: silverDesc.value.trim() || null,
-				goldDesc: goldDesc.value.trim() || null,
-				emergencyMinDesc: emergencyMinDesc.value.trim() || null,
-				reason: reason.value.trim() || 'ویرایش قوانین طرح'
-			});
-		} else {
-			await localRepo.habits.create({
-				title: title.value.trim(),
-				parentId: selectedParentId.value || null,
-				category: 'عمومی',
-				trackingMode: structureKind.value === 'interval_cadence' ? 'interval_cadence' : 'tiered',
-				timeSlot: selectedTimeSlot.value,
-				isSituational: isSituational.value,
-				scheduleLabel: scheduleLabel.value.trim() || undefined,
-				notes: notes.value.trim() || undefined,
-				bronzeDesc: bronzeDesc.value.trim() || undefined,
-				silverDesc: silverDesc.value.trim() || undefined,
-				goldDesc: goldDesc.value.trim() || undefined,
-				emergencyMinDesc: emergencyMinDesc.value.trim() || undefined,
-				defaultIntervals: 1,
-				defaultMinutesPerInterval: 10,
-				cadenceWindowMinutes: 60,
-				reason: reason.value.trim() || 'تعریف طرح جدید'
-			});
-		}
-
-		void syncEngine.notifyLocalMutationStaged();
-		emit('close');
-	} finally {
-		isSubmitting.value = false;
+	if (props.mode === 'edit' && props.editingHabit) {
+		emit('update', {
+			habitId: props.editingHabit.id,
+			title: title.value.trim(),
+			parentId: selectedParentId.value || null,
+			category: props.editingHabit.category,
+			timeSlot: selectedTimeSlot.value,
+			isSituational: isSituational.value,
+			status: selectedStatus.value,
+			scheduleLabel: scheduleLabel.value.trim() || null,
+			notes: notes.value.trim() || null,
+			bronzeDesc: bronzeDesc.value.trim() || null,
+			silverDesc: silverDesc.value.trim() || null,
+			goldDesc: goldDesc.value.trim() || null,
+			emergencyMinDesc: emergencyMinDesc.value.trim() || null,
+			reason: reason.value.trim() || 'ویرایش قوانین طرح'
+		});
+	} else {
+		emit('create', {
+			title: title.value.trim(),
+			parentId: selectedParentId.value || null,
+			category: 'عمومی',
+			trackingMode: structureKind.value === 'interval_cadence' ? 'interval_cadence' : 'tiered',
+			timeSlot: selectedTimeSlot.value,
+			isSituational: isSituational.value,
+			scheduleLabel: scheduleLabel.value.trim() || undefined,
+			notes: notes.value.trim() || undefined,
+			bronzeDesc: bronzeDesc.value.trim() || undefined,
+			silverDesc: silverDesc.value.trim() || undefined,
+			goldDesc: goldDesc.value.trim() || undefined,
+			emergencyMinDesc: emergencyMinDesc.value.trim() || undefined,
+			defaultIntervals: 1,
+			defaultMinutesPerInterval: 10,
+			cadenceWindowMinutes: 60,
+			reason: reason.value.trim() || 'تعریف طرح جدید'
+		});
 	}
 }
 </script>

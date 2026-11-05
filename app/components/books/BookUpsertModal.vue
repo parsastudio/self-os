@@ -2,29 +2,27 @@
 import { ref, computed } from 'vue';
 import { getTodayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, BOOK_STATUS_OPTIONS } from '~/domain/constants';
-import type { BookEntity, BookStatus } from '~/domain/schemas';
+import type { BookEntity, BookStatus, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
-import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import { BookOpen, History } from 'lucide-vue-next';
 
 interface Props {
 	editingBook?: BookEntity | null;
 	existingSuggestions?: Array<{ title: string; author: string | null }>;
+	isSubmitting?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
 	editingBook: null,
-	existingSuggestions: () => []
+	existingSuggestions: () => [],
+	isSubmitting: false
 });
 
 const emit = defineEmits<{
 	(e: 'close'): void;
+	(e: 'submit', payload: CreateBookInput | UpdateBookInput): void;
 }>();
-
-const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 const defaultJalaliToday = toPersianDigits(isoToJalaliSlash(getTodayIso()));
 
@@ -41,7 +39,6 @@ const finishedJalali = ref(
 		: defaultJalaliToday
 );
 const notes = ref(props.editingBook?.notes ?? '');
-const isSubmitting = ref(false);
 
 const matchedSuggestion = computed(() =>
 	props.existingSuggestions.find(
@@ -60,37 +57,30 @@ function handleTitleChange(e: Event) {
 	}
 }
 
-async function handleSubmit() {
-	if (!title.value.trim() || isSubmitting.value) return;
-	isSubmitting.value = true;
+function handleSubmit() {
+	if (!title.value.trim() || props.isSubmitting) return;
 
-	try {
-		if (props.editingBook) {
-			await localRepo.books.update({
-				bookId: props.editingBook.id,
-				title: title.value.trim(),
-				author: author.value.trim() || undefined,
-				status: selectedStatus.value,
-				startedJalali: startedJalali.value.trim() || undefined,
-				finishedJalali: finishedJalali.value.trim() || undefined,
-				rating: selectedRating.value,
-				notes: notes.value.trim() || undefined
-			});
-		} else {
-			await localRepo.books.create({
-				title: title.value.trim(),
-				author: author.value.trim() || undefined,
-				status: selectedStatus.value,
-				startedJalali: startedJalali.value.trim() || undefined,
-				finishedJalali: finishedJalali.value.trim() || undefined,
-				rating: selectedRating.value,
-				notes: notes.value.trim() || undefined
-			});
-		}
-		void syncEngine.notifyLocalMutationStaged();
-		emit('close');
-	} finally {
-		isSubmitting.value = false;
+	if (props.editingBook) {
+		emit('submit', {
+			bookId: props.editingBook.id,
+			title: title.value.trim(),
+			author: author.value.trim() || undefined,
+			status: selectedStatus.value,
+			startedJalali: startedJalali.value.trim() || undefined,
+			finishedJalali: finishedJalali.value.trim() || undefined,
+			rating: selectedRating.value,
+			notes: notes.value.trim() || undefined
+		});
+	} else {
+		emit('submit', {
+			title: title.value.trim(),
+			author: author.value.trim() || undefined,
+			status: selectedStatus.value,
+			startedJalali: startedJalali.value.trim() || undefined,
+			finishedJalali: finishedJalali.value.trim() || undefined,
+			rating: selectedRating.value,
+			notes: notes.value.trim() || undefined
+		});
 	}
 }
 </script>

@@ -127,7 +127,7 @@ export function useLocalRepository() {
 		async saveCadencePlans(input: SaveCadencePlanBatch): Promise<void> {
 			const nowIso = new Date().toISOString();
 			const mutation: SyncOutboxMutation = {
-				id: `mutation:cadence:${input.targetDateIso}:${Date.now()}`,
+				id: `cadence:${input.targetDateIso}`,
 				kind: 'SAVE_CADENCE_PLAN',
 				queuedAtIso: nowIso,
 				payload: input
@@ -211,7 +211,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:habit:${newHabit.id}:${Date.now()}`,
+					id: `habit:${newHabit.id}`,
 					kind: 'UPSERT_HABIT',
 					queuedAtIso: nowIso,
 					payload: newHabit
@@ -220,7 +220,7 @@ export function useLocalRepository() {
 					await db.habits.put(newHabit);
 					await db.lifecycleEvents.put(lifecycleEvent);
 					await db.syncOutbox.put({
-						id: `mutation:lifecycle:${lifecycleEvent.id}:${Date.now()}`,
+						id: `lifecycle:${lifecycleEvent.id}`,
 						kind: 'ADD_LIFECYCLE_EVENT',
 						queuedAtIso: nowIso,
 						payload: lifecycleEvent
@@ -287,7 +287,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:habit:${input.habitId}:${Date.now()}`,
+					id: `habit:${input.habitId}`,
 					kind: 'UPSERT_HABIT',
 					queuedAtIso: nowIso,
 					payload: updatedHabit
@@ -296,7 +296,7 @@ export function useLocalRepository() {
 					await db.habits.put(updatedHabit);
 					await db.lifecycleEvents.put(lifecycleEvent);
 					await db.syncOutbox.put({
-						id: `mutation:lifecycle:${lifecycleEvent.id}:${Date.now()}`,
+						id: `lifecycle:${lifecycleEvent.id}`,
 						kind: 'ADD_LIFECYCLE_EVENT',
 						queuedAtIso: nowIso,
 						payload: lifecycleEvent
@@ -330,7 +330,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:book:${newBook.id}:${Date.now()}`,
+					id: `book:${newBook.id}`,
 					kind: 'UPSERT_BOOK',
 					queuedAtIso: nowIso,
 					payload: newBook
@@ -344,6 +344,7 @@ export function useLocalRepository() {
 		},
 
 		async update(input: UpdateBookInput): Promise<void> {
+			const existing = await db.books.get(input.bookId);
 			const { startedAtIso, finishedAtIso } = resolveCompletedRangeDates({
 				startedJalali: input.startedJalali,
 				finishedJalali: input.finishedJalali,
@@ -360,13 +361,13 @@ export function useLocalRepository() {
 				finishedAtIso,
 				rating: input.rating,
 				notes: input.notes?.trim() || null,
-				createdAtIso: nowIso,
+				createdAtIso: existing?.createdAtIso || nowIso,
 				updatedAtIso: nowIso
 			};
 
 			await stageMutation(
 				{
-					id: `mutation:book:${input.bookId}:${Date.now()}`,
+					id: `book:${input.bookId}`,
 					kind: 'UPSERT_BOOK',
 					queuedAtIso: nowIso,
 					payload: updated
@@ -392,7 +393,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:book:${bookId}:${Date.now()}`,
+					id: `book:${bookId}`,
 					kind: 'UPSERT_BOOK',
 					queuedAtIso: nowIso,
 					payload: updated
@@ -407,7 +408,7 @@ export function useLocalRepository() {
 			const nowIso = new Date().toISOString();
 			await stageMutation(
 				{
-					id: `mutation:book_del:${bookId}:${Date.now()}`,
+					id: `book:${bookId}`,
 					kind: 'DELETE_BOOK',
 					queuedAtIso: nowIso,
 					payload: { bookId }
@@ -443,7 +444,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:media:${newMedia.id}:${Date.now()}`,
+					id: `media:${newMedia.id}`,
 					kind: 'UPSERT_MEDIA',
 					queuedAtIso: nowIso,
 					payload: newMedia
@@ -457,6 +458,7 @@ export function useLocalRepository() {
 		},
 
 		async update(input: UpdateMediaInput): Promise<void> {
+			const existing = await db.media.get(input.mediaId);
 			const { startedAtIso, finishedAtIso } = resolveCompletedRangeDates({
 				startedJalali: input.startedJalali,
 				finishedJalali: input.finishedJalali,
@@ -473,13 +475,13 @@ export function useLocalRepository() {
 				finishedAtIso,
 				rating: input.rating,
 				notes: input.notes?.trim() || null,
-				createdAtIso: nowIso,
+				createdAtIso: existing?.createdAtIso || nowIso,
 				updatedAtIso: nowIso
 			};
 
 			await stageMutation(
 				{
-					id: `mutation:media:${input.mediaId}:${Date.now()}`,
+					id: `media:${input.mediaId}`,
 					kind: 'UPSERT_MEDIA',
 					queuedAtIso: nowIso,
 					payload: updated
@@ -505,7 +507,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:media:${mediaId}:${Date.now()}`,
+					id: `media:${mediaId}`,
 					kind: 'UPSERT_MEDIA',
 					queuedAtIso: nowIso,
 					payload: updated
@@ -520,7 +522,7 @@ export function useLocalRepository() {
 			const nowIso = new Date().toISOString();
 			await stageMutation(
 				{
-					id: `mutation:media_del:${mediaId}:${Date.now()}`,
+					id: `media:${mediaId}`,
 					kind: 'DELETE_MEDIA',
 					queuedAtIso: nowIso,
 					payload: { mediaId }
@@ -547,7 +549,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:note:${newNote.id}:${Date.now()}`,
+					id: `note:${newNote.id}`,
 					kind: 'UPSERT_NOTE',
 					queuedAtIso: nowIso,
 					payload: newNote
@@ -575,7 +577,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:note:${noteId}:${Date.now()}`,
+					id: `note:${noteId}`,
 					kind: 'UPSERT_NOTE',
 					queuedAtIso: nowIso,
 					payload: updated
@@ -599,7 +601,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:note_pin:${noteId}:${Date.now()}`,
+					id: `note:${noteId}`,
 					kind: 'UPSERT_NOTE',
 					queuedAtIso: nowIso,
 					payload: updated
@@ -614,7 +616,7 @@ export function useLocalRepository() {
 			const nowIso = new Date().toISOString();
 			await stageMutation(
 				{
-					id: `mutation:note_del:${noteId}:${Date.now()}`,
+					id: `note:${noteId}`,
 					kind: 'DELETE_NOTE',
 					queuedAtIso: nowIso,
 					payload: { noteId }
@@ -648,7 +650,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:event:${newEvent.id}:${Date.now()}`,
+					id: `event:${newEvent.id}`,
 					kind: 'UPSERT_CALENDAR_EVENT',
 					queuedAtIso: nowIso,
 					payload: newEvent
@@ -674,7 +676,7 @@ export function useLocalRepository() {
 
 			await stageMutation(
 				{
-					id: `mutation:event:${eventId}:${Date.now()}`,
+					id: `event:${eventId}`,
 					kind: 'UPSERT_CALENDAR_EVENT',
 					queuedAtIso: nowIso,
 					payload: updated
@@ -689,7 +691,7 @@ export function useLocalRepository() {
 			const nowIso = new Date().toISOString();
 			await stageMutation(
 				{
-					id: `mutation:event_del:${eventId}:${Date.now()}`,
+					id: `event:${eventId}`,
 					kind: 'DELETE_CALENDAR_EVENT',
 					queuedAtIso: nowIso,
 					payload: { eventId }
@@ -756,18 +758,23 @@ export function useLocalRepository() {
 			db.syncOutbox
 		], async () => {
 			const pending = await db.syncOutbox.toArray();
+			const pendingIds = new Set(pending.map((m) => m.id));
 			const pendingDailyDates = new Set(
 				pending
 					.filter((m) => m.kind === 'SAVE_DAILY_ENTRY')
 					.map((m) => m.payload.dateIso)
 			);
 
-			await db.habits.bulkPut(ws.habits);
-			await db.cadencePlans.bulkPut(ws.cadencePlans);
-			await db.books.bulkPut(ws.books);
-			await db.media.bulkPut(ws.media);
-			await db.notes.bulkPut(ws.notes);
-			await db.calendarEvents.bulkPut(ws.calendarEvents);
+			await db.habits.bulkPut(ws.habits.filter((h) => !pendingIds.has(`habit:${h.id}`)));
+			await db.cadencePlans.bulkPut(
+				ws.cadencePlans.filter((c) => !pendingIds.has(`cadence:${c.dateIso}`))
+			);
+			await db.books.bulkPut(ws.books.filter((b) => !pendingIds.has(`book:${b.id}`)));
+			await db.media.bulkPut(ws.media.filter((m) => !pendingIds.has(`media:${m.id}`)));
+			await db.notes.bulkPut(ws.notes.filter((n) => !pendingIds.has(`note:${n.id}`)));
+			await db.calendarEvents.bulkPut(
+				ws.calendarEvents.filter((ev) => !pendingIds.has(`event:${ev.id}`))
+			);
 			await db.lifecycleEvents.bulkPut(ws.lifecycleEvents);
 
 			if (ws.availableTags && ws.availableTags.length > 0) {

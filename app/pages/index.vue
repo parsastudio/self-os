@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDailyTracker } from '~/composables/useDailyTracker';
 import { useLocalRepository } from '~/composables/useLocalRepository';
+import { useSyncEngine } from '~/composables/useSyncEngine';
 import { getYesterdayIso, toPersianDigits } from '~/domain/calendar';
 import type { HabitTimeSlot, HabitTreeNode } from '~/domain/schemas';
 import JalaliDateScrubber from '~/components/tracker/JalaliDateScrubber.vue';
@@ -16,6 +17,12 @@ import { Moon, Sun, Sunrise } from 'lucide-vue-next';
 const route = useRoute();
 const router = useRouter();
 const localRepo = useLocalRepository();
+const syncEngine = useSyncEngine();
+
+async function handleToggleCalendarEvent(eventId: string, isCompleted: boolean) {
+	await localRepo.calendar.toggleComplete(eventId, isCompleted);
+	void syncEngine.notifyLocalMutationStaged();
+}
 
 const currentDateIso = computed(() => {
 	const param = route.query.date as string | undefined;
@@ -97,7 +104,7 @@ const groupedTieredSections = computed(() => {
 			:upcoming-items="upcomingBannerItems"
 			:selected-day-events="activeSelectedDayEvents"
 			:current-date-iso="currentDateIso"
-			@toggle-complete="(id, status) => localRepo.calendar.toggleComplete(id, status)"
+			@toggle-complete="handleToggleCalendarEvent"
 		/>
 
 		<div v-if="tracker.habits.value.length === 0" class="rounded-3xl border border-border bg-surface p-10 text-center">

@@ -5,7 +5,7 @@ import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { useSyncEngine } from '~/composables/useSyncEngine';
 import { toPersianDigits } from '~/domain/calendar';
-import { detectNoteSmartSignals, type NoteEntity, type NoteSmartFilter } from '~/domain/schemas';
+import { detectNoteSmartSignals, type NoteEntity, type NoteSmartFilter, type UpsertNoteInput } from '~/domain/schemas';
 import NoteItemCard from '~/components/notes/NoteItemCard.vue';
 import NoteUpsertModal from '~/components/notes/NoteUpsertModal.vue';
 import { Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
@@ -24,6 +24,7 @@ const searchQuery = ref('');
 const smartFilter = ref<NoteSmartFilter>('ALL');
 const selectedCategory = ref<string>('ALL');
 const isModalOpen = ref(false);
+const isSubmittingNote = ref(false);
 const editingNote = ref<NoteEntity | null>(null);
 
 const categories = computed(() => {
@@ -70,6 +71,22 @@ function openEditModal(note: NoteEntity) {
 function closeModal() {
 	isModalOpen.value = false;
 	editingNote.value = null;
+}
+
+async function handleSaveNote(payload: UpsertNoteInput) {
+	if (isSubmittingNote.value) return;
+	isSubmittingNote.value = true;
+	try {
+		if (payload.noteId) {
+			await localRepo.notes.update(payload.noteId, payload);
+		} else {
+			await localRepo.notes.create(payload);
+		}
+		void syncEngine.notifyLocalMutationStaged();
+		closeModal();
+	} finally {
+		isSubmittingNote.value = false;
+	}
 }
 
 async function handleTogglePin(noteId: string, isPinned: boolean) {
@@ -227,6 +244,8 @@ async function handleDeleteNote(noteId: string) {
 			:key="editingNote?.id ?? 'new'"
 			:editing-note="editingNote"
 			:existing-categories="categories"
+			:is-submitting="isSubmittingNote"
+			@submit="handleSaveNote"
 			@close="closeModal"
 		/>
 	</div>

@@ -1,57 +1,39 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import type { NoteEntity } from '~/domain/schemas';
+import type { NoteEntity, UpsertNoteInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
-import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import { Tag } from 'lucide-vue-next';
 
 interface Props {
 	editingNote?: NoteEntity | null;
 	existingCategories: string[];
+	isSubmitting?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
 	editingNote: null,
-	existingCategories: () => []
+	existingCategories: () => [],
+	isSubmitting: false
 });
 
 const emit = defineEmits<{
 	(e: 'close'): void;
+	(e: 'submit', payload: UpsertNoteInput): void;
 }>();
-
-const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 const title = ref(props.editingNote?.title ?? '');
 const content = ref(props.editingNote?.content ?? '');
 const category = ref(props.editingNote?.category || 'عمومی');
-const isSubmitting = ref(false);
 
-async function handleSubmit() {
-	if (!content.value.trim() || isSubmitting.value) return;
-	isSubmitting.value = true;
+function handleSubmit() {
+	if (!content.value.trim() || props.isSubmitting) return;
 
-	try {
-		if (props.editingNote) {
-			await localRepo.notes.update(props.editingNote.id, {
-				noteId: props.editingNote.id,
-				title: title.value.trim(),
-				content: content.value.trim(),
-				category: category.value.trim() || 'عمومی'
-			});
-		} else {
-			await localRepo.notes.create({
-				title: title.value.trim(),
-				content: content.value.trim(),
-				category: category.value.trim() || 'عمومی'
-			});
-		}
-		void syncEngine.notifyLocalMutationStaged();
-		emit('close');
-	} finally {
-		isSubmitting.value = false;
-	}
+	emit('submit', {
+		noteId: props.editingNote?.id,
+		title: title.value.trim(),
+		content: content.value.trim(),
+		category: category.value.trim() || 'عمومی'
+	});
 }
 </script>
 

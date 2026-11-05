@@ -4,7 +4,7 @@ import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { useSyncEngine } from '~/composables/useSyncEngine';
-import type { MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter } from '~/domain/schemas';
+import type { CreateMediaInput, MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter, UpdateMediaInput } from '~/domain/schemas';
 import MediaHeaderStats from '~/components/media/MediaHeaderStats.vue';
 import MediaItemCard from '~/components/media/MediaItemCard.vue';
 import MediaUpsertModal from '~/components/media/MediaUpsertModal.vue';
@@ -20,6 +20,7 @@ const categoryFilter = ref<MediaCategory | 'ALL'>('ALL');
 const statusFilter = ref<MediaStatusFilter>('ALL');
 const sortBy = ref<MediaSortBy>('rating_desc');
 const isModalOpen = ref(false);
+const isSubmittingMedia = ref(false);
 const editingMedia = ref<MediaEntity | null>(null);
 
 const unseenCount = computed(() => mediaItems.value.filter((i) => i.status !== 'completed').length);
@@ -75,6 +76,22 @@ function openEditModal(item: MediaEntity) {
 function closeModal() {
 	isModalOpen.value = false;
 	editingMedia.value = null;
+}
+
+async function handleSaveMedia(payload: CreateMediaInput | UpdateMediaInput) {
+	if (isSubmittingMedia.value) return;
+	isSubmittingMedia.value = true;
+	try {
+		if ('mediaId' in payload) {
+			await localRepo.media.update(payload);
+		} else {
+			await localRepo.media.create(payload);
+		}
+		void syncEngine.notifyLocalMutationStaged();
+		closeModal();
+	} finally {
+		isSubmittingMedia.value = false;
+	}
 }
 
 async function handleUpdateStatus(mediaId: string, status: 'completed') {
@@ -141,6 +158,8 @@ async function handleDeleteMedia(mediaId: string) {
 			:key="editingMedia?.id ?? 'new'"
 			:editing-media="editingMedia"
 			:existing-suggestions="existingSuggestions"
+			:is-submitting="isSubmittingMedia"
+			@submit="handleSaveMedia"
 			@close="closeModal"
 		/>
 	</div>

@@ -10,11 +10,7 @@ import {
 	mediaLogs,
 	notes
 } from '../database/schema';
-import { deleteBookRecord } from './books.repo';
-import { deleteCalendarEvent } from './calendar.repo';
-import { deleteMediaRecord } from './media.repo';
-import { deleteNoteRecord } from './notes.repo';
-import { asc, desc, sql } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { getAllHabits } from './habits.repo';
 import { getReflectionTags, saveCadencePlansForDate, saveDailyEntryAndLogs } from './daily-tracker.repo';
 import { parseTagsJson } from '~/domain/tags';
@@ -82,7 +78,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 							.run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_BOOK') {
-						deleteBookRecord(mutation.payload.bookId);
+						tx.delete(books).where(eq(books.id, mutation.payload.bookId)).run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_MEDIA') {
 						tx.insert(mediaLogs)
@@ -94,7 +90,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 							.run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_MEDIA') {
-						deleteMediaRecord(mutation.payload.mediaId);
+						tx.delete(mediaLogs).where(eq(mediaLogs.id, mutation.payload.mediaId)).run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_NOTE') {
 						tx.insert(notes)
@@ -106,7 +102,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 							.run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_NOTE') {
-						deleteNoteRecord(mutation.payload.noteId);
+						tx.delete(notes).where(eq(notes.id, mutation.payload.noteId)).run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
 						tx.insert(calendarEvents)
@@ -118,7 +114,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 							.run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
-						deleteCalendarEvent(mutation.payload.eventId);
+						tx.delete(calendarEvents).where(eq(calendarEvents.id, mutation.payload.eventId)).run();
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_HABIT') {
 						tx.insert(habits)

@@ -3,6 +3,8 @@ import { ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
+import { useLocalRepository } from '~/composables/useLocalRepository';
+import { useSyncEngine } from '~/composables/useSyncEngine';
 import { assembleJalaliMonthArchive, computeUpcomingEventsBanner } from '~/core/calendar-engine';
 import {
 	JALALI_MONTH_NAMES,
@@ -10,7 +12,7 @@ import {
 	isoToJalaliParts,
 	toPersianDigits
 } from '~/domain/calendar';
-import type { RawCalendarDayEntry, AnalyticsRawLog } from '~/domain/schemas';
+import type { RawCalendarDayEntry, AnalyticsRawLog, CreateCalendarEventInput } from '~/domain/schemas';
 import CalendarMonthGrid from '~/components/calendar/CalendarMonthGrid.vue';
 import CalendarDayInspector from '~/components/calendar/CalendarDayInspector.vue';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
@@ -19,6 +21,30 @@ import { BookHeart, Calendar as CalendarIcon, ChevronLeft, ChevronRight } from '
 const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
+const localRepo = useLocalRepository();
+const syncEngine = useSyncEngine();
+const isSubmittingCalendarEvent = ref(false);
+
+async function handleCreateEvent(payload: CreateCalendarEventInput) {
+	if (isSubmittingCalendarEvent.value) return;
+	isSubmittingCalendarEvent.value = true;
+	try {
+		await localRepo.calendar.create(payload);
+		void syncEngine.notifyLocalMutationStaged();
+	} finally {
+		isSubmittingCalendarEvent.value = false;
+	}
+}
+
+async function handleToggleEventComplete(eventId: string, isCompleted: boolean) {
+	await localRepo.calendar.toggleComplete(eventId, isCompleted);
+	void syncEngine.notifyLocalMutationStaged();
+}
+
+async function handleDeleteEvent(eventId: string) {
+	await localRepo.calendar.delete(eventId);
+	void syncEngine.notifyLocalMutationStaged();
+}
 
 const todayIso = getTodayIso();
 const todayParts = isoToJalaliParts(todayIso);
@@ -262,7 +288,14 @@ function goToToday() {
 
 			<!-- بازرس روز انتخابی -->
 			<div class="lg:col-span-5">
-				<CalendarDayInspector v-if="selectedDay" :day="selectedDay" />
+				<CalendarDayInspector
+					v-if="selectedDay"
+					:day="selectedDay"
+					:is-submitting-event="isSubmittingCalendarEvent"
+					@create-event="handleCreateEvent"
+					@toggle-event-complete="handleToggleEventComplete"
+					@delete-event="handleDeleteEvent"
+				/>
 			</div>
 		</div>
 	</div>

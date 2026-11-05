@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useClientAuth } from '~/composables/useClientAuth';
+import { useSyncEngine } from '~/composables/useSyncEngine';
 import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, WifiOff } from 'lucide-vue-next';
 
 definePageMeta({
@@ -10,15 +11,17 @@ definePageMeta({
 
 const router = useRouter();
 const clientAuth = useClientAuth();
+const syncEngine = useSyncEngine();
 
 const password = ref('');
 const confirmPassword = ref('');
 const showPassword = ref(false);
 const isSubmitting = ref(false);
 const errorMessage = ref<string | null>(null);
-const isClientOffline = computed(() => import.meta.client && !navigator.onLine);
+const isClientOffline = computed(() => !syncEngine.isOnline.value);
 
 onMounted(async () => {
+	syncEngine.init();
 	try {
 		const res = await fetch('/api/auth/status');
 		if (res.ok) {

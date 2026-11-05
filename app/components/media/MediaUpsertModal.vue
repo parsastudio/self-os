@@ -2,29 +2,27 @@
 import { ref, computed } from 'vue';
 import { getTodayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, MEDIA_CATEGORY_OPTIONS, MEDIA_STATUS_OPTIONS } from '~/domain/constants';
-import type { MediaCategory, MediaEntity, MediaStatus } from '~/domain/schemas';
+import type { CreateMediaInput, MediaCategory, MediaEntity, MediaStatus, UpdateMediaInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
-import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import { Clapperboard, History } from 'lucide-vue-next';
 
 interface Props {
 	editingMedia?: MediaEntity | null;
 	existingSuggestions?: Array<{ title: string; category: MediaCategory }>;
+	isSubmitting?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
 	editingMedia: null,
-	existingSuggestions: () => []
+	existingSuggestions: () => [],
+	isSubmitting: false
 });
 
 const emit = defineEmits<{
 	(e: 'close'): void;
+	(e: 'submit', payload: CreateMediaInput | UpdateMediaInput): void;
 }>();
-
-const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
 
 const defaultJalaliToday = toPersianDigits(isoToJalaliSlash(getTodayIso()));
 const initialStatus: MediaStatus = props.editingMedia?.status ?? 'completed';
@@ -44,7 +42,6 @@ const finishedJalali = ref(
 			: ''
 );
 const notes = ref(props.editingMedia?.notes ?? '');
-const isSubmitting = ref(false);
 
 const matchedSuggestion = computed(() =>
 	props.existingSuggestions.find(
@@ -63,37 +60,30 @@ function handleTitleChange(e: Event) {
 	}
 }
 
-async function handleSubmit() {
-	if (!title.value.trim() || isSubmitting.value) return;
-	isSubmitting.value = true;
+function handleSubmit() {
+	if (!title.value.trim() || props.isSubmitting) return;
 
-	try {
-		if (props.editingMedia) {
-			await localRepo.media.update({
-				mediaId: props.editingMedia.id,
-				title: title.value.trim(),
-				category: selectedCategory.value,
-				status: selectedStatus.value,
-				startedJalali: startedJalali.value.trim() || undefined,
-				finishedJalali: finishedJalali.value.trim() || undefined,
-				rating: selectedRating.value,
-				notes: notes.value.trim() || undefined
-			});
-		} else {
-			await localRepo.media.create({
-				title: title.value.trim(),
-				category: selectedCategory.value,
-				status: selectedStatus.value,
-				startedJalali: startedJalali.value.trim() || undefined,
-				finishedJalali: finishedJalali.value.trim() || undefined,
-				rating: selectedRating.value,
-				notes: notes.value.trim() || undefined
-			});
-		}
-		void syncEngine.notifyLocalMutationStaged();
-		emit('close');
-	} finally {
-		isSubmitting.value = false;
+	if (props.editingMedia) {
+		emit('submit', {
+			mediaId: props.editingMedia.id,
+			title: title.value.trim(),
+			category: selectedCategory.value,
+			status: selectedStatus.value,
+			startedJalali: startedJalali.value.trim() || undefined,
+			finishedJalali: finishedJalali.value.trim() || undefined,
+			rating: selectedRating.value,
+			notes: notes.value.trim() || undefined
+		});
+	} else {
+		emit('submit', {
+			title: title.value.trim(),
+			category: selectedCategory.value,
+			status: selectedStatus.value,
+			startedJalali: startedJalali.value.trim() || undefined,
+			finishedJalali: finishedJalali.value.trim() || undefined,
+			rating: selectedRating.value,
+			notes: notes.value.trim() || undefined
+		});
 	}
 }
 </script>

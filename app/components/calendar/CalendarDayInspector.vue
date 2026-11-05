@@ -2,10 +2,8 @@
 import { ref } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import { getDayStatusMeta, getTierBadgeMeta, TIER_SCORES } from '~/domain/constants';
-import type { CalendarDayAggregate } from '~/domain/schemas';
+import type { CalendarDayAggregate, CreateCalendarEventInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
-import { useLocalRepository } from '~/composables/useLocalRepository';
-import { useSyncEngine } from '~/composables/useSyncEngine';
 import {
 	ArrowLeft,
 	BookOpen,
@@ -23,41 +21,41 @@ import {
 
 interface Props {
 	day: CalendarDayAggregate;
+	isSubmittingEvent?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+	isSubmittingEvent: false
+});
 
-const localRepo = useLocalRepository();
-const syncEngine = useSyncEngine();
+const emit = defineEmits<{
+	(e: 'createEvent', payload: CreateCalendarEventInput): void;
+	(e: 'toggleEventComplete', eventId: string, isCompleted: boolean): void;
+	(e: 'deleteEvent', eventId: string): void;
+}>();
 
 const isAnnualChecked = ref(false);
 const showAddEventForm = ref(false);
 const eventTitleInput = ref('');
 const eventNotesInput = ref('');
-const isSubmittingEvent = ref(false);
 const isModalOpen = ref(false);
 const expandedHabitId = ref<string | null>(null);
 
-async function handleAddEvent() {
-	if (!eventTitleInput.value.trim() || isSubmittingEvent.value) return;
-	isSubmittingEvent.value = true;
+function handleAddEvent() {
+	if (!eventTitleInput.value.trim() || props.isSubmittingEvent) return;
 
-	try {
-		await localRepo.calendar.create({
-			title: eventTitleInput.value.trim(),
-			eventType: 'occasion',
-			isAnnual: isAnnualChecked.value,
-			dateIso: props.day.iso,
-			notes: eventNotesInput.value.trim() || undefined
-		});
-		void syncEngine.notifyLocalMutationStaged();
-		eventTitleInput.value = '';
-		eventNotesInput.value = '';
-		isAnnualChecked.value = false;
-		showAddEventForm.value = false;
-	} finally {
-		isSubmittingEvent.value = false;
-	}
+	emit('createEvent', {
+		title: eventTitleInput.value.trim(),
+		eventType: 'occasion',
+		isAnnual: isAnnualChecked.value,
+		dateIso: props.day.iso,
+		notes: eventNotesInput.value.trim() || undefined
+	});
+
+	eventTitleInput.value = '';
+	eventNotesInput.value = '';
+	isAnnualChecked.value = false;
+	showAddEventForm.value = false;
 }
 
 function openModalWithHabit(habitId?: string) {
@@ -198,7 +196,7 @@ function toggleHabitExpanded(habitId: string) {
 							type="button"
 							class="flex h-8 w-8 items-center justify-center rounded-xl border border-current bg-surface text-fg transition hover:scale-105 active:scale-95"
 							:title="ev.isCompleted ? 'انجام شد' : 'علامت انجام شدن'"
-							@click="localRepo.calendar.toggleComplete(ev.id, !ev.isCompleted); void syncEngine.notifyLocalMutationStaged();"
+							@click="emit('toggleEventComplete', ev.id, !ev.isCompleted)"
 						>
 							<Check class="h-4 w-4" :class="ev.isCompleted ? 'text-optimal' : 'text-fg-muted'" />
 						</button>
@@ -207,7 +205,7 @@ function toggleHabitExpanded(habitId: string) {
 							type="button"
 							class="flex h-8 w-8 items-center justify-center rounded-xl bg-surface text-fg-muted transition hover:text-failed active:scale-95"
 							title="حذف رویداد"
-							@click="localRepo.calendar.delete(ev.id); void syncEngine.notifyLocalMutationStaged();"
+							@click="emit('deleteEvent', ev.id)"
 						>
 							<Trash2 class="h-4 w-4" />
 						</button>

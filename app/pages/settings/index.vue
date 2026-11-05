@@ -151,9 +151,22 @@ async function importBackup() {
 		await db.lifecycleEvents.bulkPut(data.lifecycleEvents);
 		await db.reflectionTags.bulkPut(data.reflectionTags);
 
+		if (navigator.onLine) {
+			try {
+				await fetch('/api/backup/import', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(parsed.data)
+				});
+				void syncEngine.syncNow({ checkRemoteUpdates: true });
+			} catch {
+				// در صورت عدم دسترسی موقت به سرور، داده‌های محلی در Dexie بازگردانی شده‌اند
+			}
+		}
+
 		importMessage.value = {
 			type: 'success',
-			text: 'پشتیبان با موفقیت بازگردانی شد و داده‌های محلی به‌روزرسانی شدند.'
+			text: 'پشتیبان با موفقیت بازگردانی شد و داده‌های محلی و سرور به‌روزرسانی شدند.'
 		};
 		selectedFile.value = null;
 	} catch (err) {

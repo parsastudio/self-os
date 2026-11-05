@@ -14,6 +14,7 @@ const hasAppUpdate = ref(false);
 
 let isInitialized = false;
 let isSyncInFlight = false;
+let hasQueuedSyncDuringFlight = false;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let periodicPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -38,8 +39,12 @@ export function useSyncEngine() {
 			return false;
 		}
 
-		if (isSyncInFlight) return false;
+		if (isSyncInFlight) {
+			hasQueuedSyncDuringFlight = true;
+			return false;
+		}
 		isSyncInFlight = true;
+		hasQueuedSyncDuringFlight = false;
 
 		try {
 			const meta = await localRepo.getSyncMeta();
@@ -104,10 +109,11 @@ export function useSyncEngine() {
 			status.value = remaining > 0 ? 'local_pending' : 'synced';
 			isSyncInFlight = false;
 
-			if (remaining > 0) {
+			if (remaining > 0 || hasQueuedSyncDuringFlight) {
+				hasQueuedSyncDuringFlight = false;
 				setTimeout(() => {
 					void syncNow({ checkRemoteUpdates: false });
-				}, 400);
+				}, 350);
 			}
 			return true;
 		} catch (err) {
@@ -183,6 +189,16 @@ export function useSyncEngine() {
 		window.addEventListener('focus', () => {
 			if (isOnline.value) {
 				void syncNow({ checkRemoteUpdates: true });
+			}
+		});
+
+		window.addEventListener('pagehide', () => {
+			if (debounceTimer) {
+				clearTimeout(debounceTimer);
+				debounceTimer = null;
+			}
+			if (isOnline.value && pendingCount.value > 0 && !isSyncInFlight) {
+				void syncNow({ checkRemoteUpdates: false });
 			}
 		});
 
