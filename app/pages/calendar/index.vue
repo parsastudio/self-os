@@ -8,8 +8,10 @@ import { useSyncEngine } from '~/composables/useSyncEngine';
 import { assembleJalaliMonthArchive, computeUpcomingEventsBanner } from '~/core/calendar-engine';
 import {
 	JALALI_MONTH_NAMES,
+	getJalaliMonthLength,
 	getTodayIso,
 	isoToJalaliParts,
+	jalaliPartsToIso,
 	toPersianDigits
 } from '~/domain/calendar';
 import type { RawCalendarDayEntry, AnalyticsRawLog, CreateCalendarEventInput } from '~/domain/schemas';
@@ -49,14 +51,6 @@ async function handleDeleteEvent(eventId: string) {
 const todayIso = getTodayIso();
 const todayParts = isoToJalaliParts(todayIso);
 
-// Live Dexie subscriptions
-const allHabits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
-const allEntries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
-const allLogs = useDexieLiveQuery(() => db.habitLogs.toArray(), []);
-const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
-const allBooks = useDexieLiveQuery(() => db.books.toArray(), []);
-const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
-
 const requestedDate = computed(() => {
 	const d = route.query.date as string | undefined;
 	return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
@@ -76,10 +70,44 @@ const currentMonth = computed(() => {
 	return todayParts.jm;
 });
 
+const monthIsoBounds = computed(() => {
+	const jy = currentYear.value;
+	const jm = currentMonth.value;
+	const len = getJalaliMonthLength(jy, jm);
+	return {
+		startIso: jalaliPartsToIso({ jy, jm, jd: 1 }) ?? todayIso,
+		endIso: jalaliPartsToIso({ jy, jm, jd: len }) ?? todayIso
+	};
+});
+
+// Live Dexie subscriptions scoped to the active Jalali month
+const allHabits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
+const monthEntries = useDexieLiveQuery(
+	() =>
+		db.dailyEntries
+			.where('dateIso')
+			.between(monthIsoBounds.value.startIso, monthIsoBounds.value.endIso, true, true)
+			.toArray(),
+	[],
+	monthIsoBounds
+);
+const monthLogs = useDexieLiveQuery(
+	() =>
+		db.habitLogs
+			.where('dateIso')
+			.between(monthIsoBounds.value.startIso, monthIsoBounds.value.endIso, true, true)
+			.toArray(),
+	[],
+	monthIsoBounds
+);
+const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
+const allBooks = useDexieLiveQuery(() => db.books.toArray(), []);
+const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
+
 const userSelectedIso = ref<string | null>(null);
 
 const archiveData = computed(() => {
-	const entriesInMonth: RawCalendarDayEntry[] = allEntries.value.map((e) => ({
+	const entriesInMonth: RawCalendarDayEntry[] = monthEntries.value.map((e) => ({
 		dateIso: e.dateIso,
 		dayStatus: e.dayStatus,
 		reflectionNote: e.reflectionNote,
@@ -87,12 +115,9 @@ const archiveData = computed(() => {
 		tagsJson: JSON.stringify(e.tags)
 	}));
 
-	const logsInMonth: AnalyticsRawLog[] = allLogs.value.map((l) => ({
-		id: l.id,
-		dateIso: l.dateIso,
-		habitId: l.habitId,
+	const logsInMonth: AnalyticsRawLog[] = monthLogs.value.map((l) => ({
+		...l,
 		habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-		achievedTier: l.achievedTier,
 		achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
 		habitSnapshotJson: l.habitSnapshotJson ?? null,
 		completedIntervals: l.completedIntervals ?? null,

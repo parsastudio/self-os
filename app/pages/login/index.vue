@@ -20,23 +20,19 @@ const isSubmitting = ref(false);
 const errorMessage = ref<string | null>(null);
 const isClientOffline = computed(() => !syncEngine.isOnline.value);
 
+function extractErrorText(err: unknown, fallback: string): string {
+	if (err && typeof err === 'object' && 'data' in err) {
+		const data = (err as { data?: { statusMessage?: string } }).data;
+		if (data?.statusMessage) return data.statusMessage;
+	}
+	return err instanceof Error ? err.message : fallback;
+}
+
 onMounted(async () => {
 	syncEngine.init();
-	try {
-		const res = await fetch('/api/auth/status');
-		if (res.ok) {
-			const data = await res.json();
-			if (data.isAuthenticated) {
-				router.push('/');
-				return;
-			}
-			await clientAuth.checkAuth(data.isAuthenticated, data.isPasswordConfigured);
-		}
-	} catch {
-		await clientAuth.checkAuth();
-		if (clientAuth.isAuthenticated.value) {
-			router.push('/');
-		}
+	const state = await clientAuth.ensureSessionChecked();
+	if (state.isAuthenticated) {
+		router.push('/');
 	}
 });
 
@@ -47,16 +43,10 @@ async function handleLogin() {
 
 	try {
 		if (navigator.onLine) {
-			const res = await fetch('/api/auth/login', {
+			await $fetch('/api/auth/login', {
 				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ password: password.value })
+				body: { password: password.value }
 			});
-
-			if (!res.ok) {
-				const data = await res.json();
-				throw new Error(data.statusMessage || 'رمز عبور نادرست است');
-			}
 
 			await clientAuth.saveClientCredential(password.value);
 			router.push('/');
@@ -70,7 +60,7 @@ async function handleLogin() {
 			errorMessage.value = offlineRes.error || 'رمز عبور وارد شده نادرست است';
 		}
 	} catch (err: unknown) {
-		errorMessage.value = err instanceof Error ? err.message : 'خطای ارتباط با سرور';
+		errorMessage.value = extractErrorText(err, 'رمز عبور نادرست است');
 	} finally {
 		isSubmitting.value = false;
 	}
@@ -85,24 +75,18 @@ async function handleSetup() {
 	errorMessage.value = null;
 
 	try {
-		const res = await fetch('/api/auth/setup', {
+		await $fetch('/api/auth/setup', {
 			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
+			body: {
 				password: password.value,
 				confirmPassword: confirmPassword.value
-			})
+			}
 		});
-
-		if (!res.ok) {
-			const data = await res.json();
-			throw new Error(data.statusMessage || 'خطا در تعیین رمز عبور');
-		}
 
 		await clientAuth.saveClientCredential(password.value);
 		router.push('/');
 	} catch (err: unknown) {
-		errorMessage.value = err instanceof Error ? err.message : 'خطا در ثبت رمز عبور';
+		errorMessage.value = extractErrorText(err, 'خطا در ثبت رمز عبور');
 	} finally {
 		isSubmitting.value = false;
 	}

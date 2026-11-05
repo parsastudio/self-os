@@ -62,21 +62,15 @@ export function useSyncEngine() {
 
 			status.value = mutations.length > 0 ? 'syncing' : 'synced';
 
-			const response = await fetch('/api/sync', {
+			const data = await $fetch<ServerSyncResponse>('/api/sync', {
 				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
+				body: {
 					clientId: meta.clientId || 'nuxt-client',
 					knownServerVersionIso: knownServerVersionIso.value,
 					mutations
-				})
+				}
 			});
 
-			if (!response.ok) {
-				throw new Error(`خطای ارتباط با سرور (${response.status})`);
-			}
-
-			const data = (await response.json()) as ServerSyncResponse;
 			if (!data.ok) {
 				throw new Error(data.error || 'خطا در پردازش بسته همگام‌سازی');
 			}

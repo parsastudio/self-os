@@ -213,13 +213,13 @@ export function useClientAuth() {
 
 		try {
 			if (navigator.onLine) {
-				const res = await fetch('/api/auth/status');
-				if (res.ok) {
-					const data = await res.json();
-					serverAuth = data.isAuthenticated;
-					serverPasswordConfigured = data.isPasswordConfigured;
-					hasVerifiedWithServerInSession = true;
-				}
+				const data = await $fetch<{
+					isAuthenticated: boolean;
+					isPasswordConfigured: boolean;
+				}>('/api/auth/status');
+				serverAuth = data.isAuthenticated;
+				serverPasswordConfigured = data.isPasswordConfigured;
+				hasVerifiedWithServerInSession = true;
 			}
 		} catch {
 			// Fallback to local IndexedDB session when offline or unreachable

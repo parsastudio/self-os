@@ -43,21 +43,25 @@ const rangeOptions: ReadonlyArray<{ value: AnalyticsTimeRange; label: string }> 
 	{ value: 'all', label: 'کل زمان' }
 ];
 
+const normalizedLogs = computed(() =>
+	rawLogs.value.map((l) => ({
+		...l,
+		habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+		achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+		habitSnapshotJson: l.habitSnapshotJson ?? null,
+		completedIntervals: l.completedIntervals ?? null,
+		actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
+		totalActualMinutes: l.totalActualMinutes ?? null,
+		plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
+		plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null
+	}))
+);
+
 const report = computed(() =>
 	buildFullAnalyticsReport({
 		habits: habits.value,
 		entries: rawEntries.value,
-		logs: rawLogs.value.map((l) => ({
-			...l,
-			habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-			achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-			habitSnapshotJson: l.habitSnapshotJson ?? null,
-			completedIntervals: l.completedIntervals ?? null,
-			actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-			totalActualMinutes: l.totalActualMinutes ?? null,
-			plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
-			plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null
-		})),
+		logs: normalizedLogs.value,
 		lifecycleEvents: lifecycleEvents.value,
 		selectedHabitId: selectedHabitId.value,
 		range: selectedRange.value,

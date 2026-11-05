@@ -5,7 +5,8 @@ import {
 	resolveHabitRuleSnapshot,
 	serializeHabitSpecSnapshot
 } from '~/core/habit-engine';
-import { getTodayIso, isoToJalaliParts, resolveCompletedRangeDates } from '~/domain/calendar';
+import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, resolveCompletedRangeDates } from '~/domain/calendar';
+import { parseTagsJson } from '~/domain/tags';
 import type {
 	BookEntity,
 	BookStatus,
@@ -14,6 +15,7 @@ import type {
 	CreateCalendarEventInput,
 	CreateHabitInput,
 	CreateMediaInput,
+	DatabaseBackupPayload,
 	HabitEntity,
 	LifecycleEventEntity,
 	LocalWorkspaceSnapshot,
@@ -865,6 +867,118 @@ export function useLocalRepository() {
 		});
 	}
 
+	async function exportBackupPayload(): Promise<DatabaseBackupPayload> {
+		const todayIso = getTodayIso();
+		const nowIso = new Date().toISOString();
+
+		const [
+			allHabits,
+			allEntries,
+			allLogs,
+			allCadence,
+			allBooks,
+			allMedia,
+			allNotes,
+			allEvents,
+			allLifecycle,
+			allTags
+		] = await Promise.all([
+			db.habits.toArray(),
+			db.dailyEntries.toArray(),
+			db.habitLogs.toArray(),
+			db.cadencePlans.toArray(),
+			db.books.toArray(),
+			db.media.toArray(),
+			db.notes.toArray(),
+			db.calendarEvents.toArray(),
+			db.lifecycleEvents.toArray(),
+			db.reflectionTags.toArray()
+		]);
+
+		return {
+			version: 1,
+			appName: 'new-life',
+			exportedAtIso: nowIso,
+			jalaliDate: isoToJalaliSlash(todayIso),
+			data: {
+				habits: allHabits,
+				dailyEntries: allEntries.map((e) => ({
+					...e,
+					id: `entry:${e.dateIso}`,
+					tagsJson: JSON.stringify(e.tags)
+				})),
+				habitLogs: allLogs.map((l) => ({
+					...l,
+					habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+					achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+					habitSnapshotJson: l.habitSnapshotJson ?? null,
+					totalActualMinutes: l.totalActualMinutes ?? null,
+					completedIntervals: l.completedIntervals ?? null,
+					actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
+					plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
+					plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
+					updatedAtIso: l.updatedAtIso || nowIso
+				})),
+				cadencePlans: allCadence,
+				books: allBooks,
+				media: allMedia,
+				notes: allNotes,
+				calendarEvents: allEvents,
+				lifecycleEvents: allLifecycle,
+				reflectionTags: allTags.map((t) => ({
+					id: t.id,
+					label: t.label,
+					sortOrder: t.sortOrder
+				}))
+			}
+		};
+	}
+
+	async function restoreBackupPayload(payload: DatabaseBackupPayload): Promise<void> {
+		const nowIso = new Date().toISOString();
+		const { data } = payload;
+
+		await clearLocalData();
+
+		await db.transaction('rw', [
+			db.habits,
+			db.dailyEntries,
+			db.habitLogs,
+			db.cadencePlans,
+			db.books,
+			db.media,
+			db.notes,
+			db.calendarEvents,
+			db.lifecycleEvents,
+			db.reflectionTags
+		], async () => {
+			await db.habits.bulkPut(data.habits);
+			await db.dailyEntries.bulkPut(
+				data.dailyEntries.map((e) => ({
+					dateIso: e.dateIso,
+					dayStatus: e.dayStatus,
+					reflectionNote: e.reflectionNote,
+					journalText: e.journalText ?? null,
+					tags: parseTagsJson(e.tagsJson),
+					updatedAtIso: e.updatedAtIso
+				}))
+			);
+			await db.habitLogs.bulkPut(
+				data.habitLogs.map((l) => ({
+					...l,
+					updatedAtIso: l.updatedAtIso || nowIso
+				}))
+			);
+			await db.cadencePlans.bulkPut(data.cadencePlans);
+			await db.books.bulkPut(data.books);
+			await db.media.bulkPut(data.media);
+			await db.notes.bulkPut(data.notes);
+			await db.calendarEvents.bulkPut(data.calendarEvents);
+			await db.lifecycleEvents.bulkPut(data.lifecycleEvents);
+			await db.reflectionTags.bulkPut(data.reflectionTags);
+		});
+	}
+
 	return {
 		daily,
 		habits,
@@ -877,6 +991,8 @@ export function useLocalRepository() {
 		getPendingMutations,
 		removeAppliedMutations,
 		applyServerWorkspace,
+		exportBackupPayload,
+		restoreBackupPayload,
 		clearLocalData
 	};
 }

@@ -7,8 +7,8 @@ import { useLocalRepository } from '~/composables/useLocalRepository';
 import { useSyncEngine } from '~/composables/useSyncEngine';
 import { useTheme } from '~/composables/useTheme';
 import { useClientAuth } from '~/composables/useClientAuth';
-import { getTodayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
-import { DatabaseBackupPayloadSchema, type DatabaseBackupPayload } from '~/domain/schemas';
+import { toPersianDigits } from '~/domain/calendar';
+import { DatabaseBackupPayloadSchema } from '~/domain/schemas';
 import {
 	Check,
 	Database,
@@ -48,44 +48,7 @@ const isChangingPassword = ref(false);
 async function exportLocalBackup() {
 	isExporting.value = true;
 	try {
-		const todayIso = getTodayIso();
-		const backup: DatabaseBackupPayload = {
-			version: 1,
-			appName: 'new-life',
-			exportedAtIso: new Date().toISOString(),
-			jalaliDate: isoToJalaliSlash(todayIso),
-			data: {
-				habits: await db.habits.toArray(),
-				dailyEntries: (await db.dailyEntries.toArray()).map((e) => ({
-					...e,
-					id: `entry:${e.dateIso}`,
-					tagsJson: JSON.stringify(e.tags)
-				})),
-				habitLogs: (await db.habitLogs.toArray()).map((l) => ({
-					...l,
-					habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-					achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-					habitSnapshotJson: l.habitSnapshotJson ?? null,
-					totalActualMinutes: l.totalActualMinutes ?? null,
-					completedIntervals: l.completedIntervals ?? null,
-					actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-					plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
-					plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
-					updatedAtIso: l.updatedAtIso || new Date().toISOString()
-				})),
-				cadencePlans: await db.cadencePlans.toArray(),
-				books: await db.books.toArray(),
-				media: await db.media.toArray(),
-				notes: await db.notes.toArray(),
-				calendarEvents: await db.calendarEvents.toArray(),
-				lifecycleEvents: await db.lifecycleEvents.toArray(),
-				reflectionTags: (await db.reflectionTags.toArray()).map((t) => ({
-					id: t.id,
-					label: t.label,
-					sortOrder: t.sortOrder
-				}))
-			}
-		};
+		const backup = await localRepo.exportBackupPayload();
 
 		const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
@@ -123,40 +86,13 @@ async function importBackup() {
 			return;
 		}
 
-		await localRepo.clearLocalData();
-		const { data } = parsed.data;
-
-		await db.habits.bulkPut(data.habits);
-		await db.dailyEntries.bulkPut(
-			data.dailyEntries.map((e) => ({
-				dateIso: e.dateIso,
-				dayStatus: e.dayStatus,
-				reflectionNote: e.reflectionNote,
-				journalText: e.journalText ?? null,
-				tags: JSON.parse(e.tagsJson || '[]'),
-				updatedAtIso: e.updatedAtIso
-			}))
-		);
-		await db.habitLogs.bulkPut(
-			data.habitLogs.map((l) => ({
-				...l,
-				updatedAtIso: l.updatedAtIso || new Date().toISOString()
-			}))
-		);
-		await db.cadencePlans.bulkPut(data.cadencePlans);
-		await db.books.bulkPut(data.books);
-		await db.media.bulkPut(data.media);
-		await db.notes.bulkPut(data.notes);
-		await db.calendarEvents.bulkPut(data.calendarEvents);
-		await db.lifecycleEvents.bulkPut(data.lifecycleEvents);
-		await db.reflectionTags.bulkPut(data.reflectionTags);
+		await localRepo.restoreBackupPayload(parsed.data);
 
 		if (navigator.onLine) {
 			try {
-				await fetch('/api/backup/import', {
+				await $fetch('/api/backup/import', {
 					method: 'POST',
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify(parsed.data)
+					body: parsed.data
 				});
 				void syncEngine.syncNow({ checkRemoteUpdates: true });
 			} catch {
@@ -189,19 +125,14 @@ async function handleChangePassword() {
 
 	try {
 		if (navigator.onLine) {
-			const res = await fetch('/api/auth/change-password', {
+			await $fetch('/api/auth/change-password', {
 				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
+				body: {
 					currentPassword: currentPassword.value,
 					newPassword: newPassword.value,
 					confirmNewPassword: confirmNewPassword.value
-				})
+				}
 			});
-			if (!res.ok) {
-				const data = await res.json();
-				throw new Error(data.statusMessage || 'خطا در تغییر رمز عبور');
-			}
 		}
 
 		await clientAuth.saveClientCredential(newPassword.value);
@@ -210,9 +141,13 @@ async function handleChangePassword() {
 		newPassword.value = '';
 		confirmNewPassword.value = '';
 	} catch (err: unknown) {
+		const statusMessage =
+			err && typeof err === 'object' && 'data' in err
+				? (err as { data?: { statusMessage?: string } }).data?.statusMessage
+				: undefined;
 		passwordMessage.value = {
 			type: 'error',
-			text: err instanceof Error ? err.message : 'خطا در تغییر رمز'
+			text: statusMessage || (err instanceof Error ? err.message : 'خطا در تغییر رمز')
 		};
 	} finally {
 		isChangingPassword.value = false;
@@ -222,7 +157,7 @@ async function handleChangePassword() {
 async function handleLogout() {
 	try {
 		if (navigator.onLine) {
-			await fetch('/api/auth/logout', { method: 'POST' });
+			await $fetch('/api/auth/logout', { method: 'POST' });
 		}
 	} catch {
 		// ignore
