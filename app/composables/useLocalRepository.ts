@@ -6,6 +6,7 @@ import {
 	serializeHabitSpecSnapshot
 } from '~/core/habit-engine';
 import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, resolveCompletedRangeDates } from '~/domain/calendar';
+import { buildDemoSeedDataset, DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/demo-seed';
 import { parseTagsJson } from '~/domain/tags';
 import type {
 	BookEntity,
@@ -979,6 +980,117 @@ export function useLocalRepository() {
 		});
 	}
 
+	async function injectDemoSeed(): Promise<void> {
+		const dataset = buildDemoSeedDataset();
+		const { data } = dataset;
+
+		await db.transaction('rw', [
+			db.habits,
+			db.dailyEntries,
+			db.habitLogs,
+			db.cadencePlans,
+			db.books,
+			db.media,
+			db.notes,
+			db.calendarEvents,
+			db.lifecycleEvents
+		], async () => {
+			await db.habits.bulkPut(data.habits);
+			await db.cadencePlans.bulkPut(data.cadencePlans);
+			await db.books.bulkPut(data.books);
+			await db.media.bulkPut(data.media);
+			await db.notes.bulkPut(data.notes);
+			await db.calendarEvents.bulkPut(data.calendarEvents);
+			await db.lifecycleEvents.bulkPut(data.lifecycleEvents);
+
+			for (const e of data.dailyEntries) {
+				const existing = await db.dailyEntries.get(e.dateIso);
+				if (!existing || existing.tags.includes(DEMO_ENTRY_TAG)) {
+					await db.dailyEntries.put({
+						dateIso: e.dateIso,
+						dayStatus: e.dayStatus,
+						reflectionNote: e.reflectionNote,
+						journalText: e.journalText ?? null,
+						tags: parseTagsJson(e.tagsJson),
+						updatedAtIso: e.updatedAtIso
+					});
+				}
+			}
+
+			await db.habitLogs.bulkPut(
+				data.habitLogs.map((l) => ({
+					...l,
+					updatedAtIso: l.updatedAtIso || dataset.exportedAtIso
+				}))
+			);
+		});
+	}
+
+	async function removeDemoSeed(): Promise<void> {
+		await db.transaction('rw', [
+			db.habits,
+			db.dailyEntries,
+			db.habitLogs,
+			db.cadencePlans,
+			db.books,
+			db.media,
+			db.notes,
+			db.calendarEvents,
+			db.lifecycleEvents,
+			db.syncOutbox
+		], async () => {
+			const demoHabitIds = (await db.habits.toArray())
+				.filter((h) => isDemoRecordId(h.id))
+				.map((h) => h.id);
+			if (demoHabitIds.length > 0) await db.habits.bulkDelete(demoHabitIds);
+
+			const demoLogIds = (await db.habitLogs.toArray())
+				.filter((l) => isDemoRecordId(l.id) || isDemoRecordId(l.habitId))
+				.map((l) => l.id);
+			if (demoLogIds.length > 0) await db.habitLogs.bulkDelete(demoLogIds);
+
+			const demoEntryDates = (await db.dailyEntries.toArray())
+				.filter((e) => e.tags.includes(DEMO_ENTRY_TAG))
+				.map((e) => e.dateIso);
+			if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
+
+			const demoPlanIds = (await db.cadencePlans.toArray())
+				.filter((p) => isDemoRecordId(p.id) || isDemoRecordId(p.habitId))
+				.map((p) => p.id);
+			if (demoPlanIds.length > 0) await db.cadencePlans.bulkDelete(demoPlanIds);
+
+			const demoBookIds = (await db.books.toArray())
+				.filter((b) => isDemoRecordId(b.id))
+				.map((b) => b.id);
+			if (demoBookIds.length > 0) await db.books.bulkDelete(demoBookIds);
+
+			const demoMediaIds = (await db.media.toArray())
+				.filter((m) => isDemoRecordId(m.id))
+				.map((m) => m.id);
+			if (demoMediaIds.length > 0) await db.media.bulkDelete(demoMediaIds);
+
+			const demoNoteIds = (await db.notes.toArray())
+				.filter((n) => isDemoRecordId(n.id))
+				.map((n) => n.id);
+			if (demoNoteIds.length > 0) await db.notes.bulkDelete(demoNoteIds);
+
+			const demoEventIds = (await db.calendarEvents.toArray())
+				.filter((ev) => isDemoRecordId(ev.id))
+				.map((ev) => ev.id);
+			if (demoEventIds.length > 0) await db.calendarEvents.bulkDelete(demoEventIds);
+
+			const demoLifecycleIds = (await db.lifecycleEvents.toArray())
+				.filter((lc) => isDemoRecordId(lc.id) || isDemoRecordId(lc.habitId))
+				.map((lc) => lc.id);
+			if (demoLifecycleIds.length > 0) await db.lifecycleEvents.bulkDelete(demoLifecycleIds);
+
+			const demoOutboxIds = (await db.syncOutbox.toArray())
+				.filter((m) => m.id.includes('demo:'))
+				.map((m) => m.id);
+			if (demoOutboxIds.length > 0) await db.syncOutbox.bulkDelete(demoOutboxIds);
+		});
+	}
+
 	return {
 		daily,
 		habits,
@@ -993,6 +1105,8 @@ export function useLocalRepository() {
 		applyServerWorkspace,
 		exportBackupPayload,
 		restoreBackupPayload,
+		injectDemoSeed,
+		removeDemoSeed,
 		clearLocalData
 	};
 }

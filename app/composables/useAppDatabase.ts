@@ -86,10 +86,7 @@ export class PersonalOSDatabase extends Dexie {
 	}
 }
 
-import { INITIAL_CLIENT_HABITS } from '~/domain/seed-habits';
-
 let dbInstance: PersonalOSDatabase | null = null;
-let isBootstrapped = false;
 
 export function getAppDatabase(): PersonalOSDatabase | null {
 	if (!import.meta.client) {
@@ -97,20 +94,6 @@ export function getAppDatabase(): PersonalOSDatabase | null {
 	}
 	if (!dbInstance) {
 		dbInstance = new PersonalOSDatabase();
-
-		if (!isBootstrapped) {
-			isBootstrapped = true;
-			void dbInstance.habits.count().then(async (count) => {
-				if (count === 0 && dbInstance) {
-					const nowIso = new Date().toISOString();
-					const entities: HabitEntity[] = INITIAL_CLIENT_HABITS.map((def) => ({
-						...def,
-						updatedAtIso: nowIso
-					}));
-					await dbInstance.habits.bulkPut(entities);
-				}
-			});
-		}
 	}
 	return dbInstance;
 }

@@ -11,7 +11,31 @@ import {
 	notes,
 	reflectionTags
 } from '../database/schema';
+import { like } from 'drizzle-orm';
+import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
+
+export function removeDemoSeedFromServer(): { removedRecordsCount: number } {
+	let removed = 0;
+	const prefixPattern = `${DEMO_ID_PREFIX}%`;
+	const tagPattern = `%${DEMO_ENTRY_TAG}%`;
+
+	db.transaction((tx) => {
+		removed += tx.delete(habitLogs).where(like(habitLogs.id, prefixPattern)).run().changes;
+		removed += tx.delete(habitLogs).where(like(habitLogs.habitId, prefixPattern)).run().changes;
+		removed += tx.delete(dailyEntries).where(like(dailyEntries.id, prefixPattern)).run().changes;
+		removed += tx.delete(dailyEntries).where(like(dailyEntries.tagsJson, tagPattern)).run().changes;
+		removed += tx.delete(cadencePlans).where(like(cadencePlans.id, prefixPattern)).run().changes;
+		removed += tx.delete(habitLifecycleEvents).where(like(habitLifecycleEvents.id, prefixPattern)).run().changes;
+		removed += tx.delete(habits).where(like(habits.id, prefixPattern)).run().changes;
+		removed += tx.delete(books).where(like(books.id, prefixPattern)).run().changes;
+		removed += tx.delete(mediaLogs).where(like(mediaLogs.id, prefixPattern)).run().changes;
+		removed += tx.delete(notes).where(like(notes.id, prefixPattern)).run().changes;
+		removed += tx.delete(calendarEvents).where(like(calendarEvents.id, prefixPattern)).run().changes;
+	});
+
+	return { removedRecordsCount: removed };
+}
 
 export function importDatabaseFromJson(
 	payload: DatabaseBackupPayload,

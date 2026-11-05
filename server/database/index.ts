@@ -1,7 +1,6 @@
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import Database from 'better-sqlite3';
 import * as schema from './schema';
-import { seedDatabaseWithInitialData } from './seed-runner';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -188,14 +187,5 @@ function ensureProductionSchema(sqlite: Database.Database): void {
 }
 
 ensureProductionSchema(client);
-
-if (dbPath !== '/tmp/build.db') {
-	const row = client
-		.prepare('SELECT COUNT(*) AS count FROM habits')
-		.get() as { count: number } | undefined;
-	if (!row || row.count === 0) {
-		seedDatabaseWithInitialData(client, { wipeExisting: false });
-	}
-}
 
 export const db = drizzle(client, { schema });
