@@ -142,7 +142,7 @@ export function getApplicableHabitsForDate(
 		if (h.status === 'archived') {
 			return false;
 		}
-		if (hasExistingEntry && dateIso && h.createdAtIso > dateIso) {
+		if (hasExistingEntry && dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
 			return false;
 		}
 		return true;
@@ -325,6 +325,7 @@ export function evaluateDayStatusColor(
 			.filter(
 				(l) =>
 					(l.achievedTier !== null && l.achievedTier !== undefined) ||
+					l.actualMinutesPerInterval !== null ||
 					resolveEffectiveCadenceMinutes(l) > 0
 			)
 			.map((l) => l.habitId)

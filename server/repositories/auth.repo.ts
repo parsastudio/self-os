@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import util from 'node:util';
 import { db } from '../database/index';
 import { appAuth, authSessions } from '../database/schema';
-import { eq, lt } from 'drizzle-orm';
+import { eq, lt, ne } from 'drizzle-orm';
 
 const scryptAsync = util.promisify(crypto.scrypt);
 
@@ -76,7 +76,11 @@ export async function verifyPassword(password: string): Promise<boolean> {
 	return crypto.timingSafeEqual(expectedBuf, candidateBuf);
 }
 
-export async function changeMasterPassword(currentPassword: string, newPassword: string): Promise<boolean> {
+export async function changeMasterPassword(
+	currentPassword: string,
+	newPassword: string,
+	keepRawToken?: string | null
+): Promise<boolean> {
 	if (!(await verifyPassword(currentPassword))) {
 		return false;
 	}
@@ -84,14 +88,23 @@ export async function changeMasterPassword(currentPassword: string, newPassword:
 	const passwordHash = await hashPasswordWithSalt(newPassword, saltHex);
 	const nowIso = new Date().toISOString();
 
-	db.update(appAuth)
-		.set({
-			passwordHash,
-			passwordSalt: saltHex,
-			updatedAtIso: nowIso
-		})
-		.where(eq(appAuth.id, AUTH_SINGLETON_ID))
-		.run();
+	db.transaction((tx) => {
+		tx.update(appAuth)
+			.set({
+				passwordHash,
+				passwordSalt: saltHex,
+				updatedAtIso: nowIso
+			})
+			.where(eq(appAuth.id, AUTH_SINGLETON_ID))
+			.run();
+
+		if (keepRawToken) {
+			const currentSessionId = hashSessionToken(keepRawToken);
+			tx.delete(authSessions).where(ne(authSessions.id, currentSessionId)).run();
+		} else {
+			tx.delete(authSessions).run();
+		}
+	});
 
 	return true;
 }

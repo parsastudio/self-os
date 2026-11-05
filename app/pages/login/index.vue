@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { useSyncEngine } from '~/composables/useSyncEngine';
 import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, WifiOff } from 'lucide-vue-next';
@@ -9,9 +9,18 @@ definePageMeta({
 	layout: false
 });
 
+const route = useRoute();
 const router = useRouter();
 const clientAuth = useClientAuth();
 const syncEngine = useSyncEngine();
+
+function resolvePostLoginPath(): string {
+	const target = route.query.redirectTo;
+	if (typeof target === 'string' && target.startsWith('/') && !target.startsWith('//')) {
+		return target;
+	}
+	return '/';
+}
 
 const password = ref('');
 const confirmPassword = ref('');
@@ -32,7 +41,7 @@ onMounted(async () => {
 	syncEngine.init();
 	const state = await clientAuth.ensureSessionChecked();
 	if (state.isAuthenticated) {
-		router.push('/');
+		router.push(resolvePostLoginPath());
 	}
 });
 
@@ -49,13 +58,13 @@ async function handleLogin() {
 			});
 
 			await clientAuth.saveClientCredential(password.value);
-			router.push('/');
+			router.push(resolvePostLoginPath());
 			return;
 		}
 
 		const offlineRes = await clientAuth.loginOffline(password.value);
 		if (offlineRes.success) {
-			router.push('/');
+			router.push(resolvePostLoginPath());
 		} else {
 			errorMessage.value = offlineRes.error || 'رمز عبور وارد شده نادرست است';
 		}
@@ -84,7 +93,7 @@ async function handleSetup() {
 		});
 
 		await clientAuth.saveClientCredential(password.value);
-		router.push('/');
+		router.push(resolvePostLoginPath());
 	} catch (err: unknown) {
 		errorMessage.value = extractErrorText(err, 'خطا در ثبت رمز عبور');
 	} finally {

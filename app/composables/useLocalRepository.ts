@@ -187,6 +187,12 @@ export function useLocalRepository() {
 							createdAtIso: nowIso
 						};
 						await db.lifecycleEvents.put(lifecycleEvent);
+						await db.syncOutbox.put({
+							id: `lifecycle:${lifecycleEvent.id}`,
+							kind: 'ADD_LIFECYCLE_EVENT',
+							queuedAtIso: nowIso,
+							payload: lifecycleEvent
+						});
 					}
 				}
 			});

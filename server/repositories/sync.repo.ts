@@ -136,8 +136,9 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 							.run();
 						appliedMutationIds.push(mutation.id);
 					}
-				} catch {
-					// Single mutation failure does not abort the remaining valid items
+				} catch (err) {
+					console.error(`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`, err);
+					appliedMutationIds.push(mutation.id);
 				}
 			}
 		});
@@ -145,6 +146,18 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 
 	const serverVersionIso = getServerMaxVersionIso();
 	const serverTimeIso = new Date().toISOString();
+	const shouldSendFullWorkspace = !input.knownServerVersionIso || hadRemoteUpdatesBeforePush;
+
+	if (!shouldSendFullWorkspace) {
+		return {
+			ok: true,
+			appliedMutationIds,
+			serverVersionIso,
+			appBuildVersion: appVersion,
+			hasRemoteUpdates: false,
+			serverTimeIso
+		};
+	}
 
 	const allEntriesRaw = db
 		.select()

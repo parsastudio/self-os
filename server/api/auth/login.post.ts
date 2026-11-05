@@ -11,9 +11,19 @@ const failedLoginAttemptsByIp = new Map<string, { count: number; firstAttemptMs:
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 10 * 60 * 1000;
 
+function pruneExpiredLoginAttempts(now: number): void {
+	if (failedLoginAttemptsByIp.size < 100) return;
+	for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
+		if (now - entry.firstAttemptMs >= WINDOW_MS) {
+			failedLoginAttemptsByIp.delete(key);
+		}
+	}
+}
+
 export default defineEventHandler(async (event) => {
 	const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown';
 	const now = Date.now();
+	pruneExpiredLoginAttempts(now);
 	const record = failedLoginAttemptsByIp.get(ip);
 
 	if (record) {

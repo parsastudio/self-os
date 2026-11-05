@@ -191,20 +191,25 @@ async function handleChangePassword() {
 		passwordMessage.value = { type: 'error', text: 'رمز عبور جدید و تکرار آن یکسان نیستند' };
 		return;
 	}
+	if (!navigator.onLine) {
+		passwordMessage.value = {
+			type: 'error',
+			text: 'تغییر رمز عبور نیازمند اتصال به اینترنت و ارتباط با سرور است'
+		};
+		return;
+	}
 	isChangingPassword.value = true;
 	passwordMessage.value = null;
 
 	try {
-		if (navigator.onLine) {
-			await $fetch('/api/auth/change-password', {
-				method: 'POST',
-				body: {
-					currentPassword: currentPassword.value,
-					newPassword: newPassword.value,
-					confirmNewPassword: confirmNewPassword.value
-				}
-			});
-		}
+		await $fetch('/api/auth/change-password', {
+			method: 'POST',
+			body: {
+				currentPassword: currentPassword.value,
+				newPassword: newPassword.value,
+				confirmNewPassword: confirmNewPassword.value
+			}
+		});
 
 		await clientAuth.saveClientCredential(newPassword.value);
 		passwordMessage.value = { type: 'success', text: 'رمز عبور با موفقیت به‌روزرسانی شد.' };
