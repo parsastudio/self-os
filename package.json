@@ -1,0 +1,31 @@
+{
+  "name": "personal-os-nuxt",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "dexie": "^4.0.11",
+    "drizzle-orm": "^0.38.4",
+    "jalaali-js": "^2.0.1",
+    "lucide-vue-next": "^0.475.0",
+    "nuxt": "^4.6.4",
+    "vue": "^3.5.44",
+    "vue-router": "^4.5.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.9",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/jalaali-js": "^1.2.0",
+    "@types/node": "^22.13.5",
+    "drizzle-kit": "^0.30.4",
+    "tailwindcss": "^4.0.9"
+  }
+}
