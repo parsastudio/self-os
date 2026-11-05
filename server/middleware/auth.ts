@@ -18,6 +18,9 @@ export default defineEventHandler((event) => {
 	if (
 		pathname.startsWith('/_nuxt') ||
 		isPublicAuthApi ||
+		pathname === '/sw.js' ||
+		pathname === '/registerSW.js' ||
+		pathname.startsWith('/workbox-') ||
 		pathname.endsWith('.woff2') ||
 		pathname.endsWith('.svg') ||
 		pathname.endsWith('.webmanifest')
