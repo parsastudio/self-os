@@ -4,6 +4,7 @@ import type {
 	HabitEntity,
 	HabitHistoricalSpec,
 	HabitLogItemInput,
+	HabitRuleDiffItem,
 	HabitTreeNode
 } from '~/domain/schemas';
 
@@ -371,4 +372,57 @@ export function evaluateDayStatusColor(
 	if (zeroCount === trackable.length) return 'failed';
 	if (optimalCount === trackable.length && zeroCount === 0) return 'optimal';
 	return 'partial';
+}
+
+export function extractLifecycleRuleDiffs(
+	prevJson: string | null,
+	newJson: string | null
+): HabitRuleDiffItem[] {
+	if (!prevJson || !newJson) return [];
+	try {
+		const prev = JSON.parse(prevJson) as Record<string, unknown>;
+		const next = JSON.parse(newJson) as Record<string, unknown>;
+		const diffs: HabitRuleDiffItem[] = [];
+
+		const fields: Array<{ key: string; label: string }> = [
+			{ key: 'title', label: 'عنوان طرح' },
+			{ key: 'scheduleLabel', label: 'زمان انجام' },
+			{ key: 'bronzeDesc', label: 'شرط برنز (حداقل)' },
+			{ key: 'silverDesc', label: 'شرط نقره' },
+			{ key: 'goldDesc', label: 'شرط طلا' },
+			{ key: 'emergencyMinDesc', label: 'حداقل اضطراری' },
+			{ key: 'defaultMinutesPerInterval', label: 'دقیقه هدف در هر بازه' },
+			{ key: 'cadenceWindowMinutes', label: 'پنجره زمانی تکرار (دقیقه)' },
+			{ key: 'status', label: 'وضعیت فعال‌بودن' },
+			{ key: 'notes', label: 'تبصره طرح' }
+		];
+
+		for (const f of fields) {
+			const oldVal = String(prev[f.key] ?? '').trim();
+			const newVal = String(next[f.key] ?? '').trim();
+			if (oldVal !== newVal && (oldVal !== '' || newVal !== '')) {
+				diffs.push({
+					fieldLabel: f.label,
+					previousValue: oldVal || 'تعریف‌نشده',
+					newValue: newVal || 'حذف‌شده'
+				});
+			}
+		}
+
+		if (
+			typeof prev.minutes === 'number' &&
+			typeof next.minutes === 'number' &&
+			prev.minutes !== next.minutes
+		) {
+			diffs.push({
+				fieldLabel: 'هدف روزانه (دقیقه)',
+				previousValue: `${prev.minutes} دقیقه`,
+				newValue: `${next.minutes} دقیقه`
+			});
+		}
+
+		return diffs;
+	} catch {
+		return [];
+	}
 }
