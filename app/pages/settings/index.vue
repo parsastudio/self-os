@@ -11,6 +11,7 @@ import { toPersianDigits } from '~/domain/calendar';
 import { isDemoRecordId } from '~/domain/demo-seed';
 import { DatabaseBackupPayloadSchema } from '~/domain/schemas';
 import {
+	AlertTriangle,
 	Check,
 	Database,
 	Download,
@@ -48,6 +49,8 @@ const isExporting = ref(false);
 const isImporting = ref(false);
 const isMutatingDemoSeed = ref(false);
 const isChangingPassword = ref(false);
+const isConfirmingClearAll = ref(false);
+const isClearingAll = ref(false);
 
 const activeDemoHabitsCount = computed(
 	() => habits.value.filter((h) => isDemoRecordId(h.id)).length
@@ -156,7 +159,7 @@ async function importBackup() {
 			return;
 		}
 
-		await localRepo.restoreBackupPayload(parsed.data);
+		const mergeResult = await localRepo.restoreBackupPayload(parsed.data);
 
 		if (navigator.onLine) {
 			try {
@@ -166,13 +169,18 @@ async function importBackup() {
 				});
 				void syncEngine.syncNow({ checkRemoteUpdates: true });
 			} catch {
-				// در صورت عدم دسترسی موقت به سرور، داده‌های محلی در Dexie بازگردانی شده‌اند
+				// در صورت عدم دسترسی موقت به سرور، داده‌های محلی در Dexie ادغام شده‌اند
 			}
 		}
 
+		const addedLabel = toPersianDigits(mergeResult.addedOrUpdatedCount);
+		const skippedLabel = toPersianDigits(mergeResult.skippedDuplicatesCount);
 		importMessage.value = {
 			type: 'success',
-			text: 'پشتیبان با موفقیت بازگردانی شد و داده‌های محلی و سرور به‌روزرسانی شدند.'
+			text:
+				mergeResult.skippedDuplicatesCount > 0
+					? `${addedLabel} رکورد جدید اضافه/به‌روزرسانی شد (${skippedLabel} مورد تکراری نادیده گرفته شد).`
+					: `${addedLabel} رکورد با موفقیت به داده‌های فعلی اضافه شد.`
 		};
 		selectedFile.value = null;
 	} catch {
@@ -182,6 +190,38 @@ async function importBackup() {
 		};
 	} finally {
 		isImporting.value = false;
+	}
+}
+
+async function handleClearAllData() {
+	if (isClearingAll.value) return;
+	isClearingAll.value = true;
+	importMessage.value = null;
+
+	try {
+		await localRepo.clearLocalData();
+		syncEngine.reset();
+
+		if (navigator.onLine) {
+			try {
+				await $fetch('/api/backup/clear', { method: 'POST' });
+			} catch {
+				// ignore if offline
+			}
+		}
+
+		isConfirmingClearAll.value = false;
+		importMessage.value = {
+			type: 'success',
+			text: 'تمام اطلاعات دیتابیس به طور کامل پاک‌سازی شد.'
+		};
+	} catch {
+		importMessage.value = {
+			type: 'error',
+			text: 'خطا در پاک‌سازی اطلاعات دیتابیس'
+		};
+	} finally {
+		isClearingAll.value = false;
 	}
 }
 
@@ -330,7 +370,7 @@ async function handleLogout() {
 				<div class="flex flex-col justify-between rounded-2xl border border-border bg-elevated p-5">
 					<div class="flex items-center gap-2 text-sm font-black text-fg">
 						<HardDriveUpload class="h-4 w-4 text-gold-text" />
-						<span>بازیابی از فایل پشتیبان</span>
+						<span>افزودن از فایل پشتیبان</span>
 					</div>
 
 					<div class="mt-4 space-y-3">
@@ -346,9 +386,47 @@ async function handleLogout() {
 							@click="importBackup"
 						>
 							<HardDriveUpload class="h-4 w-4" />
-							<span>{{ isImporting ? 'در حال بازگردانی...' : 'اعمال و بازگردانی داده‌ها' }}</span>
+							<span>{{ isImporting ? 'در حال بررسی و ادغام...' : 'ادغام داده‌های جدید' }}</span>
 						</button>
 					</div>
+				</div>
+			</div>
+
+			<!-- بخش مجزای پاک‌سازی کامل دیتابیس با تایید دو مرحله‌ای -->
+			<div class="flex flex-col justify-between gap-3 rounded-2xl border border-border bg-elevated p-4 sm:flex-row sm:items-center">
+				<div class="flex items-center gap-2.5 text-xs font-extrabold text-fg-secondary">
+					<AlertTriangle class="h-4 w-4 shrink-0 text-failed" />
+					<span>پاک‌سازی کامل تمام اطلاعات دیتابیس (طرح‌ها، روزها، کتاب‌ها و یادداشت‌ها)</span>
+				</div>
+
+				<div v-if="!isConfirmingClearAll" class="shrink-0">
+					<button
+						type="button"
+						class="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-failed-border bg-failed-soft px-3.5 text-xs font-black text-failed transition hover:opacity-90 active:scale-95"
+						@click="isConfirmingClearAll = true"
+					>
+						<Trash2 class="h-3.5 w-3.5" />
+						<span>پاک کردن همه داده‌ها</span>
+					</button>
+				</div>
+
+				<div v-else class="flex shrink-0 items-center gap-2">
+					<button
+						type="button"
+						class="h-9 rounded-xl border border-border bg-surface px-3 text-xs font-bold text-fg-secondary transition hover:text-fg"
+						@click="isConfirmingClearAll = false"
+					>
+						انصراف
+					</button>
+					<button
+						type="button"
+						:disabled="isClearingAll"
+						class="flex h-9 items-center gap-1.5 rounded-xl bg-failed px-3.5 text-xs font-black text-on-solid shadow-xs transition hover:opacity-90 active:scale-95 disabled:opacity-50"
+						@click="handleClearAllData"
+					>
+						<Trash2 class="h-3.5 w-3.5" />
+						<span>{{ isClearingAll ? 'در حال حذف...' : 'تایید حذف کامل' }}</span>
+					</button>
 				</div>
 			</div>
 		</section>

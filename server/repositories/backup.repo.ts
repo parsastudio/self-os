@@ -14,8 +14,26 @@ import {
 import { like } from 'drizzle-orm';
 import type { SQLiteColumn, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { bumpServerStructuralVersion } from './sync.repo';
+import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
+
+export function clearAllDatabaseRecords(): void {
+	db.transaction((tx) => {
+		tx.delete(habitLogs).run();
+		tx.delete(dailyEntries).run();
+		tx.delete(cadencePlans).run();
+		tx.delete(habitLifecycleEvents).run();
+		tx.delete(reflectionTags).run();
+		tx.delete(habits).run();
+		tx.delete(books).run();
+		tx.delete(mediaLogs).run();
+		tx.delete(calendarEvents).run();
+		tx.delete(notes).run();
+	});
+
+	bumpServerStructuralVersion();
+}
 
 export function removeDemoSeedFromServer(): { removedRecordsCount: number } {
 	let removed = 0;
@@ -42,10 +60,11 @@ export function removeDemoSeedFromServer(): { removedRecordsCount: number } {
 
 export function importDatabaseFromJson(
 	payload: DatabaseBackupPayload,
-	mode: 'replace' | 'merge' = 'replace'
-): { importedRecordsCount: number } {
+	mode: 'replace' | 'merge' = 'merge'
+): { importedRecordsCount: number; skippedDuplicatesCount: number } {
 	const { data } = payload;
 	let totalImported = 0;
+	let skippedDuplicatesCount = 0;
 
 	db.transaction((tx) => {
 		if (mode === 'replace') {
@@ -60,6 +79,22 @@ export function importDatabaseFromJson(
 			tx.delete(calendarEvents).run();
 			tx.delete(notes).run();
 		}
+
+		const existingData = {
+			habits: tx.select().from(habits).all(),
+			dailyEntries: tx.select().from(dailyEntries).all(),
+			habitLogs: tx.select().from(habitLogs).all(),
+			cadencePlans: tx.select().from(cadencePlans).all(),
+			books: tx.select().from(books).all(),
+			media: tx.select().from(mediaLogs).all(),
+			notes: tx.select().from(notes).all(),
+			calendarEvents: tx.select().from(calendarEvents).all(),
+			lifecycleEvents: tx.select().from(habitLifecycleEvents).all(),
+			reflectionTags: tx.select().from(reflectionTags).all()
+		};
+
+		const merged = computeSmartBackupMerge(existingData, data);
+		skippedDuplicatesCount = merged.skippedDuplicatesCount;
 
 		const upsertRows = <T extends Record<string, unknown>>(
 			table: SQLiteTable,
@@ -78,9 +113,9 @@ export function importDatabaseFromJson(
 			}
 		};
 
-		upsertRows(habits, habits.id, data.habits);
+		upsertRows(habits, habits.id, merged.habitsToUpsert);
 
-		for (const e of data.dailyEntries) {
+		for (const e of merged.dailyEntriesToUpsert) {
 			const { id: _id, ...entryFields } = e;
 			tx.insert(dailyEntries)
 				.values(e)
@@ -92,7 +127,7 @@ export function importDatabaseFromJson(
 			totalImported++;
 		}
 
-		for (const l of data.habitLogs) {
+		for (const l of merged.habitLogsToUpsert) {
 			const { id: _id, ...logFields } = l;
 			tx.insert(habitLogs)
 				.values(l)
@@ -104,7 +139,7 @@ export function importDatabaseFromJson(
 			totalImported++;
 		}
 
-		for (const c of data.cadencePlans) {
+		for (const c of merged.cadencePlansToUpsert) {
 			const { id: _id, ...planFields } = c;
 			tx.insert(cadencePlans)
 				.values(c)
@@ -116,13 +151,13 @@ export function importDatabaseFromJson(
 			totalImported++;
 		}
 
-		upsertRows(books, books.id, data.books);
-		upsertRows(mediaLogs, mediaLogs.id, data.media);
-		upsertRows(notes, notes.id, data.notes);
-		upsertRows(calendarEvents, calendarEvents.id, data.calendarEvents);
-		upsertRows(habitLifecycleEvents, habitLifecycleEvents.id, data.lifecycleEvents);
+		upsertRows(books, books.id, merged.booksToUpsert);
+		upsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
+		upsertRows(notes, notes.id, merged.notesToUpsert);
+		upsertRows(calendarEvents, calendarEvents.id, merged.calendarEventsToUpsert);
+		upsertRows(habitLifecycleEvents, habitLifecycleEvents.id, merged.lifecycleEventsToUpsert);
 
-		for (const tag of data.reflectionTags) {
+		for (const tag of merged.reflectionTagsToUpsert) {
 			const { id: _id, ...tagFields } = tag;
 			tx.insert(reflectionTags)
 				.values(tag)
@@ -136,5 +171,5 @@ export function importDatabaseFromJson(
 	});
 
 	bumpServerStructuralVersion();
-	return { importedRecordsCount: totalImported };
+	return { importedRecordsCount: totalImported, skippedDuplicatesCount };
 }

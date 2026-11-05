@@ -1,4 +1,5 @@
 import { getAppDatabase, type LocalDailyEntryRecord, type LocalHabitLogRecord, type SyncMetaRecord } from '~/composables/useAppDatabase';
+import { computeSmartBackupMerge } from '~/core/backup-merger';
 import {
 	buildCreatedHabitWithLifecycle,
 	buildUpdatedHabitWithLifecycle,
@@ -968,11 +969,12 @@ export function useLocalRepository() {
 		};
 	}
 
-	async function restoreBackupPayload(payload: DatabaseBackupPayload): Promise<void> {
+	async function restoreBackupPayload(
+		payload: DatabaseBackupPayload
+	): Promise<{ addedOrUpdatedCount: number; skippedDuplicatesCount: number }> {
 		const nowIso = new Date().toISOString();
-		const { data } = payload;
-
-		await clearLocalData();
+		const currentSnapshot = await exportBackupPayload();
+		const merged = computeSmartBackupMerge(currentSnapshot.data, payload.data);
 
 		await db.transaction('rw', [
 			db.habits,
@@ -986,31 +988,56 @@ export function useLocalRepository() {
 			db.lifecycleEvents,
 			db.reflectionTags
 		], async () => {
-			await db.habits.bulkPut(data.habits);
-			await db.dailyEntries.bulkPut(
-				data.dailyEntries.map((e) => ({
-					dateIso: e.dateIso,
-					dayStatus: e.dayStatus,
-					reflectionNote: e.reflectionNote,
-					journalText: e.journalText ?? null,
-					tags: parseTagsJson(e.tagsJson),
-					updatedAtIso: e.updatedAtIso
-				}))
-			);
-			await db.habitLogs.bulkPut(
-				data.habitLogs.map((l) => ({
-					...l,
-					updatedAtIso: l.updatedAtIso || nowIso
-				}))
-			);
-			await db.cadencePlans.bulkPut(data.cadencePlans);
-			await db.books.bulkPut(data.books);
-			await db.media.bulkPut(data.media);
-			await db.notes.bulkPut(data.notes);
-			await db.calendarEvents.bulkPut(data.calendarEvents);
-			await db.lifecycleEvents.bulkPut(data.lifecycleEvents);
-			await db.reflectionTags.bulkPut(data.reflectionTags);
+			if (merged.habitsToUpsert.length > 0) {
+				await db.habits.bulkPut(merged.habitsToUpsert);
+			}
+			if (merged.dailyEntriesToUpsert.length > 0) {
+				await db.dailyEntries.bulkPut(
+					merged.dailyEntriesToUpsert.map((e) => ({
+						dateIso: e.dateIso,
+						dayStatus: e.dayStatus,
+						reflectionNote: e.reflectionNote,
+						journalText: e.journalText ?? null,
+						tags: parseTagsJson(e.tagsJson),
+						updatedAtIso: e.updatedAtIso
+					}))
+				);
+			}
+			if (merged.habitLogsToUpsert.length > 0) {
+				await db.habitLogs.bulkPut(
+					merged.habitLogsToUpsert.map((l) => ({
+						...l,
+						updatedAtIso: l.updatedAtIso || nowIso
+					}))
+				);
+			}
+			if (merged.cadencePlansToUpsert.length > 0) {
+				await db.cadencePlans.bulkPut(merged.cadencePlansToUpsert);
+			}
+			if (merged.booksToUpsert.length > 0) {
+				await db.books.bulkPut(merged.booksToUpsert);
+			}
+			if (merged.mediaToUpsert.length > 0) {
+				await db.media.bulkPut(merged.mediaToUpsert);
+			}
+			if (merged.notesToUpsert.length > 0) {
+				await db.notes.bulkPut(merged.notesToUpsert);
+			}
+			if (merged.calendarEventsToUpsert.length > 0) {
+				await db.calendarEvents.bulkPut(merged.calendarEventsToUpsert);
+			}
+			if (merged.lifecycleEventsToUpsert.length > 0) {
+				await db.lifecycleEvents.bulkPut(merged.lifecycleEventsToUpsert);
+			}
+			if (merged.reflectionTagsToUpsert.length > 0) {
+				await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
+			}
 		});
+
+		return {
+			addedOrUpdatedCount: merged.addedOrUpdatedCount,
+			skippedDuplicatesCount: merged.skippedDuplicatesCount
+		};
 	}
 
 	async function injectDemoSeed(): Promise<void> {

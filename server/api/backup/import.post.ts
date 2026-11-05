@@ -12,6 +12,10 @@ export default defineEventHandler(async (event) => {
 		});
 	}
 
-	const result = importDatabaseFromJson(parsed.data, 'replace');
-	return { success: true, importedCount: result.importedRecordsCount };
+	const result = importDatabaseFromJson(parsed.data, 'merge');
+	return {
+		success: true,
+		importedCount: result.importedRecordsCount,
+		skippedCount: result.skippedDuplicatesCount
+	};
 });
