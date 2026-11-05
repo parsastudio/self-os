@@ -1,0 +1,17 @@
+services:
+  personal-os:
+    container_name: personal-os
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - NITRO_HOST=0.0.0.0
+      - NITRO_PORT=3000
+      - DATABASE_URL=/app/data/local.db
+      - TZ=Asia/Tehran
+    volumes:
+      - ./data:/app/data

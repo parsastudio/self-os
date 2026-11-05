@@ -5,23 +5,43 @@
 .nitro
 .cache
 dist
-pnpm-lock.yaml
+
 # Node dependencies
 node_modules
+
+# Local SQLite databases (keep directory, ignore db files)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
 
 # Logs
 logs
 *.log
+npm-debug.log*
+pnpm-debug.log*
 
-# Misc
-.DS_Store
-.fleet
-.idea
-
-# Local env files
+# Environment variables
 .env
 .env.*
 !.env.example
 
-# FastAgent artifacts
-.fastagent/
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tooling backups
+.fastpatch_backup
