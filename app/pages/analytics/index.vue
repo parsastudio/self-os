@@ -19,6 +19,7 @@ const router = useRouter();
 const db = useAppDatabase();
 
 const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
+const isHabitsLoading = habits.isLoading;
 const rawEntries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
 const rawLogs = useDexieLiveQuery(() => db.habitLogs.toArray(), []);
 const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
@@ -126,7 +127,7 @@ function selectHabitAndScroll(habitId: string) {
 			</div>
 		</section>
 
-		<div v-if="habits.isLoading.value" class="space-y-6" aria-busy="true">
+		<div v-if="isHabitsLoading" class="space-y-6" aria-busy="true">
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
 				<div v-for="idx in 3" :key="idx" class="h-28 animate-pulse rounded-3xl border border-border bg-surface"></div>
 			</div>

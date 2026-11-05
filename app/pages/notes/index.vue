@@ -14,6 +14,7 @@ const db = useAppDatabase();
 const localRepo = useLocalRepository();
 
 const rawNotes = useDexieLiveQuery(() => db.notes.orderBy('updatedAtIso').reverse().toArray(), []);
+const isNotesLoading = rawNotes.isLoading;
 
 const notes = computed(() =>
 	[...rawNotes.value].sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0))
@@ -209,7 +210,7 @@ async function handleDeleteNote(noteId: string) {
 			</div>
 		</section>
 
-		<div v-if="rawNotes.isLoading.value" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true">
+		<div v-if="isNotesLoading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true">
 			<div v-for="idx in 6" :key="idx" class="h-44 animate-pulse rounded-3xl border border-border bg-surface"></div>
 		</div>
 

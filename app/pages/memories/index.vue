@@ -14,6 +14,7 @@ const entries = useDexieLiveQuery(
 			.toArray(),
 	[]
 );
+const isEntriesLoading = entries.isLoading;
 
 const sortOrder = ref<'desc' | 'asc'>('desc');
 const searchQuery = ref('');
@@ -89,7 +90,7 @@ const displayedMemories = computed(() => {
 			</div>
 		</div>
 
-		<div v-if="entries.isLoading.value" class="mx-auto max-w-3xl space-y-5" aria-busy="true">
+		<div v-if="isEntriesLoading" class="mx-auto max-w-3xl space-y-5" aria-busy="true">
 			<div v-for="idx in 3" :key="idx" class="h-44 animate-pulse rounded-3xl border border-border bg-surface"></div>
 		</div>
 

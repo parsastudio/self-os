@@ -31,9 +31,11 @@ export function isDailyEntryEmpty(
 
 export function resolveEffectiveCadenceMinutes(
 	log:
-		| Pick<
-				HabitLogItemInput,
-				'actualMinutesPerInterval' | 'totalActualMinutes' | 'completedIntervals'
+		| Partial<
+				Pick<
+					HabitLogItemInput,
+					'actualMinutesPerInterval' | 'totalActualMinutes' | 'completedIntervals'
+				>
 		  >
 		| null
 		| undefined

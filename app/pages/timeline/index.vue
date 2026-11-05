@@ -10,6 +10,7 @@ import { ArrowLeft, Filter, GitCommitHorizontal } from 'lucide-vue-next';
 
 const db = useAppDatabase();
 const events = useDexieLiveQuery(() => db.lifecycleEvents.orderBy('createdAtIso').reverse().toArray(), []);
+const isEventsLoading = events.isLoading;
 
 const selectedFilter = ref<LifecycleEventType | 'ALL'>('ALL');
 
@@ -52,7 +53,7 @@ const filteredEvents = computed(() =>
 			</div>
 		</div>
 
-		<div v-if="events.isLoading.value" class="space-y-4" aria-busy="true">
+		<div v-if="isEventsLoading" class="space-y-4" aria-busy="true">
 			<div v-for="idx in 4" :key="idx" class="h-28 animate-pulse rounded-2xl border border-border bg-surface"></div>
 		</div>
 

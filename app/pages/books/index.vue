@@ -13,6 +13,7 @@ const db = useAppDatabase();
 const localRepo = useLocalRepository();
 
 const books = useDexieLiveQuery(() => db.books.orderBy('createdAtIso').reverse().toArray(), []);
+const isBooksLoading = books.isLoading;
 
 const isModalOpen = ref(false);
 const isSubmittingBook = ref(false);
@@ -78,7 +79,7 @@ async function handleDeleteBook(bookId: string) {
 			@open-create="openCreateModal"
 		/>
 
-		<div v-if="books.isLoading.value" class="space-y-2.5" aria-busy="true">
+		<div v-if="isBooksLoading" class="space-y-2.5" aria-busy="true">
 			<div v-for="idx in 4" :key="idx" class="h-20 animate-pulse rounded-2xl border border-border bg-surface"></div>
 		</div>
 

@@ -31,6 +31,7 @@ const currentDateIso = computed(() => {
 });
 
 const tracker = useDailyTracker(currentDateIso);
+const isHabitsLoading = tracker.habits.isLoading;
 
 function navigateToDate(iso: string) {
 	router.push({ query: { ...route.query, date: iso } });
@@ -103,7 +104,7 @@ const groupedTieredSections = computed(() => {
 			@open-calendar-date="(iso) => router.push({ path: '/calendar', query: { date: iso } })"
 		/>
 
-		<div v-if="tracker.habits.isLoading.value" class="space-y-4" aria-busy="true">
+		<div v-if="isHabitsLoading" class="space-y-4" aria-busy="true">
 			<div class="h-18 animate-pulse rounded-3xl border border-border bg-surface"></div>
 			<div v-for="idx in 3" :key="idx" class="h-24 animate-pulse rounded-3xl border border-border bg-surface"></div>
 		</div>

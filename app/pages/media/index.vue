@@ -13,6 +13,7 @@ const db = useAppDatabase();
 const localRepo = useLocalRepository();
 
 const mediaItems = useDexieLiveQuery(() => db.media.orderBy('createdAtIso').reverse().toArray(), []);
+const isMediaLoading = mediaItems.isLoading;
 
 const categoryFilter = ref<MediaCategory | 'ALL'>('ALL');
 const statusFilter = ref<MediaStatusFilter>('ALL');
@@ -114,7 +115,7 @@ async function handleDeleteMedia(mediaId: string) {
 			@open-create="openCreateModal"
 		/>
 
-		<div v-if="mediaItems.isLoading.value" class="space-y-2.5" aria-busy="true">
+		<div v-if="isMediaLoading" class="space-y-2.5" aria-busy="true">
 			<div v-for="idx in 4" :key="idx" class="h-20 animate-pulse rounded-2xl border border-border bg-surface"></div>
 		</div>
 
