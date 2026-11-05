@@ -86,7 +86,11 @@ export class PersonalOSDatabase extends Dexie {
 	}
 }
 
+import { SEED_HABITS } from '~~/server/database/seed-data';
+import { jalaliSlashToIso } from '~/domain/calendar';
+
 let dbInstance: PersonalOSDatabase | null = null;
+let isBootstrapped = false;
 
 export function getAppDatabase(): PersonalOSDatabase | null {
 	if (!import.meta.client) {
@@ -94,6 +98,38 @@ export function getAppDatabase(): PersonalOSDatabase | null {
 	}
 	if (!dbInstance) {
 		dbInstance = new PersonalOSDatabase();
+
+		if (!isBootstrapped) {
+			isBootstrapped = true;
+			void dbInstance.habits.count().then(async (count) => {
+				if (count === 0 && dbInstance) {
+					const nowIso = new Date().toISOString();
+					const entities: HabitEntity[] = SEED_HABITS.map((def) => ({
+						id: def.id,
+						parentId: def.parentId,
+						title: def.title,
+						category: def.category,
+						trackingMode: def.trackingMode,
+						timeSlot: def.timeSlot,
+						isSituational: def.isSituational,
+						status: 'active',
+						scheduleLabel: def.scheduleLabel,
+						notes: def.notes,
+						bronzeDesc: def.bronzeDesc,
+						silverDesc: def.silverDesc,
+						goldDesc: def.goldDesc,
+						emergencyMinDesc: def.emergencyMinDesc,
+						defaultIntervals: 1,
+						defaultMinutesPerInterval: 0,
+						cadenceWindowMinutes: 60,
+						sortOrder: def.sortOrder,
+						createdAtIso: jalaliSlashToIso(def.createdAtJalali) || '2026-04-02',
+						updatedAtIso: nowIso
+					}));
+					await dbInstance.habits.bulkPut(entities);
+				}
+			});
+		}
 	}
 	return dbInstance;
 }

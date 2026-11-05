@@ -31,31 +31,20 @@ function navigateToDate(iso: string) {
 	router.push({ query: { ...route.query, date: iso } });
 }
 
-const activeSelectedDayEvents = computed(() =>
-	tracker.calendarEvents.value.filter((ev) => {
-		if (ev.isAnnual) {
-			const parts = ev.jalaliMonth && ev.jalaliDay;
-			return Boolean(parts);
-		}
-		return ev.dateIso === currentDateIso.value;
+import { computeUpcomingEventsBanner } from '~/core/calendar-engine';
+import { getTodayIso } from '~/domain/calendar';
+
+const bannerCalculation = computed(() =>
+	computeUpcomingEventsBanner({
+		allEvents: tracker.calendarEvents.value,
+		referenceDateIso: currentDateIso.value,
+		todayIso: getTodayIso(),
+		horizonDays: 7
 	})
 );
 
-const upcomingBannerItems = computed(() =>
-	tracker.calendarEvents.value
-		.filter((e) => !e.isCompleted)
-		.map((e) => ({
-			id: e.id,
-			title: e.title,
-			eventType: e.eventType,
-			isAnnual: e.isAnnual,
-			isCompleted: e.isCompleted,
-			occurrenceDateIso: e.dateIso || currentDateIso.value,
-			humanDateLabel: '',
-			daysRemaining: 1,
-			notes: e.notes
-		}))
-);
+const activeSelectedDayEvents = computed(() => bannerCalculation.value.selectedDayEvents);
+const upcomingBannerItems = computed(() => bannerCalculation.value.todayAndUpcoming);
 
 const timeSlotOrder: ReadonlyArray<{
 	slot: HabitTimeSlot;
