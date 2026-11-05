@@ -9,22 +9,17 @@ import {
 export default defineEventHandler(async (event) => {
 	const pathname = event.path || '';
 
+	if (!pathname.startsWith('/api/')) {
+		return;
+	}
+
 	const isPublicAuthApi =
 		pathname === '/api/auth/login' ||
 		pathname === '/api/auth/setup' ||
 		pathname === '/api/auth/status' ||
 		pathname === '/api/auth/logout';
 
-	if (
-		pathname.startsWith('/_nuxt') ||
-		isPublicAuthApi ||
-		pathname === '/sw.js' ||
-		pathname === '/registerSW.js' ||
-		pathname.startsWith('/workbox-') ||
-		pathname.endsWith('.woff2') ||
-		pathname.endsWith('.svg') ||
-		pathname.endsWith('.webmanifest')
-	) {
+	if (isPublicAuthApi) {
 		return;
 	}
 
@@ -49,7 +44,7 @@ export default defineEventHandler(async (event) => {
 	event.context.isPasswordConfigured = passwordConfigured;
 	event.context.sessionToken = rawToken;
 
-	if (pathname.startsWith('/api/') && passwordConfigured && !isAuthenticated) {
+	if (passwordConfigured && !isAuthenticated) {
 		throw createError({
 			statusCode: 401,
 			statusMessage: 'ابتدا وارد حساب کاربری شوید'
