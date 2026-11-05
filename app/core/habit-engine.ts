@@ -1,11 +1,14 @@
-import { COMPOSITE_FULL_LABEL, TIER_SCORES } from '~/domain/constants';
+import { COMPOSITE_FULL_LABEL, DEFAULT_HABIT_CATEGORY, TIER_SCORES } from '~/domain/constants';
 import type {
+	CreateHabitInput,
 	DayStatusColor,
 	HabitEntity,
 	HabitHistoricalSpec,
 	HabitLogItemInput,
 	HabitRuleDiffItem,
-	HabitTreeNode
+	HabitTreeNode,
+	LifecycleEventEntity,
+	MutateHabitStructureInput
 } from '~/domain/schemas';
 
 export function resolveEffectiveCadenceMinutes(
@@ -425,4 +428,117 @@ export function extractLifecycleRuleDiffs(
 	} catch {
 		return [];
 	}
+}
+
+export function buildCreatedHabitWithLifecycle(params: {
+	input: CreateHabitInput;
+	maxSortOrder: number;
+	todayIso: string;
+	nowIso: string;
+}): {
+	habit: HabitEntity;
+	lifecycleEvent: LifecycleEventEntity;
+} {
+	const { input, maxSortOrder, todayIso, nowIso } = params;
+
+	const habit: HabitEntity = {
+		id: crypto.randomUUID(),
+		parentId: input.parentId ?? null,
+		title: input.title.trim(),
+		category: input.category.trim() || DEFAULT_HABIT_CATEGORY,
+		trackingMode: input.trackingMode,
+		timeSlot: input.timeSlot ?? 'day',
+		isSituational: input.isSituational ?? false,
+		status: 'active',
+		scheduleLabel: input.scheduleLabel?.trim() || null,
+		notes: input.notes?.trim() || null,
+		bronzeDesc: input.bronzeDesc?.trim() || null,
+		silverDesc: input.silverDesc?.trim() || null,
+		goldDesc: input.goldDesc?.trim() || null,
+		emergencyMinDesc: input.emergencyMinDesc?.trim() || null,
+		defaultIntervals: input.defaultIntervals,
+		defaultMinutesPerInterval: input.defaultMinutesPerInterval,
+		cadenceWindowMinutes: input.cadenceWindowMinutes,
+		sortOrder: maxSortOrder + 1,
+		createdAtIso: todayIso,
+		updatedAtIso: nowIso
+	};
+
+	const lifecycleEvent: LifecycleEventEntity = {
+		id: crypto.randomUUID(),
+		habitId: habit.id,
+		habitTitleSnapshot: habit.title,
+		eventType: habit.parentId ? 'CONVERTED_TO_SUBHABIT' : 'CREATED',
+		effectiveDateIso: todayIso,
+		summary: habit.parentId
+			? `ایجاد زیرطرح «${habit.title}»`
+			: `ایجاد طرح «${habit.title}»`,
+		reason: input.reason?.trim() || 'تعریف طرح جدید',
+		previousStateJson: null,
+		newStateJson: JSON.stringify(habit),
+		createdAtIso: nowIso
+	};
+
+	return { habit, lifecycleEvent };
+}
+
+export function buildUpdatedHabitWithLifecycle(params: {
+	current: HabitEntity;
+	input: MutateHabitStructureInput;
+	parentTitle?: string | null;
+	todayIso: string;
+	nowIso: string;
+}): {
+	updatedHabit: HabitEntity;
+	lifecycleEvent: LifecycleEventEntity;
+} {
+	const { current, input, parentTitle, todayIso, nowIso } = params;
+
+	let eventType: LifecycleEventEntity['eventType'] = 'UPDATED_RULES';
+	let summary = `ویرایش شرایط طرح «${input.title}»`;
+
+	if (current.parentId !== input.parentId) {
+		if (input.parentId) {
+			eventType = 'CONVERTED_TO_SUBHABIT';
+			summary = `تبدیل «${input.title}» به زیرطرحِ «${parentTitle ?? 'والد'}»`;
+		} else {
+			eventType = 'PROMOTED_TO_ROOT';
+			summary = `تبدیل «${input.title}» به طرح مستقل`;
+		}
+	} else if (current.status !== input.status) {
+		eventType = input.status === 'archived' ? 'DELETED' : 'STATUS_CHANGED';
+		summary = `تغییر وضعیت «${input.title}» به ${input.status}`;
+	}
+
+	const updatedHabit: HabitEntity = {
+		...current,
+		title: input.title.trim(),
+		category: input.category.trim() || current.category,
+		parentId: input.parentId,
+		timeSlot: input.timeSlot ?? current.timeSlot,
+		isSituational: input.isSituational,
+		status: input.status,
+		scheduleLabel: input.scheduleLabel?.trim() || null,
+		notes: input.notes?.trim() || null,
+		bronzeDesc: input.bronzeDesc?.trim() || null,
+		silverDesc: input.silverDesc?.trim() || null,
+		goldDesc: input.goldDesc?.trim() || null,
+		emergencyMinDesc: input.emergencyMinDesc?.trim() || null,
+		updatedAtIso: nowIso
+	};
+
+	const lifecycleEvent: LifecycleEventEntity = {
+		id: crypto.randomUUID(),
+		habitId: input.habitId,
+		habitTitleSnapshot: updatedHabit.title,
+		eventType,
+		effectiveDateIso: todayIso,
+		summary,
+		reason: input.reason,
+		previousStateJson: JSON.stringify(current),
+		newStateJson: JSON.stringify(input),
+		createdAtIso: nowIso
+	};
+
+	return { updatedHabit, lifecycleEvent };
 }

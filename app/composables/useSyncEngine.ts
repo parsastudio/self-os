@@ -10,7 +10,6 @@ const isOnline = ref(true);
 const lastSyncedAtIso = ref<string | null>(null);
 const knownServerVersionIso = ref<string | null>(null);
 const lastErrorMessage = ref<string | null>(null);
-const hasAppUpdate = ref(false);
 
 let isInitialized = false;
 let isSyncInFlight = false;
@@ -222,7 +221,6 @@ export function useSyncEngine() {
 		lastSyncedAtIso,
 		knownServerVersionIso,
 		lastErrorMessage,
-		hasAppUpdate,
 		init,
 		syncNow,
 		notifyLocalMutationStaged,

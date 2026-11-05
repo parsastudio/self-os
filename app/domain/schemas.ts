@@ -129,16 +129,6 @@ export const SaveDailyEntryInputSchema = z.object({
 });
 export type SaveDailyEntryInput = z.infer<typeof SaveDailyEntryInputSchema>;
 
-export const JournalMemoryItemSchema = z.object({
-	id: z.string(),
-	dateIso: z.string(),
-	dayStatus: DayStatusColorSchema,
-	journalText: z.string(),
-	tags: z.array(z.string()),
-	updatedAtIso: z.string()
-});
-export type JournalMemoryItem = z.infer<typeof JournalMemoryItemSchema>;
-
 export const SaveCadencePlanBatchSchema = z.object({
 	targetDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	reason: z.string().optional(),
@@ -589,47 +579,6 @@ export const RawCalendarDayEntrySchema = z.object({
 	tagsJson: z.string()
 });
 export type RawCalendarDayEntry = z.infer<typeof RawCalendarDayEntrySchema>;
-
-export const DayCommandPayloadSchema = z.object({
-	dateIso: z.string(),
-	tomorrowIso: z.string(),
-	habits: z.array(HabitEntitySchema),
-	availableTags: z.array(z.string()).optional(),
-	entry: z
-		.object({
-			id: z.string().optional(),
-			dateIso: z.string().optional(),
-			dayStatus: DayStatusColorSchema,
-			reflectionNote: z.string(),
-			journalText: z.string().nullable().optional(),
-			tags: z.array(z.string()),
-			updatedAtIso: z.string().optional()
-		})
-		.nullable(),
-	logs: z.array(
-		z.object({
-			id: z.string().optional(),
-			dateIso: z.string().optional(),
-			habitId: z.string(),
-			habitTitleSnapshot: z.string().nullable().optional(),
-			achievedTier: z.number().nullable(),
-			achievedRuleSnapshot: z.string().nullable().optional(),
-			habitSnapshotJson: z.string().nullable().optional(),
-			completedIntervals: z.number().nullable(),
-			actualMinutesPerInterval: z.number().nullable(),
-			totalActualMinutes: z.number().nullable(),
-			plannedIntervalsSnapshot: z.number().nullable(),
-			plannedMinutesSnapshot: z.number().nullable(),
-			updatedAtIso: z.string().nullable().optional()
-		})
-	),
-	dayCadencePlans: z.array(CadencePlanEntitySchema),
-	tomorrowCadencePlans: z.array(CadencePlanEntitySchema),
-	recentEntries: z.array(AnalyticsRawEntrySchema).optional(),
-	upcomingBannerItems: z.array(UpcomingEventBannerItemSchema).optional(),
-	selectedDayEvents: z.array(CalendarEventEntitySchema).optional()
-});
-export type DayCommandPayload = z.infer<typeof DayCommandPayloadSchema>;
 
 export const HabitRuleDiffItemSchema = z.object({
 	fieldLabel: z.string(),

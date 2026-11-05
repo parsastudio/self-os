@@ -11,43 +11,7 @@ import {
 	notes,
 	reflectionTags
 } from '../database/schema';
-import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
-
-export function exportDatabaseToJson(): DatabaseBackupPayload {
-	const nowIso = new Date().toISOString();
-	const todayIso = getTodayIso();
-
-	const allHabits = db.select().from(habits).all();
-	const allEntries = db.select().from(dailyEntries).all();
-	const allLogs = db.select().from(habitLogs).all();
-	const allCadence = db.select().from(cadencePlans).all();
-	const allBooks = db.select().from(books).all();
-	const allMedia = db.select().from(mediaLogs).all();
-	const allNotes = db.select().from(notes).all();
-	const allEvents = db.select().from(calendarEvents).all();
-	const allLifecycle = db.select().from(habitLifecycleEvents).all();
-	const allTags = db.select().from(reflectionTags).all();
-
-	return {
-		version: 1,
-		appName: 'new-life',
-		exportedAtIso: nowIso,
-		jalaliDate: isoToJalaliSlash(todayIso),
-		data: {
-			habits: allHabits,
-			dailyEntries: allEntries,
-			habitLogs: allLogs,
-			cadencePlans: allCadence,
-			books: allBooks,
-			media: allMedia,
-			notes: allNotes,
-			calendarEvents: allEvents,
-			lifecycleEvents: allLifecycle,
-			reflectionTags: allTags
-		}
-	};
-}
 
 export function importDatabaseFromJson(
 	payload: DatabaseBackupPayload,

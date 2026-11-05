@@ -7,43 +7,15 @@ import {
 	habits,
 	reflectionTags
 } from '../database/schema';
-import { and, asc, desc, eq, isNotNull, ne } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { getAllHabits } from './habits.repo';
-import { getUpcomingEventsBannerItems } from './calendar.repo';
 import { resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
 import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
-import { parseTagsJson } from '~/domain/tags';
 import type {
-	DayCommandPayload,
 	HabitEntity,
-	JournalMemoryItem,
 	SaveCadencePlanBatch,
 	SaveDailyEntryInput
 } from '~/domain/schemas';
-
-export function getJournalMemories(): JournalMemoryItem[] {
-	const rows = db
-		.select()
-		.from(dailyEntries)
-		.where(and(isNotNull(dailyEntries.journalText), ne(dailyEntries.journalText, '')))
-		.orderBy(desc(dailyEntries.dateIso))
-		.all();
-
-	const memories: JournalMemoryItem[] = [];
-	for (const row of rows) {
-		const text = row.journalText?.trim();
-		if (!text) continue;
-		memories.push({
-			id: row.id,
-			dateIso: row.dateIso,
-			dayStatus: row.dayStatus,
-			journalText: text,
-			tags: parseTagsJson(row.tagsJson),
-			updatedAtIso: row.updatedAtIso
-		});
-	}
-	return memories;
-}
 
 export function getReflectionTags(): string[] {
 	const rows = db
@@ -56,76 +28,6 @@ export function getReflectionTags(): string[] {
 		return [...DEFAULT_REFLECTION_TAGS];
 	}
 	return rows.map((r) => r.label);
-}
-
-export function getDayCommandPayload(
-	dateIso: string,
-	tomorrowIso: string
-): DayCommandPayload {
-	const allHabits = getAllHabits();
-	const availableTags = getReflectionTags();
-
-	const entry = db
-		.select()
-		.from(dailyEntries)
-		.where(eq(dailyEntries.dateIso, dateIso))
-		.get();
-
-	const logs = db
-		.select()
-		.from(habitLogs)
-		.where(eq(habitLogs.dateIso, dateIso))
-		.all();
-
-	const dayCadencePlans = db
-		.select()
-		.from(cadencePlans)
-		.where(eq(cadencePlans.dateIso, dateIso))
-		.all();
-
-	const tomorrowCadencePlans = db
-		.select()
-		.from(cadencePlans)
-		.where(eq(cadencePlans.dateIso, tomorrowIso))
-		.all();
-
-	const recentEntries = db
-		.select()
-		.from(dailyEntries)
-		.orderBy(desc(dailyEntries.dateIso))
-		.limit(35)
-		.all();
-
-	const { todayAndUpcoming, selectedDayEvents } = getUpcomingEventsBannerItems(dateIso, 7);
-
-	return {
-		dateIso,
-		tomorrowIso,
-		habits: allHabits,
-		availableTags,
-		entry: entry
-			? {
-					id: entry.id,
-					dateIso: entry.dateIso,
-					dayStatus: entry.dayStatus,
-					reflectionNote: entry.reflectionNote,
-					journalText: entry.journalText ?? null,
-					tags: parseTagsJson(entry.tagsJson),
-					updatedAtIso: entry.updatedAtIso
-				}
-			: null,
-		logs,
-		dayCadencePlans,
-		tomorrowCadencePlans,
-		recentEntries: recentEntries.map((r) => ({
-			dateIso: r.dateIso,
-			dayStatus: r.dayStatus,
-			reflectionNote: r.reflectionNote,
-			tags: parseTagsJson(r.tagsJson)
-		})),
-		upcomingBannerItems: todayAndUpcoming,
-		selectedDayEvents
-	};
 }
 
 type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;

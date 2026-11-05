@@ -13,10 +13,10 @@ import {
 	resolveHabitRuleSnapshot,
 	serializeHabitSpecSnapshot
 } from '~/core/habit-engine';
+import { INITIAL_CLIENT_HABITS } from '~/domain/seed-habits';
 import {
 	SEED_BOOKS_ORDER,
 	SEED_DAILY_ROWS,
-	SEED_HABITS,
 	SEED_REFLECTION_TAGS,
 	type RawDailySheetRow
 } from './seed-data';
@@ -53,31 +53,10 @@ export function seedDatabaseWithInitialData(
 		`);
 	}
 
-	const habitEntities: HabitEntity[] = SEED_HABITS.map((def) => {
-		const createdAtIso = requireIsoFromJalali(def.createdAtJalali);
-		return {
-			id: def.id,
-			parentId: def.parentId,
-			title: def.title,
-			category: def.category,
-			trackingMode: def.trackingMode,
-			timeSlot: def.timeSlot,
-			isSituational: def.isSituational,
-			status: 'active',
-			scheduleLabel: def.scheduleLabel,
-			notes: def.notes,
-			bronzeDesc: def.bronzeDesc,
-			silverDesc: def.silverDesc,
-			goldDesc: def.goldDesc,
-			emergencyMinDesc: def.emergencyMinDesc,
-			defaultIntervals: 1,
-			defaultMinutesPerInterval: 0,
-			cadenceWindowMinutes: 60,
-			sortOrder: def.sortOrder,
-			createdAtIso,
-			updatedAtIso: nowIso
-		};
-	});
+	const habitEntities: HabitEntity[] = INITIAL_CLIENT_HABITS.map((def) => ({
+		...def,
+		updatedAtIso: nowIso
+	}));
 
 	const habitById = new Map(habitEntities.map((h) => [h.id, h]));
 

@@ -11,7 +11,6 @@ export default defineEventHandler((event) => {
 
 	if (
 		pathname.startsWith('/_nuxt') ||
-		pathname.startsWith('/api/version') ||
 		pathname.startsWith('/api/auth/') ||
 		pathname.endsWith('.woff2') ||
 		pathname.endsWith('.svg') ||
