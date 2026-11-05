@@ -138,41 +138,17 @@ export async function importDatabaseFromJson(
 			await tx.delete(notes);
 		}
 
-		const [
-			extHabits,
-			extEntries,
-			extLogs,
-			extPlans,
-			extBooks,
-			extMedia,
-			extNotes,
-			extEvents,
-			extLifecycle,
-			extTags
-		] = await Promise.all([
-			tx.select().from(habits),
-			tx.select().from(dailyEntries),
-			tx.select().from(habitLogs),
-			tx.select().from(cadencePlans),
-			tx.select().from(books),
-			tx.select().from(mediaLogs),
-			tx.select().from(notes),
-			tx.select().from(calendarEvents),
-			tx.select().from(habitLifecycleEvents),
-			tx.select().from(reflectionTags)
-		]);
-
 		const existingData = {
-			habits: extHabits,
-			dailyEntries: extEntries,
-			habitLogs: extLogs,
-			cadencePlans: extPlans,
-			books: extBooks,
-			media: extMedia,
-			notes: extNotes,
-			calendarEvents: extEvents,
-			lifecycleEvents: extLifecycle,
-			reflectionTags: extTags
+			habits: await tx.select().from(habits),
+			dailyEntries: await tx.select().from(dailyEntries),
+			habitLogs: await tx.select().from(habitLogs),
+			cadencePlans: await tx.select().from(cadencePlans),
+			books: await tx.select().from(books),
+			media: await tx.select().from(mediaLogs),
+			notes: await tx.select().from(notes),
+			calendarEvents: await tx.select().from(calendarEvents),
+			lifecycleEvents: await tx.select().from(habitLifecycleEvents),
+			reflectionTags: await tx.select().from(reflectionTags)
 		};
 
 		const merged = computeSmartBackupMerge(existingData, data);

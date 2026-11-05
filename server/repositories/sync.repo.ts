@@ -77,103 +77,90 @@ export async function processClientSyncRequest(
 			a.queuedAtIso > b.queuedAtIso ? 1 : a.queuedAtIso < b.queuedAtIso ? -1 : 0
 		);
 
-		await db.transaction(async (tx) => {
-			const allHabitsList = await tx.select().from(habits).orderBy(asc(habits.sortOrder));
-			const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
+		const allHabitsList = await getAllHabits();
+		const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
 
-			for (const mutation of sortedMutations) {
-				try {
-					if (mutation.kind === 'SAVE_DAILY_ENTRY') {
-						await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
-						await saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'UPSERT_BOOK') {
-						await tx
-							.insert(books)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: books.id,
-								set: mutation.payload
-							});
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'DELETE_BOOK') {
-						await tx.delete(books).where(eq(books.id, mutation.payload.bookId));
-						bumpServerStructuralVersion(mutation.queuedAtIso);
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'UPSERT_MEDIA') {
-						await tx
-							.insert(mediaLogs)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: mediaLogs.id,
-								set: mutation.payload
-							});
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'DELETE_MEDIA') {
-						await tx
-							.delete(mediaLogs)
-							.where(eq(mediaLogs.id, mutation.payload.mediaId));
-						bumpServerStructuralVersion(mutation.queuedAtIso);
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'UPSERT_NOTE') {
-						await tx
-							.insert(notes)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: notes.id,
-								set: mutation.payload
-							});
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'DELETE_NOTE') {
-						await tx.delete(notes).where(eq(notes.id, mutation.payload.noteId));
-						bumpServerStructuralVersion(mutation.queuedAtIso);
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
-						await tx
-							.insert(calendarEvents)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: calendarEvents.id,
-								set: mutation.payload
-							});
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
-						await tx
-							.delete(calendarEvents)
-							.where(eq(calendarEvents.id, mutation.payload.eventId));
-						bumpServerStructuralVersion(mutation.queuedAtIso);
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'UPSERT_HABIT') {
-						await tx
-							.insert(habits)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: habits.id,
-								set: mutation.payload
-							});
-						preloadedHabitMap.set(mutation.payload.id, mutation.payload);
-						appliedMutationIds.push(mutation.id);
-					} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
-						await tx
-							.insert(habitLifecycleEvents)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: habitLifecycleEvents.id,
-								set: mutation.payload
-							});
-						appliedMutationIds.push(mutation.id);
-					}
-				} catch (err) {
-					console.error(
-						`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`,
-						err
-					);
-					appliedMutationIds.push(mutation.id);
+		for (const mutation of sortedMutations) {
+			try {
+				if (mutation.kind === 'SAVE_DAILY_ENTRY') {
+					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap);
+				} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
+					await saveCadencePlansForDate(mutation.payload, preloadedHabitMap);
+				} else if (mutation.kind === 'UPSERT_BOOK') {
+					await db
+						.insert(books)
+						.values(mutation.payload)
+						.onConflictDoUpdate({
+							target: books.id,
+							set: mutation.payload
+						});
+				} else if (mutation.kind === 'DELETE_BOOK') {
+					await db.delete(books).where(eq(books.id, mutation.payload.bookId));
+					bumpServerStructuralVersion(mutation.queuedAtIso);
+				} else if (mutation.kind === 'UPSERT_MEDIA') {
+					await db
+						.insert(mediaLogs)
+						.values(mutation.payload)
+						.onConflictDoUpdate({
+							target: mediaLogs.id,
+							set: mutation.payload
+						});
+				} else if (mutation.kind === 'DELETE_MEDIA') {
+					await db
+						.delete(mediaLogs)
+						.where(eq(mediaLogs.id, mutation.payload.mediaId));
+					bumpServerStructuralVersion(mutation.queuedAtIso);
+				} else if (mutation.kind === 'UPSERT_NOTE') {
+					await db
+						.insert(notes)
+						.values(mutation.payload)
+						.onConflictDoUpdate({
+							target: notes.id,
+							set: mutation.payload
+						});
+				} else if (mutation.kind === 'DELETE_NOTE') {
+					await db.delete(notes).where(eq(notes.id, mutation.payload.noteId));
+					bumpServerStructuralVersion(mutation.queuedAtIso);
+				} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
+					await db
+						.insert(calendarEvents)
+						.values(mutation.payload)
+						.onConflictDoUpdate({
+							target: calendarEvents.id,
+							set: mutation.payload
+						});
+				} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
+					await db
+						.delete(calendarEvents)
+						.where(eq(calendarEvents.id, mutation.payload.eventId));
+					bumpServerStructuralVersion(mutation.queuedAtIso);
+				} else if (mutation.kind === 'UPSERT_HABIT') {
+					await db
+						.insert(habits)
+						.values(mutation.payload)
+						.onConflictDoUpdate({
+							target: habits.id,
+							set: mutation.payload
+						});
+					preloadedHabitMap.set(mutation.payload.id, mutation.payload);
+				} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
+					await db
+						.insert(habitLifecycleEvents)
+						.values(mutation.payload)
+						.onConflictDoUpdate({
+							target: habitLifecycleEvents.id,
+							set: mutation.payload
+						});
 				}
+				appliedMutationIds.push(mutation.id);
+			} catch (err) {
+				console.error(
+					`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`,
+					err
+				);
+				appliedMutationIds.push(mutation.id);
 			}
-		});
+		}
 	}
 
 	const serverVersionIso = await getServerMaxVersionIso();
