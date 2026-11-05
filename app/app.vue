@@ -1,6 +1,9 @@
+<script setup lang="ts">
+// Main root component
+</script>
+
 <template>
-  <div>
-    <NuxtRouteAnnouncer />
-    <NuxtWelcome />
-  </div>
+	<NuxtLayout>
+		<NuxtPage />
+	</NuxtLayout>
 </template>
