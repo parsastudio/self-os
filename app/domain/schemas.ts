@@ -320,7 +320,6 @@ export const LoginInputSchema = z.object({
 
 export const ChangePasswordInputSchema = z
 	.object({
-		currentPassword: z.string().min(1, 'رمز عبور فعلی الزامی است'),
 		newPassword: z.string().min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد'),
 		confirmNewPassword: z.string().min(4, 'تکرار رمز عبور جدید الزامی است')
 	})

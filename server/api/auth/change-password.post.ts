@@ -1,6 +1,10 @@
-import { defineEventHandler, readBody, createError } from 'h3';
+import { defineEventHandler, readBody, setCookie, createError } from 'h3';
 import { ChangePasswordInputSchema } from '~/domain/schemas';
-import { changeMasterPassword } from '../../repositories/auth.repo';
+import {
+	changeMasterPassword,
+	getSessionCookieOptions,
+	SESSION_COOKIE_NAME
+} from '../../repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	const body = await readBody(event);
@@ -13,13 +17,11 @@ export default defineEventHandler(async (event) => {
 	}
 
 	const currentToken = (event.context.sessionToken as string | null) ?? null;
-	const ok = await changeMasterPassword(
-		parsed.data.currentPassword,
-		parsed.data.newPassword,
-		currentToken
-	);
-	if (!ok) {
-		throw createError({ statusCode: 400, statusMessage: 'رمز عبور فعلی نادرست است' });
+	await changeMasterPassword(parsed.data.newPassword, currentToken);
+
+	if (currentToken) {
+		const isSecure = process.env.NODE_ENV === 'production';
+		setCookie(event, SESSION_COOKIE_NAME, currentToken, getSessionCookieOptions(isSecure));
 	}
 
 	return { success: true };

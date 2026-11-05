@@ -84,13 +84,9 @@ export async function verifyPassword(password: string): Promise<boolean> {
 }
 
 export async function changeMasterPassword(
-	currentPassword: string,
 	newPassword: string,
 	keepRawToken?: string | null
-): Promise<boolean> {
-	if (!(await verifyPassword(currentPassword))) {
-		return false;
-	}
+): Promise<void> {
 	const saltHex = crypto.randomBytes(16).toString('hex');
 	const passwordHash = await hashPasswordWithSalt(newPassword, saltHex);
 	const nowIso = new Date().toISOString();
@@ -112,8 +108,6 @@ export async function changeMasterPassword(
 			tx.delete(authSessions).run();
 		}
 	});
-
-	return true;
 }
 
 export function createAuthSession(): {
