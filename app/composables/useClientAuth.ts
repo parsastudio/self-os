@@ -54,10 +54,12 @@ function timingSafeEqual(a: string, b: string): boolean {
 	return diff === 0;
 }
 
+const isAuthenticated = ref(false);
+const isPasswordConfigured = ref(true);
+const isInitialized = ref(false);
+let hasVerifiedWithServerInSession = false;
+
 export function useClientAuth() {
-	const isAuthenticated = ref(false);
-	const isPasswordConfigured = ref(true);
-	const isInitialized = ref(false);
 
 	async function checkAuth(
 		serverAuthenticated?: boolean,
@@ -149,6 +151,8 @@ export function useClientAuth() {
 		await db.localAuth.put(record);
 		isAuthenticated.value = true;
 		isPasswordConfigured.value = true;
+		isInitialized.value = true;
+		hasVerifiedWithServerInSession = true;
 	}
 
 	async function loginOffline(password: string): Promise<{ success: boolean; error?: string }> {
@@ -181,8 +185,47 @@ export function useClientAuth() {
 
 		await db.localAuth.put(record);
 		isAuthenticated.value = true;
+		isInitialized.value = true;
 
 		return { success: true };
+	}
+
+	async function ensureSessionChecked(): Promise<{
+		isAuthenticated: boolean;
+		isPasswordConfigured: boolean;
+	}> {
+		if (!import.meta.client) {
+			return {
+				isAuthenticated: isAuthenticated.value,
+				isPasswordConfigured: isPasswordConfigured.value
+			};
+		}
+
+		if (isInitialized.value && (hasVerifiedWithServerInSession || !navigator.onLine)) {
+			return {
+				isAuthenticated: isAuthenticated.value,
+				isPasswordConfigured: isPasswordConfigured.value
+			};
+		}
+
+		let serverAuth: boolean | undefined;
+		let serverPasswordConfigured: boolean | undefined;
+
+		try {
+			if (navigator.onLine) {
+				const res = await fetch('/api/auth/status');
+				if (res.ok) {
+					const data = await res.json();
+					serverAuth = data.isAuthenticated;
+					serverPasswordConfigured = data.isPasswordConfigured;
+					hasVerifiedWithServerInSession = true;
+				}
+			}
+		} catch {
+			// Fallback to local IndexedDB session when offline or unreachable
+		}
+
+		return checkAuth(serverAuth, serverPasswordConfigured);
 	}
 
 	async function logout(): Promise<void> {
@@ -192,6 +235,7 @@ export function useClientAuth() {
 			await db.localAuth.delete('auth:session');
 		}
 		isAuthenticated.value = false;
+		hasVerifiedWithServerInSession = false;
 	}
 
 	return {
@@ -199,6 +243,7 @@ export function useClientAuth() {
 		isPasswordConfigured,
 		isInitialized,
 		checkAuth,
+		ensureSessionChecked,
 		saveClientCredential,
 		loginOffline,
 		logout

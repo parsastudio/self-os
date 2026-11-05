@@ -128,9 +128,12 @@ export function getDayCommandPayload(
 	};
 }
 
+type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
+
 export function saveDailyEntryAndLogs(
 	input: SaveDailyEntryInput,
-	preloadedHabitMap?: ReadonlyMap<string, HabitEntity>
+	preloadedHabitMap?: ReadonlyMap<string, HabitEntity>,
+	txExecutor?: DbExecutor
 ): void {
 	const nowIso = new Date().toISOString();
 	const entryUpdatedAtIso = input.updatedAtIso || nowIso;
@@ -138,7 +141,7 @@ export function saveDailyEntryAndLogs(
 	const habitMap =
 		preloadedHabitMap ?? new Map(getAllHabits().map((h) => [h.id, h]));
 
-	db.transaction((tx) => {
+	const applyOperations = (tx: DbExecutor) => {
 		const existing = tx
 			.select()
 			.from(dailyEntries)
@@ -281,15 +284,25 @@ export function saveDailyEntryAndLogs(
 					.run();
 			}
 		}
-	});
+	};
+
+	if (txExecutor) {
+		applyOperations(txExecutor);
+	} else {
+		db.transaction((tx) => applyOperations(tx));
+	}
 }
 
-export function saveCadencePlansForDate(input: SaveCadencePlanBatch): void {
+export function saveCadencePlansForDate(
+	input: SaveCadencePlanBatch,
+	preloadedHabitMap?: Map<string, HabitEntity>,
+	txExecutor?: DbExecutor
+): void {
 	const nowIso = new Date().toISOString();
-	const allHabits = getAllHabits();
-	const habitMap = new Map(allHabits.map((h) => [h.id, h]));
+	const habitMap =
+		preloadedHabitMap ?? new Map(getAllHabits().map((h) => [h.id, h]));
 
-	db.transaction((tx) => {
+	const applyOperations = (tx: DbExecutor) => {
 		for (const item of input.items) {
 			const existing = tx
 				.select()
@@ -364,7 +377,20 @@ export function saveCadencePlansForDate(input: SaveCadencePlanBatch): void {
 						createdAtIso: nowIso
 					})
 					.run();
+
+				habitMap.set(habit.id, {
+					...habit,
+					defaultIntervals: item.plannedIntervals,
+					defaultMinutesPerInterval: item.plannedMinutesPerInterval,
+					cadenceWindowMinutes: item.cadenceWindowMinutes
+				});
 			}
 		}
-	});
+	};
+
+	if (txExecutor) {
+		applyOperations(txExecutor);
+	} else {
+		db.transaction((tx) => applyOperations(tx));
+	}
 }

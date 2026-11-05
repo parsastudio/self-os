@@ -1,14 +1,15 @@
-import { liveQuery, type Observable } from 'dexie';
-import { shallowRef, onScopeDispose, type ShallowRef } from 'vue';
+import { liveQuery, type Observable, type Subscription } from 'dexie';
+import { shallowRef, watch, onScopeDispose, type ShallowRef, type WatchSource } from 'vue';
 
 /**
  * Connects a Dexie liveQuery to a reactive Vue 3 ShallowRef.
- * Automatically tracks table modifications, cleans up subscriptions on unmount,
- * and handles SSR isolation safely.
+ * Automatically tracks both IndexedDB table modifications and optional Vue reactive dependencies,
+ * cleans up subscriptions on unmount, and handles SSR isolation safely.
  */
 export function useDexieLiveQuery<T>(
 	querier: () => Promise<T> | T,
-	initialValue: T
+	initialValue: T,
+	deps?: WatchSource | WatchSource[]
 ): ShallowRef<T> {
 	const state = shallowRef<T>(initialValue);
 
@@ -16,23 +17,43 @@ export function useDexieLiveQuery<T>(
 		return state;
 	}
 
-	try {
-		const observable: Observable<T> = liveQuery(querier);
-		const subscription = observable.subscribe({
-			next: (val) => {
-				state.value = val;
-			},
-			error: (err) => {
-				console.error('[Dexie liveQuery] Subscription error:', err);
-			}
-		});
+	let subscription: Subscription | null = null;
 
-		onScopeDispose(() => {
+	function cleanup() {
+		if (subscription) {
 			subscription.unsubscribe();
-		});
-	} catch (err) {
-		console.error('[Dexie liveQuery] Initialization error:', err);
+			subscription = null;
+		}
 	}
+
+	function subscribeQuery() {
+		cleanup();
+		try {
+			const observable: Observable<T> = liveQuery(querier);
+			subscription = observable.subscribe({
+				next: (val) => {
+					state.value = val;
+				},
+				error: (err) => {
+					console.error('[Dexie liveQuery] Subscription error:', err);
+				}
+			});
+		} catch (err) {
+			console.error('[Dexie liveQuery] Initialization error:', err);
+		}
+	}
+
+	if (deps) {
+		watch(deps, () => {
+			subscribeQuery();
+		}, { immediate: true });
+	} else {
+		subscribeQuery();
+	}
+
+	onScopeDispose(() => {
+		cleanup();
+	});
 
 	return state;
 }

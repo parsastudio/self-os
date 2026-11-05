@@ -63,10 +63,10 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 			for (const mutation of sortedMutations) {
 				try {
 					if (mutation.kind === 'SAVE_DAILY_ENTRY') {
-						saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap);
+						saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
-						saveCadencePlansForDate(mutation.payload);
+						saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_BOOK') {
 						tx.insert(books)
@@ -218,10 +218,6 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 		appBuildVersion: appVersion,
 		hasRemoteUpdates: hadRemoteUpdatesBeforePush,
 		serverTimeIso,
-		recentSnapshots: {
-			entries: mappedEntries,
-			logs: mappedLogs
-		},
 		fullWorkspace
 	};
 }

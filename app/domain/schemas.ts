@@ -470,35 +470,6 @@ export const ServerSyncResponseSchema = z.object({
 	appBuildVersion: z.string().optional(),
 	hasRemoteUpdates: z.boolean(),
 	serverTimeIso: z.string(),
-	recentSnapshots: z.object({
-		entries: z.array(
-			z.object({
-				dateIso: z.string(),
-				dayStatus: DayStatusColorSchema,
-				reflectionNote: z.string(),
-				journalText: z.string().nullable(),
-				tags: z.array(z.string()),
-				updatedAtIso: z.string()
-			})
-		),
-		logs: z.array(
-			z.object({
-				id: z.string(),
-				dateIso: z.string(),
-				habitId: z.string(),
-				habitTitleSnapshot: z.string().nullable(),
-				achievedTier: z.number().nullable(),
-				achievedRuleSnapshot: z.string().nullable(),
-				habitSnapshotJson: z.string().nullable().optional(),
-				completedIntervals: z.number().nullable(),
-				actualMinutesPerInterval: z.number().nullable(),
-				totalActualMinutes: z.number().nullable(),
-				plannedIntervalsSnapshot: z.number().nullable(),
-				plannedMinutesSnapshot: z.number().nullable(),
-				updatedAtIso: z.string().nullable()
-			})
-		)
-	}),
 	fullWorkspace: LocalWorkspaceSnapshotSchema.optional()
 });
 export type ServerSyncResponse = z.infer<typeof ServerSyncResponseSchema>;

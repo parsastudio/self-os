@@ -39,12 +39,12 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	// Dexie Live Queries
 	const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
-	const entry = useDexieLiveQuery(() => db.dailyEntries.get(dateIso.value), undefined);
-	const logs = useDexieLiveQuery(() => db.habitLogs.where('dateIso').equals(dateIso.value).toArray(), []);
+	const entry = useDexieLiveQuery(() => db.dailyEntries.get(dateIso.value), undefined, dateIso);
+	const logs = useDexieLiveQuery(() => db.habitLogs.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
 	const allEntries = useDexieLiveQuery(() => db.dailyEntries.orderBy('dateIso').reverse().limit(35).toArray(), []);
 	const tagsRecords = useDexieLiveQuery(() => db.reflectionTags.orderBy('sortOrder').toArray(), []);
-	const dayCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(dateIso.value).toArray(), []);
-	const tomorrowCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(tomorrowIso.value).toArray(), []);
+	const dayCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
+	const tomorrowCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(tomorrowIso.value).toArray(), [], tomorrowIso);
 	const calendarEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
 
 	// Local mutable state

@@ -158,6 +158,28 @@ export function useLocalRepository() {
 							cadenceWindowMinutes: item.cadenceWindowMinutes,
 							updatedAtIso: nowIso
 						});
+
+						const lifecycleEvent: LifecycleEventEntity = {
+							id: crypto.randomUUID(),
+							habitId: habit.id,
+							habitTitleSnapshot: habit.title,
+							eventType: 'CADENCE_UPDATED',
+							effectiveDateIso: input.targetDateIso,
+							summary: `تنظیم برای روز بعد: در هر ${item.cadenceWindowMinutes} دقیقه، ${item.plannedMinutesPerInterval} دقیقه (${item.plannedIntervals} بازه)`,
+							reason: input.reason || 'تنظیم از شب قبل',
+							previousStateJson: JSON.stringify({
+								intervals: habit.defaultIntervals,
+								minutes: habit.defaultMinutesPerInterval,
+								window: habit.cadenceWindowMinutes
+							}),
+							newStateJson: JSON.stringify({
+								intervals: item.plannedIntervals,
+								minutes: item.plannedMinutesPerInterval,
+								window: item.cadenceWindowMinutes
+							}),
+							createdAtIso: nowIso
+						};
+						await db.lifecycleEvents.put(lifecycleEvent);
 					}
 				}
 			});
@@ -765,6 +787,36 @@ export function useLocalRepository() {
 					.map((m) => m.payload.dateIso)
 			);
 
+			// Reconcile remote deletions for collections where items can be hard-deleted
+			const serverBookIds = new Set(ws.books.map((b) => b.id));
+			const localBookIds = await db.books.toCollection().primaryKeys();
+			const booksToDelete = localBookIds.filter(
+				(id) => !serverBookIds.has(id) && !pendingIds.has(`book:${id}`)
+			);
+			if (booksToDelete.length > 0) await db.books.bulkDelete(booksToDelete);
+
+			const serverMediaIds = new Set(ws.media.map((m) => m.id));
+			const localMediaIds = await db.media.toCollection().primaryKeys();
+			const mediaToDelete = localMediaIds.filter(
+				(id) => !serverMediaIds.has(id) && !pendingIds.has(`media:${id}`)
+			);
+			if (mediaToDelete.length > 0) await db.media.bulkDelete(mediaToDelete);
+
+			const serverNoteIds = new Set(ws.notes.map((n) => n.id));
+			const localNoteIds = await db.notes.toCollection().primaryKeys();
+			const notesToDelete = localNoteIds.filter(
+				(id) => !serverNoteIds.has(id) && !pendingIds.has(`note:${id}`)
+			);
+			if (notesToDelete.length > 0) await db.notes.bulkDelete(notesToDelete);
+
+			const serverEventIds = new Set(ws.calendarEvents.map((ev) => ev.id));
+			const localEventIds = await db.calendarEvents.toCollection().primaryKeys();
+			const eventsToDelete = localEventIds.filter(
+				(id) => !serverEventIds.has(id) && !pendingIds.has(`event:${id}`)
+			);
+			if (eventsToDelete.length > 0) await db.calendarEvents.bulkDelete(eventsToDelete);
+
+			// Upsert non-pending server entities
 			await db.habits.bulkPut(ws.habits.filter((h) => !pendingIds.has(`habit:${h.id}`)));
 			await db.cadencePlans.bulkPut(
 				ws.cadencePlans.filter((c) => !pendingIds.has(`cadence:${c.dateIso}`))
@@ -786,9 +838,20 @@ export function useLocalRepository() {
 				await db.reflectionTags.bulkPut(tagRecords);
 			}
 
+			// Reconcile cleared daily entries and logs
+			const serverEntryDates = new Set(ws.entries.map((e) => e.dateIso));
+			const localEntryDates = await db.dailyEntries.toCollection().primaryKeys();
+			const entriesToDelete = localEntryDates.filter(
+				(dateIso) => !serverEntryDates.has(dateIso) && !pendingDailyDates.has(dateIso)
+			);
+			if (entriesToDelete.length > 0) {
+				await db.dailyEntries.bulkDelete(entriesToDelete);
+			}
+
+			const entriesToPut: LocalDailyEntryRecord[] = [];
 			for (const e of ws.entries) {
 				if (!pendingDailyDates.has(e.dateIso)) {
-					await db.dailyEntries.put({
+					entriesToPut.push({
 						dateIso: e.dateIso,
 						dayStatus: e.dayStatus,
 						reflectionNote: e.reflectionNote,
@@ -798,10 +861,23 @@ export function useLocalRepository() {
 					});
 				}
 			}
+			if (entriesToPut.length > 0) {
+				await db.dailyEntries.bulkPut(entriesToPut);
+			}
 
+			const serverLogIds = new Set(ws.logs.map((l) => l.id || `log:${l.dateIso}:${l.habitId}`));
+			const allLocalLogs = await db.habitLogs.toArray();
+			const logsToDelete = allLocalLogs
+				.filter((l) => !serverLogIds.has(l.id) && !pendingDailyDates.has(l.dateIso))
+				.map((l) => l.id);
+			if (logsToDelete.length > 0) {
+				await db.habitLogs.bulkDelete(logsToDelete);
+			}
+
+			const logsToPut: LocalHabitLogRecord[] = [];
 			for (const l of ws.logs) {
 				if (!pendingDailyDates.has(l.dateIso)) {
-					await db.habitLogs.put({
+					logsToPut.push({
 						id: l.id || `log:${l.dateIso}:${l.habitId}`,
 						dateIso: l.dateIso,
 						habitId: l.habitId,
@@ -817,6 +893,9 @@ export function useLocalRepository() {
 						updatedAtIso: l.updatedAtIso || new Date().toISOString()
 					});
 				}
+			}
+			if (logsToPut.length > 0) {
+				await db.habitLogs.bulkPut(logsToPut);
 			}
 		});
 	}
