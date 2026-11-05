@@ -20,6 +20,14 @@ import type {
 	SyncRequestPayload
 } from '~/domain/schemas';
 
+let lastStructuralMutationIso = '1970-01-01T00:00:00.000Z';
+
+export function bumpServerStructuralVersion(iso = new Date().toISOString()): void {
+	if (iso > lastStructuralMutationIso) {
+		lastStructuralMutationIso = iso;
+	}
+}
+
 export function getServerMaxVersionIso(): string {
 	const row = db.get<{ maxIso: string | null }>(sql`
 		SELECT MAX(ts) AS maxIso FROM (
@@ -38,10 +46,13 @@ export function getServerMaxVersionIso(): string {
 			SELECT MAX(updated_at_iso) AS ts FROM media_logs
 			UNION ALL
 			SELECT MAX(updated_at_iso) AS ts FROM calendar_events
+			UNION ALL
+			SELECT MAX(created_at_iso) AS ts FROM habit_lifecycle_events
 		)
 	`);
 
-	return row?.maxIso || '1970-01-01T00:00:00.000Z';
+	const dbMax = row?.maxIso || '1970-01-01T00:00:00.000Z';
+	return dbMax > lastStructuralMutationIso ? dbMax : lastStructuralMutationIso;
 }
 
 export function processClientSyncRequest(input: SyncRequestPayload, appVersion = '0.0.1'): ServerSyncResponse {
@@ -79,6 +90,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_BOOK') {
 						tx.delete(books).where(eq(books.id, mutation.payload.bookId)).run();
+						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_MEDIA') {
 						tx.insert(mediaLogs)
@@ -91,6 +103,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_MEDIA') {
 						tx.delete(mediaLogs).where(eq(mediaLogs.id, mutation.payload.mediaId)).run();
+						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_NOTE') {
 						tx.insert(notes)
@@ -103,6 +116,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_NOTE') {
 						tx.delete(notes).where(eq(notes.id, mutation.payload.noteId)).run();
+						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
 						tx.insert(calendarEvents)
@@ -115,6 +129,7 @@ export function processClientSyncRequest(input: SyncRequestPayload, appVersion =
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
 						tx.delete(calendarEvents).where(eq(calendarEvents.id, mutation.payload.eventId)).run();
+						bumpServerStructuralVersion(mutation.queuedAtIso);
 						appliedMutationIds.push(mutation.id);
 					} else if (mutation.kind === 'UPSERT_HABIT') {
 						tx.insert(habits)

@@ -238,6 +238,7 @@ async function handleLogout() {
 	} catch {
 		// ignore
 	}
+	syncEngine.reset();
 	await clientAuth.logout();
 	await localRepo.clearLocalData();
 	router.push('/login');

@@ -66,8 +66,27 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	// Synchronize when date or database queries change
 	watch(
-		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans],
+		[
+			dateIso,
+			entry,
+			logs,
+			habits,
+			dayCadencePlans,
+			tomorrowCadencePlans,
+			entry.isLoading,
+			logs.isLoading,
+			dayCadencePlans.isLoading,
+			tomorrowCadencePlans.isLoading
+		],
 		() => {
+			if (
+				entry.isLoading.value ||
+				logs.isLoading.value ||
+				dayCadencePlans.isLoading.value ||
+				tomorrowCadencePlans.isLoading.value
+			) {
+				return;
+			}
 			reflectionNote.value = entry.value?.reflectionNote ?? '';
 			journalText.value = entry.value?.journalText ?? '';
 			selectedTags.value = entry.value?.tags ? [...entry.value.tags] : [];

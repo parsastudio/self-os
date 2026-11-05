@@ -8,6 +8,7 @@ import {
 } from '../database/schema';
 import { and, asc, eq } from 'drizzle-orm';
 import { getAllHabits } from './habits.repo';
+import { bumpServerStructuralVersion } from './sync.repo';
 import { resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
 import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
 import type {
@@ -89,6 +90,7 @@ export function saveDailyEntryAndLogs(
 		if (isCompletelyEmpty) {
 			tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso)).run();
 			tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso)).run();
+			bumpServerStructuralVersion(entryUpdatedAtIso);
 			return;
 		}
 
@@ -107,12 +109,11 @@ export function saveDailyEntryAndLogs(
 				habit?.trackingMode === 'tiered' &&
 				(log.achievedTier === null || log.achievedTier === undefined);
 
-			if (
-				!prev &&
-				isUnloggedTiered &&
-				habit &&
-				(habit.status === 'archived' || habit.createdAtIso.slice(0, 10) > input.dateIso)
-			) {
+			if (isUnloggedTiered) {
+				if (prev) {
+					tx.delete(habitLogs).where(eq(habitLogs.id, prev.id)).run();
+					bumpServerStructuralVersion(entryUpdatedAtIso);
+				}
 				continue;
 			}
 

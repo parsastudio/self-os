@@ -12,6 +12,7 @@ import {
 	reflectionTags
 } from '../database/schema';
 import { like } from 'drizzle-orm';
+import { bumpServerStructuralVersion } from './sync.repo';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
@@ -34,6 +35,7 @@ export function removeDemoSeedFromServer(): { removedRecordsCount: number } {
 		removed += tx.delete(calendarEvents).where(like(calendarEvents.id, prefixPattern)).run().changes;
 	});
 
+	bumpServerStructuralVersion();
 	return { removedRecordsCount: removed };
 }
 
@@ -78,16 +80,62 @@ export function importDatabaseFromJson(
 		};
 
 		upsertRows(habits, habits.id, data.habits);
-		upsertRows(dailyEntries, dailyEntries.id, data.dailyEntries);
-		upsertRows(habitLogs, habitLogs.id, data.habitLogs);
-		upsertRows(cadencePlans, cadencePlans.id, data.cadencePlans);
+
+		for (const e of data.dailyEntries) {
+			const { id: _id, ...entryFields } = e;
+			tx.insert(dailyEntries)
+				.values(e)
+				.onConflictDoUpdate({
+					target: dailyEntries.dateIso,
+					set: entryFields
+				})
+				.run();
+			totalImported++;
+		}
+
+		for (const l of data.habitLogs) {
+			const { id: _id, ...logFields } = l;
+			tx.insert(habitLogs)
+				.values(l)
+				.onConflictDoUpdate({
+					target: [habitLogs.dateIso, habitLogs.habitId],
+					set: logFields
+				})
+				.run();
+			totalImported++;
+		}
+
+		for (const c of data.cadencePlans) {
+			const { id: _id, ...planFields } = c;
+			tx.insert(cadencePlans)
+				.values(c)
+				.onConflictDoUpdate({
+					target: [cadencePlans.dateIso, cadencePlans.habitId],
+					set: planFields
+				})
+				.run();
+			totalImported++;
+		}
+
 		upsertRows(books, books.id, data.books);
 		upsertRows(mediaLogs, mediaLogs.id, data.media);
 		upsertRows(notes, notes.id, data.notes);
 		upsertRows(calendarEvents, calendarEvents.id, data.calendarEvents);
 		upsertRows(habitLifecycleEvents, habitLifecycleEvents.id, data.lifecycleEvents);
-		upsertRows(reflectionTags, reflectionTags.id, data.reflectionTags);
+
+		for (const tag of data.reflectionTags) {
+			const { id: _id, ...tagFields } = tag;
+			tx.insert(reflectionTags)
+				.values(tag)
+				.onConflictDoUpdate({
+					target: reflectionTags.label,
+					set: tagFields
+				})
+				.run();
+			totalImported++;
+		}
 	});
 
+	bumpServerStructuralVersion();
 	return { importedRecordsCount: totalImported };
 }

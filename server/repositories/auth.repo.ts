@@ -42,21 +42,28 @@ export function isPasswordConfigured(): boolean {
 }
 
 export async function setupInitialPassword(password: string): Promise<void> {
-	if (isPasswordConfigured()) {
-		throw new Error('رمز عبور قبلاً تنظیم شده است');
-	}
 	const saltHex = crypto.randomBytes(16).toString('hex');
 	const passwordHash = await hashPasswordWithSalt(password, saltHex);
 	const nowIso = new Date().toISOString();
 
-	db.insert(appAuth)
-		.values({
-			id: AUTH_SINGLETON_ID,
-			passwordHash,
-			passwordSalt: saltHex,
-			updatedAtIso: nowIso
-		})
-		.run();
+	db.transaction((tx) => {
+		const existing = tx
+			.select()
+			.from(appAuth)
+			.where(eq(appAuth.id, AUTH_SINGLETON_ID))
+			.get();
+		if (existing) {
+			throw new Error('رمز عبور قبلاً تنظیم شده است');
+		}
+		tx.insert(appAuth)
+			.values({
+				id: AUTH_SINGLETON_ID,
+				passwordHash,
+				passwordSalt: saltHex,
+				updatedAtIso: nowIso
+			})
+			.run();
+	});
 }
 
 export async function verifyPassword(password: string): Promise<boolean> {

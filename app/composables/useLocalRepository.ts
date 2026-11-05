@@ -122,8 +122,18 @@ export function useLocalRepository() {
 
 				for (const log of input.logs) {
 					const habit = habitMap.get(log.habitId);
+					const logId = `log:${input.dateIso}:${log.habitId}`;
+
+					if (
+						habit?.trackingMode === 'tiered' &&
+						(log.achievedTier === null || log.achievedTier === undefined)
+					) {
+						await db.habitLogs.delete(logId);
+						continue;
+					}
+
 					const logRecord: LocalHabitLogRecord = {
-						id: `log:${input.dateIso}:${log.habitId}`,
+						id: logId,
 						dateIso: input.dateIso,
 						habitId: log.habitId,
 						habitTitleSnapshot: log.habitTitleSnapshot || habit?.title || null,

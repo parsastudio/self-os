@@ -212,6 +212,25 @@ export function useSyncEngine() {
 		});
 	}
 
+	function reset() {
+		if (debounceTimer) {
+			clearTimeout(debounceTimer);
+			debounceTimer = null;
+		}
+		if (retryTimer) {
+			clearTimeout(retryTimer);
+			retryTimer = null;
+		}
+		isSyncInFlight = false;
+		hasQueuedSyncDuringFlight = false;
+		retryAttempt = 0;
+		pendingCount.value = 0;
+		knownServerVersionIso.value = null;
+		lastSyncedAtIso.value = null;
+		lastErrorMessage.value = null;
+		status.value = 'synced';
+	}
+
 	return {
 		status,
 		pendingCount,
@@ -220,6 +239,7 @@ export function useSyncEngine() {
 		knownServerVersionIso,
 		lastErrorMessage,
 		init,
+		reset,
 		syncNow,
 		notifyLocalMutationStaged,
 		refreshPendingCount
