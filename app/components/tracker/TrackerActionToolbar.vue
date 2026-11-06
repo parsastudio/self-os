@@ -27,6 +27,16 @@ const emit = defineEmits<{
 
 const showReflectionDrawer = ref(false);
 const showTomorrowDrawer = ref(false);
+const isSavedTomorrowToast = ref(false);
+
+function handleSaveTomorrow() {
+	emit('saveTomorrowPlans');
+	isSavedTomorrowToast.value = true;
+	setTimeout(() => {
+		isSavedTomorrowToast.value = false;
+		showTomorrowDrawer.value = false;
+	}, 900);
+}
 
 const tomorrowHuman = computed(() => formatJalaliHuman(props.tomorrowIso));
 const activeNotesBadgeCount = computed(
@@ -168,10 +178,15 @@ const activeNotesBadgeCount = computed(
 			<div class="flex justify-end">
 				<button
 					type="button"
-					class="h-10 rounded-xl bg-accent px-5 text-xs font-black text-accent-fg transition active:scale-98"
-					@click="emit('saveTomorrowPlans')"
+					class="h-10 rounded-xl px-5 text-xs font-black transition active:scale-98"
+					:class="
+						isSavedTomorrowToast
+							? 'bg-optimal text-on-solid'
+							: 'bg-accent text-accent-fg'
+					"
+					@click="handleSaveTomorrow"
 				>
-					ذخیره برنامه فردا
+					{{ isSavedTomorrowToast ? 'ذخیره شد ✓' : 'ذخیره برنامه فردا' }}
 				</button>
 			</div>
 		</div>

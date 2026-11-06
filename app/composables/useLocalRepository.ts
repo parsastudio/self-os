@@ -48,6 +48,10 @@ export function onLocalMutationStaged(listener: () => void): () => void {
  * Every write operation writes instantly to indexed Dexie tables
  * and stages an atomic mutation record into `syncOutbox`.
  */
+function clonePlain<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export function useLocalRepository() {
 	const db = useAppDatabase();
 
@@ -55,6 +59,7 @@ export function useLocalRepository() {
 		mutation: SyncOutboxMutation,
 		applyLocal: () => Promise<void>
 	): Promise<void> {
+		const plainMutation = clonePlain(mutation);
 		await db.transaction('rw', [
 			db.syncOutbox,
 			db.habits,
@@ -69,7 +74,7 @@ export function useLocalRepository() {
 			db.reflectionTags
 		], async () => {
 			await applyLocal();
-			await db.syncOutbox.put(mutation);
+			await db.syncOutbox.put(plainMutation);
 		});
 
 		for (const listener of mutationStagedListeners) {

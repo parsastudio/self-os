@@ -53,6 +53,6 @@ Thumbs.db
 
 # Tooling backups
 .fastpatch_backup
-
+scripts/
 # FastAgent artifacts
 .fastagent/

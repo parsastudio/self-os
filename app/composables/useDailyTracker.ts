@@ -236,7 +236,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			journalText: journalText.value.trim() || null,
 			tags: [...selectedTags.value],
 			updatedAtIso: new Date().toISOString(),
-			logs: Object.values(logsByHabitId.value)
+			logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
 		};
 	}
 
@@ -440,7 +440,12 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	}
 
 	async function saveTomorrowCadencePlans(): Promise<void> {
-		const items = Object.values(tomorrowPlansByHabitId.value);
+		const items = Object.values(tomorrowPlansByHabitId.value).map((item) => ({
+			habitId: item.habitId,
+			plannedIntervals: item.plannedIntervals,
+			plannedMinutesPerInterval: item.plannedMinutesPerInterval,
+			cadenceWindowMinutes: item.cadenceWindowMinutes
+		}));
 		await localRepo.daily.saveCadencePlans({
 			targetDateIso: tomorrowIso.value,
 			items
