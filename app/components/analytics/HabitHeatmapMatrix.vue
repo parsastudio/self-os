@@ -117,23 +117,6 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 				</div>
 			</div>
 
-			<div v-if="report.bestWeekday || report.weakestWeekday" class="grid grid-cols-2 gap-2.5 border-t border-border pt-3.5 text-xs">
-				<div v-if="report.bestWeekday" class="flex items-center justify-between rounded-2xl border border-optimal-border bg-optimal-soft p-3">
-					<div>
-						<div class="text-[11px] font-bold text-optimal">بهترین روز</div>
-						<div class="mt-0.5 font-black text-fg">{{ report.bestWeekday.weekdayLabel }}</div>
-					</div>
-					<span class="font-mono text-sm font-black text-optimal">%{{ toPersianDigits(report.bestWeekday.avgScore) }}</span>
-				</div>
-				<div v-if="report.weakestWeekday && report.weakestWeekday.weekdayIndex !== report.bestWeekday?.weekdayIndex" class="flex items-center justify-between rounded-2xl border border-failed-border bg-failed-soft p-3">
-					<div>
-						<div class="text-[11px] font-bold text-failed">ضعیف‌ترین روز</div>
-						<div class="mt-0.5 font-black text-fg">{{ report.weakestWeekday.weekdayLabel }}</div>
-					</div>
-					<span class="font-mono text-sm font-black text-failed">%{{ toPersianDigits(report.weakestWeekday.avgScore) }}</span>
-				</div>
-			</div>
-
 			<div v-if="report.tagCorrelations.length > 0" class="space-y-2 border-t border-border pt-3.5">
 				<div class="flex items-center gap-1.5 text-xs font-extrabold text-fg-secondary">
 					<Hash class="h-3.5 w-3.5 text-accent-text" />

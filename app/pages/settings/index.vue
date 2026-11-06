@@ -434,64 +434,6 @@ async function handleLogout() {
 			</div>
 		</section>
 
-		<!-- بخش داده‌های آزمایشی (Demo Seed) قابل افزودن و حذف ایمن -->
-		<section class="space-y-4 rounded-3xl border border-border bg-surface p-6 shadow-(--shadow-soft) sm:p-7">
-			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3.5">
-				<div class="flex items-center gap-2.5">
-					<FlaskConical class="h-5 w-5 text-accent-text" />
-					<h2 class="text-base font-black text-fg">داده‌های آزمایشی</h2>
-				</div>
-				<span
-					class="rounded-xl border px-3 py-1 text-xs font-extrabold"
-					:class="
-						activeDemoHabitsCount > 0
-							? 'border-gold-border bg-gold-soft text-gold-text'
-							: 'border-border bg-elevated text-fg-muted'
-					"
-				>
-					{{
-						activeDemoHabitsCount > 0
-							? `${toPersianDigits(activeDemoHabitsCount)} طرح آزمایشی فعال`
-							: 'بدون داده آزمایشی'
-					}}
-				</span>
-			</div>
-
-			<div
-				v-if="demoSeedMessage"
-				class="rounded-2xl border px-4 py-3 text-xs font-extrabold"
-				:class="
-					demoSeedMessage.type === 'success'
-						? 'border-optimal-border bg-optimal-soft text-optimal'
-						: 'border-failed-border bg-failed-soft text-failed'
-				"
-			>
-				{{ demoSeedMessage.text }}
-			</div>
-
-			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-				<button
-					type="button"
-					:disabled="isMutatingDemoSeed"
-					class="flex h-11 items-center justify-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 text-xs font-black text-accent-text transition hover:opacity-90 active:scale-98 disabled:opacity-50"
-					@click="handleInjectDemoSeed"
-				>
-					<Plus class="h-4 w-4" />
-					<span>افزودن داده‌های آزمایشی</span>
-				</button>
-
-				<button
-					type="button"
-					:disabled="isMutatingDemoSeed || activeDemoHabitsCount === 0"
-					class="flex h-11 items-center justify-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-black text-failed transition hover:opacity-90 active:scale-98 disabled:opacity-40"
-					@click="handleRemoveDemoSeed"
-				>
-					<Trash2 class="h-4 w-4" />
-					<span>حذف داده‌های آزمایشی</span>
-				</button>
-			</div>
-		</section>
-
 		<!-- بخش امنیت و حساب کاربری -->
 		<section class="space-y-5 rounded-3xl border border-border bg-surface p-6 shadow-(--shadow-soft) sm:p-7">
 			<div class="flex items-center gap-2.5 border-b border-border pb-3.5">
@@ -572,5 +514,60 @@ async function handleLogout() {
 				</button>
 			</div>
 		</section>
+
+		<!-- بخش تاشو داده‌های آزمایشی (Demo Seed) برای تست سیستم -->
+		<details
+			:open="activeDemoHabitsCount > 0 || Boolean(demoSeedMessage)"
+			class="rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:px-7"
+		>
+			<summary class="flex cursor-pointer items-center justify-between gap-3 text-sm font-black text-fg-secondary select-none hover:text-fg">
+				<div class="flex items-center gap-2.5">
+					<FlaskConical class="h-4.5 w-4.5 text-accent-text" />
+					<span>داده‌های آزمایشی (برای تست اولیه نمودارها)</span>
+				</div>
+				<span
+					v-if="activeDemoHabitsCount > 0"
+					class="rounded-xl border border-gold-border bg-gold-soft px-2.5 py-0.5 text-[11px] font-extrabold text-gold-text"
+				>
+					{{ toPersianDigits(activeDemoHabitsCount) }} طرح فعال
+				</span>
+			</summary>
+
+			<div class="mt-4 space-y-4 border-t border-border pt-4">
+				<div
+					v-if="demoSeedMessage"
+					class="rounded-2xl border px-4 py-3 text-xs font-extrabold"
+					:class="
+						demoSeedMessage.type === 'success'
+							? 'border-optimal-border bg-optimal-soft text-optimal'
+							: 'border-failed-border bg-failed-soft text-failed'
+					"
+				>
+					{{ demoSeedMessage.text }}
+				</div>
+
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+					<button
+						type="button"
+						:disabled="isMutatingDemoSeed"
+						class="flex h-11 items-center justify-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 text-xs font-black text-accent-text transition hover:opacity-90 active:scale-98 disabled:opacity-50"
+						@click="handleInjectDemoSeed"
+					>
+						<Plus class="h-4 w-4" />
+						<span>افزودن داده‌های آزمایشی</span>
+					</button>
+
+					<button
+						type="button"
+						:disabled="isMutatingDemoSeed || activeDemoHabitsCount === 0"
+						class="flex h-11 items-center justify-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-black text-failed transition hover:opacity-90 active:scale-98 disabled:opacity-40"
+						@click="handleRemoveDemoSeed"
+					>
+						<Trash2 class="h-4 w-4" />
+						<span>حذف داده‌های آزمایشی</span>
+					</button>
+				</div>
+			</div>
+		</details>
 	</div>
 </template>

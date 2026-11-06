@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { buildFullAnalyticsReport } from '~/core/analytics-engine';
-import { getYesterdayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
+import { getYesterdayIso } from '~/domain/calendar';
 import type { AnalyticsTimeRange } from '~/domain/schemas';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
 import AnalyticsSummaryCards from '~/components/analytics/AnalyticsSummaryCards.vue';
@@ -83,12 +83,7 @@ function selectHabitAndScroll(habitId: string) {
 					<div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text">
 						<BarChart3 class="h-5 w-5" />
 					</div>
-					<div class="flex flex-wrap items-center gap-2.5">
-						<h1 class="text-xl font-black tracking-tight text-fg sm:text-2xl">آمار و روند طرح‌ها</h1>
-						<span dir="ltr" class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 font-mono text-xs font-bold text-fg-secondary">
-							{{ toPersianDigits(isoToJalaliSlash(report.startDateIso)) }} → {{ toPersianDigits(isoToJalaliSlash(report.endDateIso)) }}
-						</span>
-					</div>
+					<h1 class="text-xl font-black tracking-tight text-fg sm:text-2xl">آمار و روند طرح‌ها</h1>
 				</div>
 
 				<div class="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
