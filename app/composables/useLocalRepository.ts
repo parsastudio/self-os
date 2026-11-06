@@ -284,6 +284,29 @@ export function useLocalRepository() {
 						queuedAtIso: nowIso,
 						payload: lifecycleEvent
 					});
+
+					if (current.status !== updatedHabit.status && !updatedHabit.parentId) {
+						const children = await db.habits
+							.where('parentId')
+							.equals(updatedHabit.id)
+							.toArray();
+						for (const child of children) {
+							if (child.status !== updatedHabit.status && child.status !== 'archived') {
+								const cascadedChild: HabitEntity = {
+									...child,
+									status: updatedHabit.status,
+									updatedAtIso: nowIso
+								};
+								await db.habits.put(cascadedChild);
+								await db.syncOutbox.put({
+									id: `habit:${cascadedChild.id}`,
+									kind: 'UPSERT_HABIT',
+									queuedAtIso: nowIso,
+									payload: cascadedChild
+								});
+							}
+						}
+					}
 				}
 			);
 		}

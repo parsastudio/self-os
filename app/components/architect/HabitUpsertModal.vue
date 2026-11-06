@@ -57,6 +57,7 @@ const bronzeDesc = ref(props.editingHabit?.bronzeDesc ?? '');
 const silverDesc = ref(props.editingHabit?.silverDesc ?? '');
 const goldDesc = ref(props.editingHabit?.goldDesc ?? '');
 const emergencyMinDesc = ref(props.editingHabit?.emergencyMinDesc ?? '');
+const defaultMinutesPerInterval = ref<number>(props.editingHabit?.defaultMinutesPerInterval ?? 10);
 const notes = ref(props.editingHabit?.notes ?? '');
 const reason = ref('');
 
@@ -123,6 +124,10 @@ function handleSubmit() {
 			silverDesc: silverDesc.value.trim() || null,
 			goldDesc: goldDesc.value.trim() || null,
 			emergencyMinDesc: emergencyMinDesc.value.trim() || null,
+			defaultMinutesPerInterval:
+				structureKind.value === 'interval_cadence'
+					? Math.max(1, Number(defaultMinutesPerInterval.value) || 10)
+					: undefined,
 			reason: reason.value.trim() || 'ویرایش قوانین طرح'
 		});
 	} else {
@@ -140,7 +145,10 @@ function handleSubmit() {
 			goldDesc: goldDesc.value.trim() || undefined,
 			emergencyMinDesc: emergencyMinDesc.value.trim() || undefined,
 			defaultIntervals: 1,
-			defaultMinutesPerInterval: 10,
+			defaultMinutesPerInterval:
+				structureKind.value === 'interval_cadence'
+					? Math.max(1, Number(defaultMinutesPerInterval.value) || 10)
+					: 10,
 			cadenceWindowMinutes: 60,
 			reason: reason.value.trim() || undefined
 		});
@@ -262,15 +270,28 @@ function handleSubmit() {
 				</label>
 			</div>
 
-			<!-- تنظیمات حداقل اضطراری طرح ریتمی -->
-			<div v-else-if="structureKind === 'interval_cadence'" class="rounded-2xl border border-border bg-elevated p-4">
-				<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>
-				<input
-					id="h-emerg"
-					v-model="emergencyMinDesc"
-					placeholder="مثلاً: ۱۰ دقیقه برای روزهای شلوغ"
-					class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-sm font-semibold text-fg"
-				/>
+			<!-- تنظیمات هدف روزانه و حداقل اضطراری طرح ریتمی -->
+			<div v-else-if="structureKind === 'interval_cadence'" class="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-elevated p-4 sm:grid-cols-2">
+				<div>
+					<label for="h-default-mins" class="mb-1.5 block text-xs font-bold text-accent-text">هدف پیش‌فرض روزانه (دقیقه)</label>
+					<input
+						id="h-default-mins"
+						v-model.number="defaultMinutesPerInterval"
+						type="number"
+						min="1"
+						required
+						class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 font-mono text-sm font-black text-fg"
+					/>
+				</div>
+				<div>
+					<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>
+					<input
+						id="h-emerg"
+						v-model="emergencyMinDesc"
+						placeholder="مثلاً: ۲ دقیقه برای روزهای شلوغ"
+						class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-sm font-semibold text-fg"
+					/>
+				</div>
 			</div>
 
 			<div>

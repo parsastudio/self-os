@@ -22,11 +22,19 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const MAX_TRACKED_IPS = 1000;
+
 function pruneExpiredLoginAttempts(now: number): void {
 	if (failedLoginAttemptsByIp.size < 100) return;
 	for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
 		if (now - entry.lastAttemptMs >= RESET_WINDOW_MS) {
 			failedLoginAttemptsByIp.delete(key);
+		}
+	}
+	if (failedLoginAttemptsByIp.size > MAX_TRACKED_IPS) {
+		const oldestKey = failedLoginAttemptsByIp.keys().next().value;
+		if (oldestKey) {
+			failedLoginAttemptsByIp.delete(oldestKey);
 		}
 	}
 }

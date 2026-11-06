@@ -181,6 +181,7 @@ export const MutateHabitStructureSchema = z.object({
 	silverDesc: z.string().nullable(),
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
+	defaultMinutesPerInterval: z.number().min(0).optional(),
 	reason: z.string().min(2, 'نوشتن دلیل تغییر برای ثبت در تاریخچه الزامی است')
 });
 export type MutateHabitStructureInput = z.infer<typeof MutateHabitStructureSchema>;
@@ -320,6 +321,7 @@ export const LoginInputSchema = z.object({
 
 export const ChangePasswordInputSchema = z
 	.object({
+		currentPassword: z.string().min(1, 'وارد کردن رمز عبور فعلی الزامی است'),
 		newPassword: z.string().min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد'),
 		confirmNewPassword: z.string().min(4, 'تکرار رمز عبور جدید الزامی است')
 	})

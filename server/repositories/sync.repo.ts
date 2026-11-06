@@ -158,7 +158,6 @@ export async function processClientSyncRequest(
 					`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`,
 					err
 				);
-				appliedMutationIds.push(mutation.id);
 			}
 		}
 	}

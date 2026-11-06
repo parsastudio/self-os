@@ -146,7 +146,7 @@ export function getApplicableHabitsForDate(
 ): HabitEntity[] {
 	const loggedSet = options?.loggedHabitIds ?? new Set<string>();
 	const dateIso = options?.dateIso;
-	const hasExistingEntry = Boolean(options?.hasExistingEntry);
+	const habitById = new Map(habits.map((h) => [h.id, h]));
 
 	const parentIdsWithLoggedChildren = new Set<string>();
 	for (const h of habits) {
@@ -162,7 +162,13 @@ export function getApplicableHabitsForDate(
 		if (h.status === 'archived') {
 			return false;
 		}
-		if (hasExistingEntry && dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
+		if (h.parentId) {
+			const parent = habitById.get(h.parentId);
+			if (!parent || parent.status === 'archived') {
+				return false;
+			}
+		}
+		if (dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
 			return false;
 		}
 		return true;
@@ -290,8 +296,13 @@ export function computeDailyCompletionStats(params: {
 	const { applicableHabits, loggedHabitIds, logsByHabitId, hasExistingEntry, isDirty } =
 		params;
 
+	const habitById = new Map(applicableHabits.map((h) => [h.id, h]));
 	const trackable = applicableHabits.filter((h) => {
 		if (h.status === 'paused' && !loggedHabitIds.has(h.id)) return false;
+		if (h.parentId) {
+			const parent = habitById.get(h.parentId);
+			if (parent?.status === 'paused' && !loggedHabitIds.has(h.id)) return false;
+		}
 		const hasChildren = applicableHabits.some((c) => c.parentId === h.id);
 		return !hasChildren;
 	});
@@ -350,9 +361,14 @@ export function evaluateDayStatusColor(
 			)
 			.map((l) => l.habitId)
 	);
+	const habitById = new Map(habits.map((h) => [h.id, h]));
 	const trackable = habits.filter((h) => {
 		const isLogged = loggedIds.has(h.id);
 		if (h.status !== 'active' && !isLogged) return false;
+		if (h.parentId) {
+			const parent = habitById.get(h.parentId);
+			if ((!parent || parent.status !== 'active') && !isLogged) return false;
+		}
 		const hasChildren = habits.some(
 			(child) =>
 				child.parentId === h.id &&
@@ -545,6 +561,10 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		silverDesc: input.silverDesc?.trim() || null,
 		goldDesc: input.goldDesc?.trim() || null,
 		emergencyMinDesc: input.emergencyMinDesc?.trim() || null,
+		defaultMinutesPerInterval:
+			input.defaultMinutesPerInterval !== undefined
+				? input.defaultMinutesPerInterval
+				: current.defaultMinutesPerInterval,
 		updatedAtIso: nowIso
 	};
 

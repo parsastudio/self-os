@@ -51,7 +51,7 @@ const TEHRAN_ISO_FORMATTER = new Intl.DateTimeFormat('en-CA', {
 });
 
 export function getPersianWeekdayIndex(date: Date): number {
-	return (date.getDay() + 1) % 7;
+	return (date.getUTCDay() + 1) % 7;
 }
 
 export function padZero(num: number, size = 2): string {
@@ -71,15 +71,15 @@ export function toPersianDigits(input: string | number): string {
 }
 
 export function dateToIso(date: Date): string {
-	const y = date.getFullYear();
-	const m = padZero(date.getMonth() + 1);
-	const d = padZero(date.getDate());
+	const y = date.getUTCFullYear();
+	const m = padZero(date.getUTCMonth() + 1);
+	const d = padZero(date.getUTCDate());
 	return `${y}-${m}-${d}`;
 }
 
 export function isoToDate(iso: string): Date {
 	const [y = 1970, m = 1, d = 1] = iso.split('-').map(Number);
-	return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);
+	return new Date(Date.UTC(y, (m || 1) - 1, d || 1, 12, 0, 0));
 }
 
 export function getTodayIso(): string {
@@ -92,7 +92,7 @@ export function getYesterdayIso(): string {
 
 export function shiftIsoDate(iso: string, deltaDays: number): string {
 	const dt = isoToDate(iso);
-	dt.setDate(dt.getDate() + deltaDays);
+	dt.setUTCDate(dt.getUTCDate() + deltaDays);
 	return dateToIso(dt);
 }
 
