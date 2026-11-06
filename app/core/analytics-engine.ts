@@ -104,37 +104,23 @@ function evaluateSingleLeafHabitDay(
 		const plannedMinutes =
 			log?.plannedMinutesSnapshot && log.plannedMinutesSnapshot > 0
 				? log.plannedMinutesSnapshot
-				: habit.defaultMinutesPerInterval > 0
-					? habit.defaultMinutesPerInterval
-					: 10;
+				: null;
+		const actualMinutes = log ? resolveEffectiveCadenceMinutes(log) : 0;
+		const completedIntervals = log?.completedIntervals ?? null;
 
-		if (!log && !hasDailyEntry) {
+		if (!plannedMinutes && actualMinutes <= 0) {
 			return {
 				outcome: 'unlogged',
 				tierLevel: null,
 				score: null,
 				ruleSnapshot: null,
 				actualMinutes: null,
-				plannedMinutes,
+				plannedMinutes: null,
 				completedIntervals: null
 			};
 		}
 
-		const actualMinutes = log ? resolveEffectiveCadenceMinutes(log) : 0;
-		const completedIntervals = log?.completedIntervals ?? null;
-
 		if (actualMinutes <= 0) {
-			if (!log) {
-				return {
-					outcome: 'unlogged',
-					tierLevel: null,
-					score: null,
-					ruleSnapshot: null,
-					actualMinutes: null,
-					plannedMinutes,
-					completedIntervals: null
-				};
-			}
 			return {
 				outcome: 'failed',
 				tierLevel: 0,
@@ -146,7 +132,8 @@ function evaluateSingleLeafHabitDay(
 			};
 		}
 
-		const ratio = plannedMinutes > 0 ? actualMinutes / plannedMinutes : 1;
+		const effectiveTarget = plannedMinutes ?? actualMinutes;
+		const ratio = effectiveTarget > 0 ? actualMinutes / effectiveTarget : 1;
 		const score = Math.min(100, Math.round(ratio * 100));
 
 		if (ratio >= CADENCE_SUCCESS_RATIOS.GOLD_THRESHOLD) {
@@ -154,9 +141,11 @@ function evaluateSingleLeafHabitDay(
 				outcome: 'gold',
 				tierLevel: 3,
 				score: QUALITY_SCORES.GOLD,
-				ruleSnapshot: `${actualMinutes} دقیقه (تکمیل هدف ${plannedMinutes} دقیقه)`,
+				ruleSnapshot: plannedMinutes
+					? `${actualMinutes} دقیقه (تکمیل هدف ${plannedMinutes} دقیقه)`
+					: `${actualMinutes} دقیقه انجام‌شده`,
 				actualMinutes,
-				plannedMinutes,
+				plannedMinutes: effectiveTarget,
 				completedIntervals
 			};
 		}
@@ -816,7 +805,7 @@ export function buildFullAnalyticsReport(params: {
 			avgPlannedMinutes:
 				cadenceLoggedDays > 0
 					? Number((totalPlannedMinutes / cadenceLoggedDays).toFixed(1))
-					: targetHabit.defaultMinutesPerInterval,
+					: 0,
 			weekdayStats,
 			bestWeekday: bestWeekday ?? null,
 			weakestWeekday: weakestWeekday ?? null,

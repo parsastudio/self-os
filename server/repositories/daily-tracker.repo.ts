@@ -104,7 +104,13 @@ export async function saveDailyEntryAndLogs(
 				habit?.trackingMode === 'tiered' &&
 				(log.achievedTier === null || log.achievedTier === undefined);
 
-			if (isUnloggedTiered) {
+			const isUnscheduledAndUnloggedCadence =
+				habit?.trackingMode === 'interval_cadence' &&
+				(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
+				(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
+				(!log.totalActualMinutes || log.totalActualMinutes <= 0);
+
+			if (isUnloggedTiered || isUnscheduledAndUnloggedCadence) {
 				if (prev) {
 					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
 					bumpServerStructuralVersion(entryUpdatedAtIso);
@@ -214,6 +220,14 @@ export async function saveCadencePlansForDate(
 				.limit(1);
 			const existing = existingRows[0];
 
+			if (item.plannedMinutesPerInterval <= 0) {
+				if (existing) {
+					await tx.delete(cadencePlans).where(eq(cadencePlans.id, existing.id));
+					bumpServerStructuralVersion(nowIso);
+				}
+				continue;
+			}
+
 			if (existing) {
 				await tx
 					.update(cadencePlans)
@@ -231,53 +245,6 @@ export async function saveCadencePlansForDate(
 					habitId: item.habitId,
 					plannedIntervals: item.plannedIntervals,
 					plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-					cadenceWindowMinutes: item.cadenceWindowMinutes,
-					updatedAtIso: nowIso
-				});
-			}
-
-			const habit = habitMap.get(item.habitId);
-			if (
-				habit &&
-				(habit.defaultIntervals !== item.plannedIntervals ||
-					habit.defaultMinutesPerInterval !== item.plannedMinutesPerInterval ||
-					habit.cadenceWindowMinutes !== item.cadenceWindowMinutes)
-			) {
-				await tx
-					.update(habits)
-					.set({
-						defaultIntervals: item.plannedIntervals,
-						defaultMinutesPerInterval: item.plannedMinutesPerInterval,
-						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: nowIso
-					})
-					.where(eq(habits.id, habit.id));
-
-				await tx.insert(habitLifecycleEvents).values({
-					id: crypto.randomUUID(),
-					habitId: habit.id,
-					habitTitleSnapshot: habit.title,
-					eventType: 'CADENCE_UPDATED',
-					effectiveDateIso: input.targetDateIso,
-					summary: `تنظیم برای روز بعد: در هر ${item.cadenceWindowMinutes} دقیقه، ${item.plannedMinutesPerInterval} دقیقه (${item.plannedIntervals} بازه)`,
-					reason: input.reason || 'تنظیم از شب قبل',
-					previousStateJson: JSON.stringify({
-						intervals: habit.defaultIntervals,
-						minutes: habit.defaultMinutesPerInterval,
-						window: habit.cadenceWindowMinutes
-					}),
-					newStateJson: JSON.stringify({
-						intervals: item.plannedIntervals,
-						minutes: item.plannedMinutesPerInterval,
-						window: item.cadenceWindowMinutes
-					}),
-					createdAtIso: nowIso
-				});
-
-				habitMap.set(habit.id, {
-					...habit,
-					defaultIntervals: item.plannedIntervals,
-					defaultMinutesPerInterval: item.plannedMinutesPerInterval,
 					cadenceWindowMinutes: item.cadenceWindowMinutes,
 					updatedAtIso: nowIso
 				});

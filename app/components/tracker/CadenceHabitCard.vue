@@ -20,9 +20,7 @@ const emit = defineEmits<{
 const plannedMinutes = computed(() =>
 	props.log?.plannedMinutesSnapshot && props.log.plannedMinutesSnapshot > 0
 		? props.log.plannedMinutesSnapshot
-		: props.habit.defaultMinutesPerInterval > 0
-			? props.habit.defaultMinutesPerInterval
-			: 10
+		: 0
 );
 
 const actualMinutes = computed(() => props.log?.actualMinutesPerInterval ?? 0);

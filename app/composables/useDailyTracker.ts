@@ -117,25 +117,22 @@ export function useDailyTracker(dateIso: Ref<string>) {
 						updatedAtIso: existing.updatedAtIso ?? null
 					};
 				} else {
-					const effectivePlannedIntervals =
-						habit.trackingMode === 'interval_cadence'
-							? (plannedIntervals ?? habit.defaultIntervals)
-							: plannedIntervals;
-					const effectivePlannedMinutes =
-						habit.trackingMode === 'interval_cadence'
-							? (plannedMinutes ?? habit.defaultMinutesPerInterval)
-							: plannedMinutes;
-
 					nextLogs[habit.id] = {
 						habitId: habit.id,
 						habitTitleSnapshot: habit.title,
 						achievedTier: null,
 						achievedRuleSnapshot: null,
 						completedIntervals: null,
-						actualMinutesPerInterval: habit.trackingMode === 'interval_cadence' ? 0 : null,
-						totalActualMinutes: habit.trackingMode === 'interval_cadence' ? 0 : null,
-						plannedIntervalsSnapshot: effectivePlannedIntervals,
-						plannedMinutesSnapshot: effectivePlannedMinutes,
+						actualMinutesPerInterval:
+							habit.trackingMode === 'interval_cadence' && plannedMinutes && plannedMinutes > 0
+								? 0
+								: null,
+						totalActualMinutes:
+							habit.trackingMode === 'interval_cadence' && plannedMinutes && plannedMinutes > 0
+								? 0
+								: null,
+						plannedIntervalsSnapshot: plannedIntervals,
+						plannedMinutesSnapshot: plannedMinutes,
 						updatedAtIso: null
 					};
 				}
@@ -146,11 +143,10 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			const nextTomorrow: Record<string, CadenceDraftItem> = {};
 			for (const habit of habits.value.filter((h) => h.trackingMode === 'interval_cadence')) {
 				const tPlan = tomorrowPlanMap.get(habit.id);
-				const todayPlan = dayPlanMap.get(habit.id);
 				nextTomorrow[habit.id] = {
 					habitId: habit.id,
 					plannedIntervals: 1,
-					plannedMinutesPerInterval: tPlan?.plannedMinutesPerInterval ?? todayPlan?.plannedMinutesPerInterval ?? 0,
+					plannedMinutesPerInterval: tPlan?.plannedMinutesPerInterval ?? 0,
 					cadenceWindowMinutes: 60
 				};
 			}
@@ -161,11 +157,37 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		{ immediate: true }
 	);
 
+	const scheduledCadenceHabitIds = computed<ReadonlySet<string>>(() => {
+		const set = new Set<string>();
+		for (const plan of dayCadencePlans.value) {
+			if (plan.plannedMinutesPerInterval > 0) {
+				set.add(plan.habitId);
+			}
+		}
+		for (const log of logs.value) {
+			if (
+				(log.plannedMinutesSnapshot !== null &&
+					log.plannedMinutesSnapshot !== undefined &&
+					log.plannedMinutesSnapshot > 0) ||
+				resolveEffectiveCadenceMinutes(log) > 0
+			) {
+				set.add(log.habitId);
+			}
+		}
+		return set;
+	});
+
+	const schedulableCadenceHabits = computed(() =>
+		habits.value
+			.filter((h) => h.trackingMode === 'interval_cadence' && h.status === 'active')
+			.sort((a, b) => a.sortOrder - b.sortOrder)
+	);
+
 	const loggedHabitIds = computed<ReadonlySet<string>>(() => {
 		const set = new Set<string>();
 		for (const log of Object.values(logsByHabitId.value)) {
 			const hasTier = log.achievedTier !== null && log.achievedTier !== undefined;
-			const hasMinutes = Boolean(entry.value) && resolveEffectiveCadenceMinutes(log) > 0;
+			const hasMinutes = resolveEffectiveCadenceMinutes(log) > 0;
 			if (hasTier || hasMinutes) {
 				set.add(log.habitId);
 			}
@@ -177,7 +199,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		getApplicableHabitsForDate(habits.value, {
 			dateIso: dateIso.value,
 			hasExistingEntry: Boolean(entry.value),
-			loggedHabitIds: loggedHabitIds.value
+			loggedHabitIds: loggedHabitIds.value,
+			scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
 		})
 	);
 
@@ -185,7 +208,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		buildHabitTree(habits.value, {
 			dateIso: dateIso.value,
 			hasExistingEntry: Boolean(entry.value),
-			loggedHabitIds: loggedHabitIds.value
+			loggedHabitIds: loggedHabitIds.value,
+			scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
 		})
 	);
 
@@ -273,9 +297,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 						? current.plannedMinutesSnapshot
 						: current.actualMinutesPerInterval && current.actualMinutesPerInterval > 0
 							? current.actualMinutesPerInterval
-							: habit.defaultMinutesPerInterval > 0
-								? habit.defaultMinutesPerInterval
-								: 10;
+							: 0;
+				if (plannedMinutes <= 0) continue;
 				const intervals = current.completedIntervals ?? null;
 				updated[habit.id] = {
 					...current,
@@ -341,13 +364,16 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		for (const habit of habits.value) {
 			const current = updated[habit.id];
 			if (!current) continue;
+			const isScheduledCadence =
+				habit.trackingMode === 'interval_cadence' &&
+				scheduledCadenceHabitIds.value.has(habit.id);
 			updated[habit.id] = {
 				...current,
 				achievedTier: null,
 				achievedRuleSnapshot: null,
 				completedIntervals: null,
-				actualMinutesPerInterval: habit.trackingMode === 'interval_cadence' ? 0 : null,
-				totalActualMinutes: habit.trackingMode === 'interval_cadence' ? 0 : null,
+				actualMinutesPerInterval: isScheduledCadence ? 0 : null,
+				totalActualMinutes: isScheduledCadence ? 0 : null,
 				updatedAtIso: nowIso
 			};
 		}
@@ -444,6 +470,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		allEntries,
 		calendarEvents,
 		tree,
+		schedulableCadenceHabits,
 		applicableHabits,
 		availableTags,
 		reflectionNote,

@@ -124,7 +124,7 @@ const groupedTieredSections = computed(() => {
 
 		<template v-else>
 			<TrackerActionToolbar
-				:cadence-habits="tracker.tree.value.cadenceHabits"
+				:cadence-habits="tracker.schedulableCadenceHabits.value"
 				:tomorrow-iso="tracker.tomorrowIso.value"
 				:available-tags="tracker.availableTags.value"
 				:selected-tags="tracker.selectedTags.value"

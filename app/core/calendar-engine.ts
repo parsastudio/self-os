@@ -202,6 +202,16 @@ export function assembleJalaliMonthArchive(params: {
 				continue;
 			}
 
+			const actualMinutes = resolveEffectiveCadenceMinutes(log);
+			const plannedMinutes = log.plannedMinutesSnapshot ?? null;
+			if (
+				trackingMode === 'interval_cadence' &&
+				actualMinutes <= 0 &&
+				(!plannedMinutes || plannedMinutes <= 0)
+			) {
+				continue;
+			}
+
 			const title = log.habitTitleSnapshot || h?.title || 'طرح حذف‌شده';
 			const achievedRule =
 				log.achievedRuleSnapshot ||
@@ -215,10 +225,9 @@ export function assembleJalaliMonthArchive(params: {
 				trackingMode,
 				achievedTier: log.achievedTier,
 				achievedRule,
-				actualMinutes: resolveEffectiveCadenceMinutes(log),
+				actualMinutes,
 				completedIntervals: log.completedIntervals ?? null,
-				plannedMinutes:
-					log.plannedMinutesSnapshot ?? h?.defaultMinutesPerInterval ?? null,
+				plannedMinutes,
 				isArchived: h ? h.status === 'archived' : true,
 				specSnapshot
 			});

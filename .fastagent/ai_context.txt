@@ -164,6 +164,7 @@ PATH: package.json
   "name": "personal-os-nuxt",
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@10.6.5",
   "scripts": {
     "start": "node .output/server/index.mjs",
     "build": "nuxt build",
@@ -416,9 +417,11 @@ PATH: server/repositories/daily-tracker.repo.ts
 
 import { and, asc, eq } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '../database/index';
+import crypto from 'node:crypto';
 import {
 	cadencePlans,
 	dailyEntries,
+	habitLifecycleEvents,
 	habitLogs,
 	habits,
 	reflectionTags
@@ -667,6 +670,27 @@ export async function saveCadencePlansForDate(
 					})
 					.where(eq(habits.id, habit.id));
 
+				await tx.insert(habitLifecycleEvents).values({
+					id: crypto.randomUUID(),
+					habitId: habit.id,
+					habitTitleSnapshot: habit.title,
+					eventType: 'CADENCE_UPDATED',
+					effectiveDateIso: input.targetDateIso,
+					summary: `تنظیم برای روز بعد: در هر ${item.cadenceWindowMinutes} دقیقه، ${item.plannedMinutesPerInterval} دقیقه (${item.plannedIntervals} بازه)`,
+					reason: input.reason || 'تنظیم از شب قبل',
+					previousStateJson: JSON.stringify({
+						intervals: habit.defaultIntervals,
+						minutes: habit.defaultMinutesPerInterval,
+						window: habit.cadenceWindowMinutes
+					}),
+					newStateJson: JSON.stringify({
+						intervals: item.plannedIntervals,
+						minutes: item.plannedMinutesPerInterval,
+						window: item.cadenceWindowMinutes
+					}),
+					createdAtIso: nowIso
+				});
+
 				habitMap.set(habit.id, {
 					...habit,
 					defaultIntervals: item.plannedIntervals,
@@ -694,9 +718,10 @@ export async function saveCadencePlansForDate(
 PATH: server/repositories/backup.repo.ts
 ================================================================
 
-import { like } from 'drizzle-orm';
+import { getTableColumns, like, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { db, ensureDatabaseReady } from '../database/index';
+import type { DbExecutor } from './daily-tracker.repo';
 import {
 	books,
 	cadencePlans,
@@ -714,19 +739,36 @@ import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
+async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
+	await tx.delete(habitLogs);
+	await tx.delete(dailyEntries);
+	await tx.delete(cadencePlans);
+	await tx.delete(habitLifecycleEvents);
+	await tx.delete(reflectionTags);
+	await tx.delete(habits);
+	await tx.delete(books);
+	await tx.delete(mediaLogs);
+	await tx.delete(calendarEvents);
+	await tx.delete(notes);
+}
+
+function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
+	const cols = getTableColumns(table);
+	const excludeSet = new Set(excludeKeys);
+	const updateSet: Record<string, unknown> = {};
+
+	for (const [propKey, col] of Object.entries(cols)) {
+		if (!excludeSet.has(propKey)) {
+			updateSet[propKey] = sql.raw(`excluded."${col.name}"`);
+		}
+	}
+	return updateSet;
+}
+
 export async function clearAllDatabaseRecords(): Promise<void> {
 	await ensureDatabaseReady();
 	await db.transaction(async (tx) => {
-		await tx.delete(habitLogs);
-		await tx.delete(dailyEntries);
-		await tx.delete(cadencePlans);
-		await tx.delete(habitLifecycleEvents);
-		await tx.delete(reflectionTags);
-		await tx.delete(habits);
-		await tx.delete(books);
-		await tx.delete(mediaLogs);
-		await tx.delete(calendarEvents);
-		await tx.delete(notes);
+		await truncateAllWorkspaceTables(tx);
 	});
 
 	bumpServerStructuralVersion();
@@ -822,16 +864,7 @@ export async function importDatabaseFromJson(
 
 	await db.transaction(async (tx) => {
 		if (mode === 'replace') {
-			await tx.delete(habitLogs);
-			await tx.delete(dailyEntries);
-			await tx.delete(cadencePlans);
-			await tx.delete(habitLifecycleEvents);
-			await tx.delete(reflectionTags);
-			await tx.delete(habits);
-			await tx.delete(books);
-			await tx.delete(mediaLogs);
-			await tx.delete(calendarEvents);
-			await tx.delete(notes);
+			await truncateAllWorkspaceTables(tx);
 		}
 
 		const existingData = {
@@ -850,82 +883,57 @@ export async function importDatabaseFromJson(
 		const merged = computeSmartBackupMerge(existingData, data);
 		skippedDuplicatesCount = merged.skippedDuplicatesCount;
 
-		const upsertRows = async <T extends Record<string, unknown>>(
+		const batchUpsertRows = async <T extends Record<string, unknown>>(
 			table: PgTable,
-			targetCol: PgColumn,
-			rows: ReadonlyArray<T>
+			targetCols: PgColumn | PgColumn[],
+			rows: ReadonlyArray<T>,
+			excludeKeys: string[] = ['id']
 		) => {
-			for (const row of rows) {
-				await tx
-					.insert(table)
-					.values(row as Record<string, unknown>)
-					.onConflictDoUpdate({
-						target: targetCol,
-						set: row as Record<string, unknown>
-					});
-				totalImported++;
-			}
+			if (rows.length === 0) return;
+			await tx
+				.insert(table)
+				.values(rows as Record<string, unknown>[])
+				.onConflictDoUpdate({
+					target: targetCols,
+					set: buildConflictUpdateSet(table, excludeKeys)
+				});
+			totalImported += rows.length;
 		};
 
-		await upsertRows(habits, habits.id, merged.habitsToUpsert);
-
-		for (const e of merged.dailyEntriesToUpsert) {
-			const { id: _id, ...entryFields } = e;
-			await tx
-				.insert(dailyEntries)
-				.values(e)
-				.onConflictDoUpdate({
-					target: dailyEntries.dateIso,
-					set: entryFields
-				});
-			totalImported++;
-		}
-
-		for (const l of merged.habitLogsToUpsert) {
-			const { id: _id, ...logFields } = l;
-			await tx
-				.insert(habitLogs)
-				.values(l)
-				.onConflictDoUpdate({
-					target: [habitLogs.dateIso, habitLogs.habitId],
-					set: logFields
-				});
-			totalImported++;
-		}
-
-		for (const c of merged.cadencePlansToUpsert) {
-			const { id: _id, ...planFields } = c;
-			await tx
-				.insert(cadencePlans)
-				.values(c)
-				.onConflictDoUpdate({
-					target: [cadencePlans.dateIso, cadencePlans.habitId],
-					set: planFields
-				});
-			totalImported++;
-		}
-
-		await upsertRows(books, books.id, merged.booksToUpsert);
-		await upsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
-		await upsertRows(notes, notes.id, merged.notesToUpsert);
-		await upsertRows(calendarEvents, calendarEvents.id, merged.calendarEventsToUpsert);
-		await upsertRows(
+		await batchUpsertRows(habits, habits.id, merged.habitsToUpsert);
+		await batchUpsertRows(
+			dailyEntries,
+			dailyEntries.dateIso,
+			merged.dailyEntriesToUpsert,
+			['id', 'dateIso']
+		);
+		await batchUpsertRows(
+			habitLogs,
+			[habitLogs.dateIso, habitLogs.habitId],
+			merged.habitLogsToUpsert,
+			['id']
+		);
+		await batchUpsertRows(
+			cadencePlans,
+			[cadencePlans.dateIso, cadencePlans.habitId],
+			merged.cadencePlansToUpsert,
+			['id']
+		);
+		await batchUpsertRows(books, books.id, merged.booksToUpsert);
+		await batchUpsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
+		await batchUpsertRows(notes, notes.id, merged.notesToUpsert);
+		await batchUpsertRows(calendarEvents, calendarEvents.id, merged.calendarEventsToUpsert);
+		await batchUpsertRows(
 			habitLifecycleEvents,
 			habitLifecycleEvents.id,
 			merged.lifecycleEventsToUpsert
 		);
-
-		for (const tag of merged.reflectionTagsToUpsert) {
-			const { id: _id, ...tagFields } = tag;
-			await tx
-				.insert(reflectionTags)
-				.values(tag)
-				.onConflictDoUpdate({
-					target: reflectionTags.label,
-					set: tagFields
-				});
-			totalImported++;
-		}
+		await batchUpsertRows(
+			reflectionTags,
+			reflectionTags.label,
+			merged.reflectionTagsToUpsert,
+			['id', 'label']
+		);
 	});
 
 	bumpServerStructuralVersion();
@@ -1099,7 +1107,6 @@ export async function processClientSyncRequest(
 					`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`,
 					err
 				);
-				appliedMutationIds.push(mutation.id);
 			}
 		}
 	}
@@ -1905,11 +1912,19 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const MAX_TRACKED_IPS = 1000;
+
 function pruneExpiredLoginAttempts(now: number): void {
 	if (failedLoginAttemptsByIp.size < 100) return;
 	for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
 		if (now - entry.lastAttemptMs >= RESET_WINDOW_MS) {
 			failedLoginAttemptsByIp.delete(key);
+		}
+	}
+	if (failedLoginAttemptsByIp.size > MAX_TRACKED_IPS) {
+		const oldestKey = failedLoginAttemptsByIp.keys().next().value;
+		if (oldestKey) {
+			failedLoginAttemptsByIp.delete(oldestKey);
 		}
 	}
 }
@@ -2139,7 +2154,7 @@ export default defineConfig({
 PATH: .github/workflows/ci.yml
 ================================================================
 
-name: CI & Docker Verification
+name: CI/CD & Production Deployment
 
 on:
   push:
@@ -2151,10 +2166,16 @@ on:
       - main
       - master
 
+env:
+  CONTAINER_NAME: new-life-app
+
 jobs:
-  verify-and-build:
-    name: Typecheck, Build & Docker Image Test
+  verify-and-deploy:
+    name: Typecheck, Build, Push to GHCR & Deploy to VPS
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -2183,15 +2204,87 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
+      - name: Log in to GitHub Container Registry (GHCR)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize image name to lowercase
+        id: meta
+        run: |
+          echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]'):latest" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: false
-          load: true
-          tags: personal-os-nuxt:ci
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+          tags: ${{ steps.meta.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Deploy container to VPS (auto-create DB in my_postgres & replace new-life-app)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG
+          script: |
+            set -e
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            PG_CONTAINER="my_postgres"
+            DB_NAME="personal_os"
+
+            PG_USER=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$PG_CONTAINER" | grep '^POSTGRES_USER=' | cut -d'=' -f2- || true)
+            PG_USER="${PG_USER:-postgres}"
+
+            PG_PASS=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$PG_CONTAINER" | grep '^POSTGRES_PASSWORD=' | cut -d'=' -f2- || true)
+            PG_PASS="${PG_PASS:-postgres}"
+
+            docker exec -e PGPASSWORD="$PG_PASS" "$PG_CONTAINER" psql -U "$PG_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
+              docker exec -e PGPASSWORD="$PG_PASS" "$PG_CONTAINER" psql -U "$PG_USER" -d postgres -c "CREATE DATABASE $DB_NAME;"
+
+            PG_NET=$(docker inspect --format '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$PG_CONTAINER" | head -n 1 | tr -d '[:space:]')
+
+            if [ -n "$PG_NET" ] && [ "$PG_NET" != "bridge" ]; then
+              NETWORK_ARG="--network $PG_NET"
+              DB_HOST="$PG_CONTAINER"
+            else
+              NETWORK_ARG="--link $PG_CONTAINER:postgres_host"
+              DB_HOST="postgres_host"
+            fi
+
+            FINAL_DB_URL="postgresql://${PG_USER}:${PG_PASS}@${DB_HOST}:5432/${DB_NAME}"
+
+            docker pull "$IMAGE_TAG"
+            docker stop new-life-app || true
+            docker rm new-life-app || true
+
+            docker run -d \
+              --name new-life-app \
+              --restart unless-stopped \
+              $NETWORK_ARG \
+              -p 127.0.0.1:3090:3000 \
+              -e NODE_ENV=production \
+              -e NITRO_HOST=0.0.0.0 \
+              -e NITRO_PORT=3000 \
+              -e TZ=Asia/Tehran \
+              -e DATABASE_URL="$FINAL_DB_URL" \
+              "$IMAGE_TAG"
+
+            docker image prune -f
 
 
 ----------------------------------------------------------------
@@ -2316,7 +2409,9 @@ PATH: app/app.vue
 ================================================================
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, onUnmounted } from 'vue';
+
+let handleVisibilityChange: (() => void) | null = null;
 
 onMounted(() => {
 	if (!import.meta.client || !('serviceWorker' in navigator)) return;
@@ -2335,11 +2430,20 @@ onMounted(() => {
 
 	void checkForSwUpdate();
 
-	document.addEventListener('visibilitychange', () => {
+	handleVisibilityChange = () => {
 		if (document.visibilityState === 'visible') {
 			void checkForSwUpdate();
 		}
-	});
+	};
+
+	document.addEventListener('visibilitychange', handleVisibilityChange);
+});
+
+onUnmounted(() => {
+	if (handleVisibilityChange) {
+		document.removeEventListener('visibilitychange', handleVisibilityChange);
+		handleVisibilityChange = null;
+	}
 });
 </script>
 
@@ -2505,7 +2609,7 @@ export function getApplicableHabitsForDate(
 ): HabitEntity[] {
 	const loggedSet = options?.loggedHabitIds ?? new Set<string>();
 	const dateIso = options?.dateIso;
-	const hasExistingEntry = Boolean(options?.hasExistingEntry);
+	const habitById = new Map(habits.map((h) => [h.id, h]));
 
 	const parentIdsWithLoggedChildren = new Set<string>();
 	for (const h of habits) {
@@ -2521,7 +2625,13 @@ export function getApplicableHabitsForDate(
 		if (h.status === 'archived') {
 			return false;
 		}
-		if (hasExistingEntry && dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
+		if (h.parentId) {
+			const parent = habitById.get(h.parentId);
+			if (!parent || parent.status === 'archived') {
+				return false;
+			}
+		}
+		if (dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
 			return false;
 		}
 		return true;
@@ -2540,15 +2650,10 @@ export function buildHabitTree(
 	cadenceHabits: HabitEntity[];
 } {
 	const applicableHabits = getApplicableHabitsForDate(habits, options);
-	const childrenByParent = new Map<string, HabitEntity[]>();
-
-	for (const h of applicableHabits) {
-		if (h.parentId) {
-			const list = childrenByParent.get(h.parentId) ?? [];
-			list.push(h);
-			childrenByParent.set(h.parentId, list);
-		}
-	}
+	const childrenByParent = Map.groupBy(
+		applicableHabits.filter((h) => Boolean(h.parentId)),
+		(h) => h.parentId!
+	);
 
 	const tieredRoots: HabitTreeNode[] = [];
 	const cadenceHabits: HabitEntity[] = [];
@@ -2642,24 +2747,27 @@ export function computeDailyCompletionStats(params: {
 	isDirty: boolean;
 }): {
 	completed: number;
-	goldCount: number;
 	total: number;
 	percent: number;
 } {
 	const { applicableHabits, loggedHabitIds, logsByHabitId, hasExistingEntry, isDirty } =
 		params;
 
+	const habitById = new Map(applicableHabits.map((h) => [h.id, h]));
 	const trackable = applicableHabits.filter((h) => {
 		if (h.status === 'paused' && !loggedHabitIds.has(h.id)) return false;
+		if (h.parentId) {
+			const parent = habitById.get(h.parentId);
+			if (parent?.status === 'paused' && !loggedHabitIds.has(h.id)) return false;
+		}
 		const hasChildren = applicableHabits.some((c) => c.parentId === h.id);
 		return !hasChildren;
 	});
 
 	const total = trackable.length;
-	if (total === 0) return { completed: 0, goldCount: 0, total: 0, percent: 100 };
+	if (total === 0) return { completed: 0, total: 0, percent: 100 };
 
 	let completed = 0;
-	let goldCount = 0;
 
 	for (const h of trackable) {
 		const log = logsByHabitId[h.id];
@@ -2667,26 +2775,19 @@ export function computeDailyCompletionStats(params: {
 
 		if (h.trackingMode === 'tiered') {
 			const tier = log.achievedTier;
-			if (tier === TIER_SCORES.SKIPPED) {
+			if (tier === TIER_SCORES.SKIPPED || (tier !== null && tier !== undefined && tier > 0)) {
 				completed++;
-			} else if (tier !== null && tier !== undefined && tier > 0) {
-				completed++;
-				const maxTier = getMaxSupportedTier(h);
-				if (tier === maxTier) goldCount++;
 			}
 		} else {
 			const actual = resolveEffectiveCadenceMinutes(log);
-			const planned = log.plannedMinutesSnapshot ?? 0;
 			if (actual > 0 && (hasExistingEntry || isDirty)) {
 				completed++;
-				if (planned <= 0 || actual >= planned) goldCount++;
 			}
 		}
 	}
 
 	return {
 		completed,
-		goldCount,
 		total,
 		percent: Math.round((completed / total) * 100)
 	};
@@ -2709,9 +2810,14 @@ export function evaluateDayStatusColor(
 			)
 			.map((l) => l.habitId)
 	);
+	const habitById = new Map(habits.map((h) => [h.id, h]));
 	const trackable = habits.filter((h) => {
 		const isLogged = loggedIds.has(h.id);
 		if (h.status !== 'active' && !isLogged) return false;
+		if (h.parentId) {
+			const parent = habitById.get(h.parentId);
+			if ((!parent || parent.status !== 'active') && !isLogged) return false;
+		}
 		const hasChildren = habits.some(
 			(child) =>
 				child.parentId === h.id &&
@@ -2904,6 +3010,10 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		silverDesc: input.silverDesc?.trim() || null,
 		goldDesc: input.goldDesc?.trim() || null,
 		emergencyMinDesc: input.emergencyMinDesc?.trim() || null,
+		defaultMinutesPerInterval:
+			input.defaultMinutesPerInterval !== undefined
+				? input.defaultMinutesPerInterval
+				: current.defaultMinutesPerInterval,
 		updatedAtIso: nowIso
 	};
 
@@ -3372,7 +3482,7 @@ PATH: app/core/note-signals.ts
 import { normalizeDigits } from '~/domain/calendar';
 
 const LINK_PATTERN =
-	/https?:\/\/[^\s]+|www\.[^\s]+|\b[a-zA-Z0-9-]+\.(com|ir|org|net|io|dev|app|me|co|ai|gg|xyz)(\/[^\s]*)?/i;
+	/https?:\/\/[^\s"'<>،؛)]+|www\.[^\s"'<>،؛)]+|\b[a-zA-Z0-9-]+\.(com|ir|org|net|io|dev|app|me|co|ai|gg|xyz)(\/[^\s"'<>،؛)]*)?/i;
 const TEN_DIGIT_NUMBER_PATTERN = /\d{10,}/;
 
 export function detectNoteSmartSignals(text: string): {
@@ -3382,12 +3492,24 @@ export function detectNoteSmartSignals(text: string): {
 } {
 	const normalized = normalizeDigits(text);
 	const linkMatch = normalized.match(LINK_PATTERN);
-	const rawLink = linkMatch ? linkMatch[0] : null;
-	const firstUrl = rawLink
+	const rawLink = linkMatch ? linkMatch[0].replace(/[.,،؛!؟)+]+$/, '') : null;
+	const candidateUrl = rawLink
 		? /^https?:\/\//i.test(rawLink)
 			? rawLink
 			: `https://${rawLink}`
 		: null;
+
+	let firstUrl: string | null = null;
+	if (candidateUrl) {
+		try {
+			const parsed = new URL(candidateUrl);
+			if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+				firstUrl = parsed.href;
+			}
+		} catch {
+			firstUrl = null;
+		}
+	}
 
 	return {
 		hasLink: Boolean(firstUrl),
@@ -3899,14 +4021,10 @@ export function buildFullAnalyticsReport(params: {
 	} = params;
 
 	const habitById = new Map(habits.map((h) => [h.id, h]));
-	const childrenByParentId = new Map<string, HabitEntity[]>();
-	for (const h of habits) {
-		if (h.parentId) {
-			const list = childrenByParentId.get(h.parentId) ?? [];
-			list.push(h);
-			childrenByParentId.set(h.parentId, list);
-		}
-	}
+	const childrenByParentId = Map.groupBy(
+		habits.filter((h) => Boolean(h.parentId)),
+		(h) => h.parentId!
+	);
 
 	const entryByDate = new Map(entries.map((e) => [e.dateIso, e]));
 	const logsByDate = new Map<string, Map<string, AnalyticsRawLog>>();
@@ -3952,26 +4070,6 @@ export function buildFullAnalyticsReport(params: {
 		(selectedHabitId ? habitById.get(selectedHabitId) : null) ??
 		selectableHabits[0]?.habit ??
 		null;
-
-	let optimalDaysCount = 0;
-	let partialDaysCount = 0;
-	let failedDaysCount = 0;
-	for (const dIso of dateList) {
-		const entry = entryByDate.get(dIso);
-		if (!entry) continue;
-		if (entry.dayStatus === 'optimal') optimalDaysCount++;
-		else if (entry.dayStatus === 'partial') partialDaysCount++;
-		else if (entry.dayStatus === 'failed') failedDaysCount++;
-	}
-	const totalLoggedDays = optimalDaysCount + partialDaysCount + failedDaysCount;
-	const overallConsistencyRate =
-		totalLoggedDays > 0
-			? Math.round(((optimalDaysCount + partialDaysCount) / totalLoggedDays) * 100)
-			: 0;
-
-	const eventsInWindow = lifecycleEvents.filter(
-		(e) => e.effectiveDateIso >= startIso && e.effectiveDateIso <= endIso
-	);
 
 	const comparisonRows: HabitComparisonRow[] = selectableHabits.map((item) => {
 		const h = item.habit;
@@ -4056,12 +4154,7 @@ export function buildFullAnalyticsReport(params: {
 			todayIso
 		);
 
-		const eventsByDate = new Map<string, HabitEvolutionItem[]>();
-		for (const ev of evolutionTimeline) {
-			const list = eventsByDate.get(ev.effectiveDateIso) ?? [];
-			list.push(ev);
-			eventsByDate.set(ev.effectiveDateIso, list);
-		}
+		const eventsByDate = Map.groupBy(evolutionTimeline, (ev) => ev.effectiveDateIso);
 
 		const dailySeries: HabitDailyPoint[] = [];
 		const recentValidScores: number[] = [];
@@ -4265,14 +4358,6 @@ export function buildFullAnalyticsReport(params: {
 		endDateIso: endIso,
 		totalDaysInWindow: dateList.length,
 		selectableHabits,
-		macroStats: {
-			totalLoggedDays,
-			optimalDaysCount,
-			partialDaysCount,
-			failedDaysCount,
-			overallConsistencyRate,
-			totalLifecycleChanges: eventsInWindow.length
-		},
 		selectedHabitReport,
 		comparisonRows
 	};
@@ -4398,7 +4483,6 @@ export function assembleJalaliMonthArchive(params: {
 	eventsInMonth: CalendarEventEntity[];
 	booksInMonth: BookEntity[];
 	mediaInMonth: MediaEntity[];
-	upcomingEvents: UpcomingEventBannerItem[];
 }) {
 	const {
 		jy,
@@ -4410,41 +4494,28 @@ export function assembleJalaliMonthArchive(params: {
 		logsInMonth,
 		eventsInMonth,
 		booksInMonth,
-		mediaInMonth,
-		upcomingEvents
+		mediaInMonth
 	} = params;
 
 	const grid = buildJalaliMonthGrid(jy, jm, todayIso);
 	const startIso = grid.days[0]?.iso ?? todayIso;
 
 	const habitMap = new Map(allHabits.map((h) => [h.id, h]));
-	const parentHabitIds = new Set<string>();
-	for (const h of allHabits) {
-		if (h.parentId) parentHabitIds.add(h.parentId);
-	}
+	const parentHabitIds = new Set(
+		allHabits.filter((h) => Boolean(h.parentId)).map((h) => h.parentId!)
+	);
 
 	const entryByIso = new Map(entriesInMonth.map((e) => [e.dateIso, e]));
-	const logsByIso = new Map<string, AnalyticsRawLog[]>();
-	for (const log of logsInMonth) {
-		const list = logsByIso.get(log.dateIso) ?? [];
-		list.push(log);
-		logsByIso.set(log.dateIso, list);
-	}
+	const logsByIso = Map.groupBy(logsInMonth, (log) => log.dateIso);
 
-	const annualEventsByJalaliKey = new Map<string, CalendarEventEntity[]>();
-	const datedEventsByIso = new Map<string, CalendarEventEntity[]>();
-	for (const ev of eventsInMonth) {
-		if (ev.isAnnual) {
-			const key = `${ev.jalaliMonth}-${ev.jalaliDay}`;
-			const list = annualEventsByJalaliKey.get(key) ?? [];
-			list.push(ev);
-			annualEventsByJalaliKey.set(key, list);
-		} else if (ev.dateIso) {
-			const list = datedEventsByIso.get(ev.dateIso) ?? [];
-			list.push(ev);
-			datedEventsByIso.set(ev.dateIso, list);
-		}
-	}
+	const annualEventsByJalaliKey = Map.groupBy(
+		eventsInMonth.filter((ev) => ev.isAnnual),
+		(ev) => `${ev.jalaliMonth}-${ev.jalaliDay}`
+	);
+	const datedEventsByIso = Map.groupBy(
+		eventsInMonth.filter((ev) => !ev.isAnnual && Boolean(ev.dateIso)),
+		(ev) => ev.dateIso!
+	);
 
 	const booksActivityByIso = new Map<string, CalendarDayAggregate['booksActivity']>();
 	for (const b of booksInMonth) {
@@ -4555,30 +4626,13 @@ export function assembleJalaliMonthArchive(params: {
 				? todayIso
 				: (jalaliPartsToIso({ jy, jm, jd: 1 }) ?? startIso);
 
-	const monthStats = {
-		optimalDays: daysAggregate.filter((d) => d.entry?.dayStatus === 'optimal').length,
-		partialDays: daysAggregate.filter((d) => d.entry?.dayStatus === 'partial').length,
-		failedDays: daysAggregate.filter((d) => d.entry?.dayStatus === 'failed').length,
-		totalEvents: eventsInMonth.length,
-		finishedBooksCount: daysAggregate.reduce(
-			(acc, d) => acc + d.booksActivity.filter((b) => b.activityKind === 'finished').length,
-			0
-		),
-		finishedMediaCount: daysAggregate.reduce(
-			(acc, d) => acc + d.mediaActivity.filter((m) => m.activityKind === 'finished').length,
-			0
-		)
-	};
-
 	return {
 		year: grid.year,
 		month: grid.month,
 		monthName: grid.monthName,
 		leadingEmptyCells: grid.leadingEmptyCells,
 		selectedIso: defaultSelectedIso,
-		days: daysAggregate,
-		monthStats,
-		upcomingEvents
+		days: daysAggregate
 	};
 }
 
@@ -4684,6 +4738,75 @@ export function buildRollingAreaPath(
 	if (!first || !last) return '';
 	const lineSegments = coords.map((c) => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
 	return `M ${first.x.toFixed(1)} ${baselineY} ${lineSegments} L ${last.x.toFixed(1)} ${baselineY} Z`;
+}
+
+export interface RenderedChartBar {
+	pt: HabitDailyPoint;
+	idx: number;
+	cx: number;
+	hasVisibleBar: boolean;
+	barX: number;
+	barY: number;
+	barHeight: number;
+	barRx: number;
+	showAxisLabel: boolean;
+}
+
+export function buildRenderedChartBars(
+	series: ReadonlyArray<HabitDailyPoint>,
+	isCadence: boolean,
+	maxCadenceMinutes: number,
+	barWidth: number
+): RenderedChartBar[] {
+	const { PAD_TOP, PLOT_H } = CHART_DIMENSIONS;
+	const total = series.length;
+
+	return series.map((pt, idx) => {
+		const cx = getChartX(idx, total);
+		const hasVisibleBar =
+			(isCadence && pt.actualMinutes !== null && pt.actualMinutes > 0) ||
+			(!isCadence && pt.score !== null && pt.score > 0) ||
+			pt.outcome === 'failed' ||
+			pt.outcome === 'skipped';
+
+		const barY = isCadence
+			? pt.actualMinutes !== null && pt.actualMinutes > 0
+				? getChartYFromMinutes(pt.actualMinutes, maxCadenceMinutes)
+				: PAD_TOP + PLOT_H - 6
+			: pt.score !== null && pt.score > 0
+				? getChartYFromScore(pt.score)
+				: pt.outcome === 'failed'
+					? PAD_TOP + PLOT_H - 7
+					: PAD_TOP + PLOT_H - 12;
+
+		const barHeight = Math.max(0, PAD_TOP + PLOT_H - barY);
+		const showAxisLabel =
+			idx === 0 ||
+			idx === total - 1 ||
+			idx === Math.floor(total / 2) ||
+			(total <= 14 && idx % 2 === 0);
+
+		return {
+			pt,
+			idx,
+			cx,
+			hasVisibleBar,
+			barX: cx - barWidth / 2,
+			barY,
+			barHeight,
+			barRx: Math.min(5, barWidth / 2),
+			showAxisLabel
+		};
+	});
+}
+
+export function getChartBarColorVar(outcome: HabitDailyPoint['outcome']): string {
+	if (outcome === 'gold') return 'var(--tier-gold)';
+	if (outcome === 'silver') return 'var(--tier-silver)';
+	if (outcome === 'bronze') return 'var(--tier-bronze)';
+	if (outcome === 'failed') return 'var(--state-failed)';
+	if (outcome === 'skipped') return 'var(--text-muted)';
+	return 'var(--border-hairline)';
 }
 
 
@@ -5244,6 +5367,29 @@ export function useLocalRepository() {
 						queuedAtIso: nowIso,
 						payload: lifecycleEvent
 					});
+
+					if (current.status !== updatedHabit.status && !updatedHabit.parentId) {
+						const children = await db.habits
+							.where('parentId')
+							.equals(updatedHabit.id)
+							.toArray();
+						for (const child of children) {
+							if (child.status !== updatedHabit.status && child.status !== 'archived') {
+								const cascadedChild: HabitEntity = {
+									...child,
+									status: updatedHabit.status,
+									updatedAtIso: nowIso
+								};
+								await db.habits.put(cascadedChild);
+								await db.syncOutbox.put({
+									id: `habit:${cascadedChild.id}`,
+									kind: 'UPSERT_HABIT',
+									queuedAtIso: nowIso,
+									payload: cascadedChild
+								});
+							}
+						}
+					}
 				}
 			);
 		}
@@ -7017,15 +7163,10 @@ export function useTheme() {
 		}
 	}
 
-	function toggle() {
-		setTheme(!isDark.value);
-	}
-
 	return {
 		isDark,
 		init,
-		setTheme,
-		toggle
+		setTheme
 	};
 }
 
@@ -7653,10 +7794,11 @@ PATH: app/components/analytics/HabitTrendChart.vue
 import { ref, computed } from 'vue';
 import {
 	CHART_DIMENSIONS,
+	buildRenderedChartBars,
 	buildRollingAreaPath,
 	buildRollingPolylinePoints,
 	computeMaxCadenceMinutes,
-	getChartX as getX,
+	getChartBarColorVar,
 	getChartYFromMinutes,
 	getChartYFromScore as getYFromScore
 } from '~/core/chart-math';
@@ -7723,58 +7865,14 @@ const barWidth = computed(() => {
 
 const hitAreaWidth = computed(() => Math.max(barWidth.value, 12));
 
-const renderedBars = computed(() => {
-	const series = props.report.dailySeries;
-	const total = series.length;
-	const bw = barWidth.value;
-
-	return series.map((pt, idx) => {
-		const cx = getX(idx, total);
-		const hasVisibleBar =
-			(isCadence.value && pt.actualMinutes !== null && pt.actualMinutes > 0) ||
-			(!isCadence.value && pt.score !== null && pt.score > 0) ||
-			pt.outcome === 'failed' ||
-			pt.outcome === 'skipped';
-
-		const barY = isCadence.value
-			? pt.actualMinutes !== null && pt.actualMinutes > 0
-				? getYFromMins(pt.actualMinutes)
-				: PAD_TOP + PLOT_H - 6
-			: pt.score !== null && pt.score > 0
-				? getYFromScore(pt.score)
-				: pt.outcome === 'failed'
-					? PAD_TOP + PLOT_H - 7
-					: PAD_TOP + PLOT_H - 12;
-
-		const barHeight = Math.max(0, PAD_TOP + PLOT_H - barY);
-		const showAxisLabel =
-			idx === 0 ||
-			idx === total - 1 ||
-			idx === Math.floor(total / 2) ||
-			(total <= 14 && idx % 2 === 0);
-
-		return {
-			pt,
-			idx,
-			cx,
-			hasVisibleBar,
-			barX: cx - bw / 2,
-			barY,
-			barHeight,
-			barRx: Math.min(5, bw / 2),
-			showAxisLabel
-		};
-	});
-});
-
-function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
-	if (outcome === 'gold') return 'var(--tier-gold)';
-	if (outcome === 'silver') return 'var(--tier-silver)';
-	if (outcome === 'bronze') return 'var(--tier-bronze)';
-	if (outcome === 'failed') return 'var(--state-failed)';
-	if (outcome === 'skipped') return 'var(--text-muted)';
-	return 'var(--border-hairline)';
-}
+const renderedBars = computed(() =>
+	buildRenderedChartBars(
+		props.report.dailySeries,
+		isCadence.value,
+		maxCadenceMinutes.value,
+		barWidth.value
+	)
+);
 </script>
 
 <template>
@@ -7922,7 +8020,7 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 						:width="barWidth"
 						:height="item.barHeight"
 						:rx="item.barRx"
-						:fill="getBarColorVar(item.pt.outcome)"
+						:fill="getChartBarColorVar(item.pt.outcome)"
 						:opacity="activePointIndex === item.idx ? '1' : '0.82'"
 					/>
 
@@ -8141,23 +8239,6 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 					<span class="w-12 shrink-0 text-left font-mono font-extrabold text-fg">
 						{{ w.loggedDays > 0 ? `%${toPersianDigits(w.avgScore)}` : '—' }}
 					</span>
-				</div>
-			</div>
-
-			<div v-if="report.bestWeekday || report.weakestWeekday" class="grid grid-cols-2 gap-2.5 border-t border-border pt-3.5 text-xs">
-				<div v-if="report.bestWeekday" class="flex items-center justify-between rounded-2xl border border-optimal-border bg-optimal-soft p-3">
-					<div>
-						<div class="text-[11px] font-bold text-optimal">بهترین روز</div>
-						<div class="mt-0.5 font-black text-fg">{{ report.bestWeekday.weekdayLabel }}</div>
-					</div>
-					<span class="font-mono text-sm font-black text-optimal">%{{ toPersianDigits(report.bestWeekday.avgScore) }}</span>
-				</div>
-				<div v-if="report.weakestWeekday && report.weakestWeekday.weekdayIndex !== report.bestWeekday?.weekdayIndex" class="flex items-center justify-between rounded-2xl border border-failed-border bg-failed-soft p-3">
-					<div>
-						<div class="text-[11px] font-bold text-failed">ضعیف‌ترین روز</div>
-						<div class="mt-0.5 font-black text-fg">{{ report.weakestWeekday.weekdayLabel }}</div>
-					</div>
-					<span class="font-mono text-sm font-black text-failed">%{{ toPersianDigits(report.weakestWeekday.avgScore) }}</span>
 				</div>
 			</div>
 
@@ -8814,6 +8895,7 @@ const bronzeDesc = ref(props.editingHabit?.bronzeDesc ?? '');
 const silverDesc = ref(props.editingHabit?.silverDesc ?? '');
 const goldDesc = ref(props.editingHabit?.goldDesc ?? '');
 const emergencyMinDesc = ref(props.editingHabit?.emergencyMinDesc ?? '');
+const defaultMinutesPerInterval = ref<number>(props.editingHabit?.defaultMinutesPerInterval ?? 10);
 const notes = ref(props.editingHabit?.notes ?? '');
 const reason = ref('');
 
@@ -8880,6 +8962,10 @@ function handleSubmit() {
 			silverDesc: silverDesc.value.trim() || null,
 			goldDesc: goldDesc.value.trim() || null,
 			emergencyMinDesc: emergencyMinDesc.value.trim() || null,
+			defaultMinutesPerInterval:
+				structureKind.value === 'interval_cadence'
+					? Math.max(1, Number(defaultMinutesPerInterval.value) || 10)
+					: undefined,
 			reason: reason.value.trim() || 'ویرایش قوانین طرح'
 		});
 	} else {
@@ -8897,7 +8983,10 @@ function handleSubmit() {
 			goldDesc: goldDesc.value.trim() || undefined,
 			emergencyMinDesc: emergencyMinDesc.value.trim() || undefined,
 			defaultIntervals: 1,
-			defaultMinutesPerInterval: 10,
+			defaultMinutesPerInterval:
+				structureKind.value === 'interval_cadence'
+					? Math.max(1, Number(defaultMinutesPerInterval.value) || 10)
+					: 10,
 			cadenceWindowMinutes: 60,
 			reason: reason.value.trim() || undefined
 		});
@@ -9019,15 +9108,28 @@ function handleSubmit() {
 				</label>
 			</div>
 
-			<!-- تنظیمات حداقل اضطراری طرح ریتمی -->
-			<div v-else-if="structureKind === 'interval_cadence'" class="rounded-2xl border border-border bg-elevated p-4">
-				<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>
-				<input
-					id="h-emerg"
-					v-model="emergencyMinDesc"
-					placeholder="مثلاً: ۱۰ دقیقه برای روزهای شلوغ"
-					class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-sm font-semibold text-fg"
-				/>
+			<!-- تنظیمات هدف روزانه و حداقل اضطراری طرح ریتمی -->
+			<div v-else-if="structureKind === 'interval_cadence'" class="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-elevated p-4 sm:grid-cols-2">
+				<div>
+					<label for="h-default-mins" class="mb-1.5 block text-xs font-bold text-accent-text">هدف پیش‌فرض روزانه (دقیقه)</label>
+					<input
+						id="h-default-mins"
+						v-model.number="defaultMinutesPerInterval"
+						type="number"
+						min="1"
+						required
+						class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 font-mono text-sm font-black text-fg"
+					/>
+				</div>
+				<div>
+					<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>
+					<input
+						id="h-emerg"
+						v-model="emergencyMinDesc"
+						placeholder="مثلاً: ۲ دقیقه برای روزهای شلوغ"
+						class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-sm font-semibold text-fg"
+					/>
+				</div>
 			</div>
 
 			<div>
@@ -9162,7 +9264,6 @@ PATH: app/components/architect/ArchitectHabitCard.vue
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { HabitEntity } from '~/domain/schemas';
-import { toPersianDigits } from '~/domain/calendar';
 import ArchitectSubHabitGrid from './ArchitectSubHabitGrid.vue';
 import { BarChart3, Clock, Pencil, Plus } from 'lucide-vue-next';
 
@@ -9188,69 +9289,54 @@ const isComposite = computed(() => props.children && props.children.length > 0);
 		:class="{ 'md:col-span-2': isComposite }"
 	>
 		<div>
-			<div class="flex flex-col gap-3">
-				<div class="flex flex-wrap items-center justify-between gap-2">
-					<div class="flex flex-wrap items-center gap-1.5">
+			<div class="flex flex-wrap items-start justify-between gap-3">
+				<div class="min-w-0 space-y-1">
+					<div class="flex flex-wrap items-center gap-2">
+						<h2 class="text-base font-black leading-snug text-fg sm:text-lg">{{ habit.title }}</h2>
 						<span
 							v-if="habit.trackingMode === 'interval_cadence'"
-							class="rounded-xl border border-accent-border bg-accent-soft px-2.5 py-1 text-xs font-extrabold text-accent-text"
+							class="rounded-lg border border-accent-border bg-accent-soft px-2 py-0.5 text-[11px] font-extrabold text-accent-text"
 						>
-							تکرارشونده
-						</span>
-						<span
-							v-else-if="isComposite"
-							class="rounded-xl border border-gold-border bg-gold-soft px-2.5 py-1 text-xs font-extrabold text-gold-text"
-						>
-							مجموعه‌طرح ({{ toPersianDigits(children.length) }} زیرطرح)
-						</span>
-						<span
-							v-if="habit.isSituational"
-							class="rounded-xl border border-border bg-elevated px-2.5 py-1 text-xs font-bold text-fg-secondary"
-						>
-							رویدادی
+							ریتمی
 						</span>
 					</div>
-
-					<div class="mr-auto flex items-center gap-1.5 sm:gap-2">
-						<button
-							type="button"
-							class="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-3 text-xs font-extrabold text-accent-text transition hover:opacity-90"
-							title="مشاهده نمودار روند و آمار این طرح"
-							@click="emit('openStats', habit.id)"
-						>
-							<BarChart3 class="h-3.5 w-3.5 shrink-0" />
-							<span>آمار</span>
-						</button>
-
-						<button
-							v-if="habit.trackingMode === 'tiered'"
-							type="button"
-							class="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3 text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg"
-							title="افزودن زیرطرح به این طرح"
-							@click="emit('createSubHabit', habit.id)"
-						>
-							<Plus class="h-3.5 w-3.5 shrink-0" />
-							<span>زیرطرح</span>
-						</button>
-
-						<button
-							type="button"
-							class="flex h-9 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3.5 text-xs font-bold text-fg transition hover:border-border-strong hover:bg-muted"
-							@click="emit('editHabit', habit)"
-						>
-							<Pencil class="h-3.5 w-3.5 shrink-0" />
-							<span>ویرایش</span>
-						</button>
-					</div>
-				</div>
-
-				<div class="min-w-0 space-y-1">
-					<h2 class="text-base font-black leading-snug text-fg sm:text-lg">{{ habit.title }}</h2>
 
 					<div v-if="habit.scheduleLabel" class="flex items-center gap-1.5 text-xs font-semibold text-fg-secondary">
 						<Clock class="h-3.5 w-3.5 shrink-0 text-fg-muted" />
 						<span>{{ habit.scheduleLabel }}</span>
 					</div>
+				</div>
+
+				<div class="mr-auto flex shrink-0 items-center gap-1.5">
+					<button
+						type="button"
+						class="flex h-8.5 items-center justify-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-2.5 text-xs font-extrabold text-accent-text transition hover:opacity-90"
+						title="مشاهده نمودار روند و آمار این طرح"
+						@click="emit('openStats', habit.id)"
+					>
+						<BarChart3 class="h-3.5 w-3.5 shrink-0" />
+						<span>آمار</span>
+					</button>
+
+					<button
+						v-if="habit.trackingMode === 'tiered'"
+						type="button"
+						class="flex h-8.5 items-center justify-center gap-1 rounded-xl border border-border bg-elevated px-2.5 text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg"
+						title="افزودن زیرطرح به این طرح"
+						@click="emit('createSubHabit', habit.id)"
+					>
+						<Plus class="h-3.5 w-3.5 shrink-0" />
+						<span>زیرطرح</span>
+					</button>
+
+					<button
+						type="button"
+						class="flex h-8.5 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3 text-xs font-bold text-fg transition hover:border-border-strong hover:bg-muted"
+						@click="emit('editHabit', habit)"
+					>
+						<Pencil class="h-3.5 w-3.5 shrink-0" />
+						<span>ویرایش</span>
+					</button>
 				</div>
 			</div>
 
@@ -9840,7 +9926,7 @@ PATH: app/components/tracker/UpcomingEventsBanner.vue
 import { computed } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import type { CalendarEventEntity, UpcomingEventBannerItem } from '~/domain/schemas';
-import { BellRing, CalendarDays, Check, Clock } from 'lucide-vue-next';
+import { BellRing, CalendarDays, Check } from 'lucide-vue-next';
 
 interface Props {
 	upcomingItems?: UpcomingEventBannerItem[];
@@ -9876,53 +9962,48 @@ function getRelativeText(days: number): string {
 		v-if="hasAnythingToShow"
 		class="rounded-3xl border border-accent-border bg-surface p-3.5 shadow-(--shadow-card) sm:px-5 sm:py-4"
 	>
-		<div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-			<div class="flex flex-wrap items-center gap-2">
-				<div
-					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-accent-border bg-accent-soft text-accent-text"
-				>
-					<BellRing class="h-4 w-4" />
-				</div>
+		<div class="flex flex-wrap items-center gap-2">
+			<div
+				class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-accent-border bg-accent-soft text-accent-text"
+			>
+				<BellRing class="h-4 w-4" />
+			</div>
 
-				<div
-					v-for="dayEv in selectedDayEvents"
-					:key="dayEv.id"
-					class="flex items-center gap-2 rounded-2xl border border-accent-border bg-accent-soft px-3 py-1.5 text-xs font-extrabold text-accent-text"
+			<div
+				v-for="dayEv in selectedDayEvents"
+				:key="dayEv.id"
+				class="flex items-center gap-2 rounded-2xl border border-accent-border bg-accent-soft px-3 py-1.5 text-xs font-extrabold text-accent-text"
+			>
+				<button
+					type="button"
+					class="flex items-center gap-1.5 text-right transition hover:opacity-80"
+					@click="emit('openCalendarDate', currentDateIso)"
 				>
 					<CalendarDays class="h-3.5 w-3.5 shrink-0" />
 					<span>در این روز: {{ dayEv.title }}</span>
-					<button
-						v-if="!dayEv.isAnnual"
-						type="button"
-						class="flex h-5 w-5 items-center justify-center rounded-md border border-current transition active:scale-95"
-						:class="dayEv.isCompleted ? 'bg-optimal text-on-solid' : 'bg-surface'"
-						:title="dayEv.isCompleted ? 'انجام شد' : 'علامت به عنوان انجام‌شده'"
-						@click="emit('toggleComplete', dayEv.id, !dayEv.isCompleted)"
-					>
-						<Check v-if="dayEv.isCompleted" class="h-3 w-3" />
-					</button>
-				</div>
-
+				</button>
 				<button
-					v-for="item in upcomingItems.filter((u) => !selectedDayEvents.some((s) => s.id === u.id))"
-					:key="item.id + item.occurrenceDateIso"
+					v-if="!dayEv.isAnnual"
 					type="button"
-					class="flex items-center gap-2 rounded-2xl border border-border bg-elevated px-3 py-1.5 text-xs font-bold text-fg transition hover:border-border-strong"
-					@click="emit('openCalendarDate', item.occurrenceDateIso)"
+					class="flex h-5 w-5 items-center justify-center rounded-md border border-current transition active:scale-95"
+					:class="dayEv.isCompleted ? 'bg-optimal text-on-solid' : 'bg-surface'"
+					:title="dayEv.isCompleted ? 'انجام شد' : 'علامت به عنوان انجام‌شده'"
+					@click="emit('toggleComplete', dayEv.id, !dayEv.isCompleted)"
 				>
-					<span class="h-2 w-2 shrink-0 rounded-full bg-accent"></span>
-					<span class="font-extrabold text-accent-text"> {{ getRelativeText(item.daysRemaining) }}: </span>
-					<span>{{ item.title }}</span>
+					<Check v-if="dayEv.isCompleted" class="h-3 w-3" />
 				</button>
 			</div>
 
 			<button
+				v-for="item in upcomingItems.filter((u) => !selectedDayEvents.some((s) => s.id === u.id))"
+				:key="item.id + item.occurrenceDateIso"
 				type="button"
-				class="flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-elevated px-3 py-1.5 text-xs font-extrabold text-fg-secondary transition hover:border-border-strong hover:text-fg"
-				@click="emit('openCalendarDate', currentDateIso)"
+				class="flex items-center gap-2 rounded-2xl border border-border bg-elevated px-3 py-1.5 text-xs font-bold text-fg transition hover:border-border-strong"
+				@click="emit('openCalendarDate', item.occurrenceDateIso)"
 			>
-				<Clock class="h-3.5 w-3.5 text-accent-text" />
-				<span>مشاهده در تقویم</span>
+				<span class="h-2 w-2 shrink-0 rounded-full bg-accent"></span>
+				<span class="font-extrabold text-accent-text"> {{ getRelativeText(item.daysRemaining) }}: </span>
+				<span>{{ item.title }}</span>
 			</button>
 		</div>
 	</section>
@@ -10149,7 +10230,7 @@ interface Props {
 	isLiveDirty?: boolean;
 	hasExistingEntry?: boolean;
 	saveState?: 'idle' | 'saving' | 'saved' | 'error';
-	completionStats: { completed: number; goldCount: number; total: number; percent: number };
+	completionStats: { completed: number; total: number; percent: number };
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -12275,7 +12356,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { buildFullAnalyticsReport } from '~/core/analytics-engine';
-import { getYesterdayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
+import { getYesterdayIso } from '~/domain/calendar';
 import type { AnalyticsTimeRange } from '~/domain/schemas';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
 import AnalyticsSummaryCards from '~/components/analytics/AnalyticsSummaryCards.vue';
@@ -12354,12 +12435,7 @@ function selectHabitAndScroll(habitId: string) {
 					<div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text">
 						<BarChart3 class="h-5 w-5" />
 					</div>
-					<div class="flex flex-wrap items-center gap-2.5">
-						<h1 class="text-xl font-black tracking-tight text-fg sm:text-2xl">آمار و روند طرح‌ها</h1>
-						<span dir="ltr" class="rounded-xl border border-border bg-elevated px-2.5 py-0.5 font-mono text-xs font-bold text-fg-secondary">
-							{{ toPersianDigits(isoToJalaliSlash(report.startDateIso)) }} → {{ toPersianDigits(isoToJalaliSlash(report.endDateIso)) }}
-						</span>
-					</div>
+					<h1 class="text-xl font-black tracking-tight text-fg sm:text-2xl">آمار و روند طرح‌ها</h1>
 				</div>
 
 				<div class="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
@@ -13397,7 +13473,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { assembleJalaliMonthArchive, computeUpcomingEventsBanner } from '~/core/calendar-engine';
+import { assembleJalaliMonthArchive } from '~/core/calendar-engine';
 import {
 	JALALI_MONTH_NAMES,
 	getJalaliMonthLength,
@@ -13494,15 +13570,8 @@ const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
 
 const userSelectedIso = ref<string | null>(null);
 
-const archiveData = computed(() => {
-	const { todayAndUpcoming } = computeUpcomingEventsBanner({
-		allEvents: allEvents.value,
-		referenceDateIso: todayIso.value,
-		todayIso: todayIso.value,
-		horizonDays: 14
-	});
-
-	return assembleJalaliMonthArchive({
+const archiveData = computed(() =>
+	assembleJalaliMonthArchive({
 		jy: currentYear.value,
 		jm: currentMonth.value,
 		todayIso: todayIso.value,
@@ -13512,10 +13581,9 @@ const archiveData = computed(() => {
 		logsInMonth: monthLogs.value,
 		eventsInMonth: allEvents.value,
 		booksInMonth: allBooks.value,
-		mediaInMonth: allMedia.value,
-		upcomingEvents: todayAndUpcoming
-	});
-});
+		mediaInMonth: allMedia.value
+	})
+);
 
 const selectedIso = computed(
 	() => userSelectedIso.value || archiveData.value.selectedIso
@@ -14264,64 +14332,6 @@ async function handleLogout() {
 			</div>
 		</section>
 
-		<!-- بخش داده‌های آزمایشی (Demo Seed) قابل افزودن و حذف ایمن -->
-		<section class="space-y-4 rounded-3xl border border-border bg-surface p-6 shadow-(--shadow-soft) sm:p-7">
-			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3.5">
-				<div class="flex items-center gap-2.5">
-					<FlaskConical class="h-5 w-5 text-accent-text" />
-					<h2 class="text-base font-black text-fg">داده‌های آزمایشی</h2>
-				</div>
-				<span
-					class="rounded-xl border px-3 py-1 text-xs font-extrabold"
-					:class="
-						activeDemoHabitsCount > 0
-							? 'border-gold-border bg-gold-soft text-gold-text'
-							: 'border-border bg-elevated text-fg-muted'
-					"
-				>
-					{{
-						activeDemoHabitsCount > 0
-							? `${toPersianDigits(activeDemoHabitsCount)} طرح آزمایشی فعال`
-							: 'بدون داده آزمایشی'
-					}}
-				</span>
-			</div>
-
-			<div
-				v-if="demoSeedMessage"
-				class="rounded-2xl border px-4 py-3 text-xs font-extrabold"
-				:class="
-					demoSeedMessage.type === 'success'
-						? 'border-optimal-border bg-optimal-soft text-optimal'
-						: 'border-failed-border bg-failed-soft text-failed'
-				"
-			>
-				{{ demoSeedMessage.text }}
-			</div>
-
-			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-				<button
-					type="button"
-					:disabled="isMutatingDemoSeed"
-					class="flex h-11 items-center justify-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 text-xs font-black text-accent-text transition hover:opacity-90 active:scale-98 disabled:opacity-50"
-					@click="handleInjectDemoSeed"
-				>
-					<Plus class="h-4 w-4" />
-					<span>افزودن داده‌های آزمایشی</span>
-				</button>
-
-				<button
-					type="button"
-					:disabled="isMutatingDemoSeed || activeDemoHabitsCount === 0"
-					class="flex h-11 items-center justify-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-black text-failed transition hover:opacity-90 active:scale-98 disabled:opacity-40"
-					@click="handleRemoveDemoSeed"
-				>
-					<Trash2 class="h-4 w-4" />
-					<span>حذف داده‌های آزمایشی</span>
-				</button>
-			</div>
-		</section>
-
 		<!-- بخش امنیت و حساب کاربری -->
 		<section class="space-y-5 rounded-3xl border border-border bg-surface p-6 shadow-(--shadow-soft) sm:p-7">
 			<div class="flex items-center gap-2.5 border-b border-border pb-3.5">
@@ -14389,6 +14399,61 @@ async function handleLogout() {
 				</button>
 			</div>
 		</section>
+
+		<!-- بخش تاشو داده‌های آزمایشی (Demo Seed) برای تست سیستم -->
+		<details
+			:open="activeDemoHabitsCount > 0 || Boolean(demoSeedMessage)"
+			class="rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:px-7"
+		>
+			<summary class="flex cursor-pointer items-center justify-between gap-3 text-sm font-black text-fg-secondary select-none hover:text-fg">
+				<div class="flex items-center gap-2.5">
+					<FlaskConical class="h-4.5 w-4.5 text-accent-text" />
+					<span>داده‌های آزمایشی (برای تست اولیه نمودارها)</span>
+				</div>
+				<span
+					v-if="activeDemoHabitsCount > 0"
+					class="rounded-xl border border-gold-border bg-gold-soft px-2.5 py-0.5 text-[11px] font-extrabold text-gold-text"
+				>
+					{{ toPersianDigits(activeDemoHabitsCount) }} طرح فعال
+				</span>
+			</summary>
+
+			<div class="mt-4 space-y-4 border-t border-border pt-4">
+				<div
+					v-if="demoSeedMessage"
+					class="rounded-2xl border px-4 py-3 text-xs font-extrabold"
+					:class="
+						demoSeedMessage.type === 'success'
+							? 'border-optimal-border bg-optimal-soft text-optimal'
+							: 'border-failed-border bg-failed-soft text-failed'
+					"
+				>
+					{{ demoSeedMessage.text }}
+				</div>
+
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+					<button
+						type="button"
+						:disabled="isMutatingDemoSeed"
+						class="flex h-11 items-center justify-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 text-xs font-black text-accent-text transition hover:opacity-90 active:scale-98 disabled:opacity-50"
+						@click="handleInjectDemoSeed"
+					>
+						<Plus class="h-4 w-4" />
+						<span>افزودن داده‌های آزمایشی</span>
+					</button>
+
+					<button
+						type="button"
+						:disabled="isMutatingDemoSeed || activeDemoHabitsCount === 0"
+						class="flex h-11 items-center justify-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-black text-failed transition hover:opacity-90 active:scale-98 disabled:opacity-40"
+						@click="handleRemoveDemoSeed"
+					>
+						<Trash2 class="h-4 w-4" />
+						<span>حذف داده‌های آزمایشی</span>
+					</button>
+				</div>
+			</div>
+		</details>
 	</div>
 </template>
 
@@ -14740,7 +14805,7 @@ const TEHRAN_ISO_FORMATTER = new Intl.DateTimeFormat('en-CA', {
 });
 
 export function getPersianWeekdayIndex(date: Date): number {
-	return (date.getDay() + 1) % 7;
+	return (date.getUTCDay() + 1) % 7;
 }
 
 export function padZero(num: number, size = 2): string {
@@ -14760,15 +14825,15 @@ export function toPersianDigits(input: string | number): string {
 }
 
 export function dateToIso(date: Date): string {
-	const y = date.getFullYear();
-	const m = padZero(date.getMonth() + 1);
-	const d = padZero(date.getDate());
+	const y = date.getUTCFullYear();
+	const m = padZero(date.getUTCMonth() + 1);
+	const d = padZero(date.getUTCDate());
 	return `${y}-${m}-${d}`;
 }
 
 export function isoToDate(iso: string): Date {
 	const [y = 1970, m = 1, d = 1] = iso.split('-').map(Number);
-	return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);
+	return new Date(Date.UTC(y, (m || 1) - 1, d || 1, 12, 0, 0));
 }
 
 export function getTodayIso(): string {
@@ -14781,7 +14846,7 @@ export function getYesterdayIso(): string {
 
 export function shiftIsoDate(iso: string, deltaDays: number): string {
 	const dt = isoToDate(iso);
-	dt.setDate(dt.getDate() + deltaDays);
+	dt.setUTCDate(dt.getUTCDate() + deltaDays);
 	return dateToIso(dt);
 }
 
@@ -15199,6 +15264,7 @@ export const MutateHabitStructureSchema = z.object({
 	silverDesc: z.string().nullable(),
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
+	defaultMinutesPerInterval: z.number().min(0).optional(),
 	reason: z.string().min(2, 'نوشتن دلیل تغییر برای ثبت در تاریخچه الزامی است')
 });
 export type MutateHabitStructureInput = z.infer<typeof MutateHabitStructureSchema>;
@@ -15773,14 +15839,6 @@ export const FullAnalyticsReportSchema = z.object({
 			displayLabel: z.string()
 		})
 	),
-	macroStats: z.object({
-		totalLoggedDays: z.number(),
-		optimalDaysCount: z.number(),
-		partialDaysCount: z.number(),
-		failedDaysCount: z.number(),
-		overallConsistencyRate: z.number(),
-		totalLifecycleChanges: z.number()
-	}),
 	selectedHabitReport: SelectedHabitAnalyticsSchema.nullable(),
 	comparisonRows: z.array(HabitComparisonRowSchema)
 });
@@ -16236,6 +16294,8 @@ PATH: app/plugins/persian-digits.client.ts
 
 import { toPersianDigits } from '~/domain/calendar';
 
+const handlerMap = new WeakMap<HTMLElement, () => void>();
+
 export default defineNuxtPlugin((nuxtApp) => {
 	nuxtApp.vueApp.directive('persian-digits', {
 		mounted(el: HTMLInputElement | HTMLTextAreaElement) {
@@ -16254,13 +16314,14 @@ export default defineNuxtPlugin((nuxtApp) => {
 				}
 			};
 
-			(el as unknown as Record<string, unknown>)._persianHandler = handleInput;
+			handlerMap.set(el, handleInput);
 			el.addEventListener('input', handleInput);
 		},
 		unmounted(el: HTMLInputElement | HTMLTextAreaElement) {
-			const handler = (el as unknown as Record<string, unknown>)._persianHandler as ((e: Event) => void) | undefined;
+			const handler = handlerMap.get(el);
 			if (handler) {
 				el.removeEventListener('input', handler);
+				handlerMap.delete(el);
 			}
 		}
 	});

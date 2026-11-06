@@ -126,6 +126,17 @@ export function useLocalRepository() {
 						continue;
 					}
 
+					const isUnscheduledAndUnloggedCadence =
+						habit?.trackingMode === 'interval_cadence' &&
+						(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
+						(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
+						(!log.totalActualMinutes || log.totalActualMinutes <= 0);
+
+					if (isUnscheduledAndUnloggedCadence) {
+						await db.habitLogs.delete(logId);
+						continue;
+					}
+
 					const logRecord: LocalHabitLogRecord = {
 						id: logId,
 						dateIso: input.dateIso,
@@ -159,56 +170,18 @@ export function useLocalRepository() {
 
 			await stageMutation(mutation, async () => {
 				for (const item of input.items) {
-					await db.cadencePlans.put({
-						id: `plan:${input.targetDateIso}:${item.habitId}`,
-						dateIso: input.targetDateIso,
-						habitId: item.habitId,
-						plannedIntervals: item.plannedIntervals,
-						plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: nowIso
-					});
-
-					const habit = await db.habits.get(item.habitId);
-					if (
-						habit &&
-						(habit.defaultIntervals !== item.plannedIntervals ||
-							habit.defaultMinutesPerInterval !== item.plannedMinutesPerInterval ||
-							habit.cadenceWindowMinutes !== item.cadenceWindowMinutes)
-					) {
-						await db.habits.update(habit.id, {
-							defaultIntervals: item.plannedIntervals,
-							defaultMinutesPerInterval: item.plannedMinutesPerInterval,
+					const planId = `plan:${input.targetDateIso}:${item.habitId}`;
+					if (item.plannedMinutesPerInterval <= 0) {
+						await db.cadencePlans.delete(planId);
+					} else {
+						await db.cadencePlans.put({
+							id: planId,
+							dateIso: input.targetDateIso,
+							habitId: item.habitId,
+							plannedIntervals: item.plannedIntervals,
+							plannedMinutesPerInterval: item.plannedMinutesPerInterval,
 							cadenceWindowMinutes: item.cadenceWindowMinutes,
 							updatedAtIso: nowIso
-						});
-
-						const lifecycleEvent: LifecycleEventEntity = {
-							id: crypto.randomUUID(),
-							habitId: habit.id,
-							habitTitleSnapshot: habit.title,
-							eventType: 'CADENCE_UPDATED',
-							effectiveDateIso: input.targetDateIso,
-							summary: `تنظیم برای روز بعد: در هر ${item.cadenceWindowMinutes} دقیقه، ${item.plannedMinutesPerInterval} دقیقه (${item.plannedIntervals} بازه)`,
-							reason: input.reason || 'تنظیم از شب قبل',
-							previousStateJson: JSON.stringify({
-								intervals: habit.defaultIntervals,
-								minutes: habit.defaultMinutesPerInterval,
-								window: habit.cadenceWindowMinutes
-							}),
-							newStateJson: JSON.stringify({
-								intervals: item.plannedIntervals,
-								minutes: item.plannedMinutesPerInterval,
-								window: item.cadenceWindowMinutes
-							}),
-							createdAtIso: nowIso
-						};
-						await db.lifecycleEvents.put(lifecycleEvent);
-						await db.syncOutbox.put({
-							id: `lifecycle:${lifecycleEvent.id}`,
-							kind: 'ADD_LIFECYCLE_EVENT',
-							queuedAtIso: nowIso,
-							payload: lifecycleEvent
 						});
 					}
 				}

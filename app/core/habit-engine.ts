@@ -142,9 +142,11 @@ export function getApplicableHabitsForDate(
 		dateIso?: string;
 		hasExistingEntry?: boolean;
 		loggedHabitIds?: ReadonlySet<string>;
+		scheduledCadenceHabitIds?: ReadonlySet<string>;
 	}
 ): HabitEntity[] {
 	const loggedSet = options?.loggedHabitIds ?? new Set<string>();
+	const scheduledCadenceSet = options?.scheduledCadenceHabitIds;
 	const dateIso = options?.dateIso;
 	const habitById = new Map(habits.map((h) => [h.id, h]));
 
@@ -161,6 +163,9 @@ export function getApplicableHabitsForDate(
 		}
 		if (h.status === 'archived') {
 			return false;
+		}
+		if (h.trackingMode === 'interval_cadence') {
+			return Boolean(scheduledCadenceSet?.has(h.id));
 		}
 		if (h.parentId) {
 			const parent = habitById.get(h.parentId);
@@ -181,6 +186,7 @@ export function buildHabitTree(
 		dateIso?: string;
 		hasExistingEntry?: boolean;
 		loggedHabitIds?: ReadonlySet<string>;
+		scheduledCadenceHabitIds?: ReadonlySet<string>;
 	}
 ): {
 	tieredRoots: HabitTreeNode[];
@@ -342,7 +348,9 @@ export function evaluateDayStatusColor(
 			.filter(
 				(l) =>
 					(l.achievedTier !== null && l.achievedTier !== undefined) ||
-					l.actualMinutesPerInterval !== null ||
+					(l.plannedMinutesSnapshot !== null &&
+						l.plannedMinutesSnapshot !== undefined &&
+						l.plannedMinutesSnapshot > 0) ||
 					resolveEffectiveCadenceMinutes(l) > 0
 			)
 			.map((l) => l.habitId)
@@ -350,6 +358,7 @@ export function evaluateDayStatusColor(
 	const habitById = new Map(habits.map((h) => [h.id, h]));
 	const trackable = habits.filter((h) => {
 		const isLogged = loggedIds.has(h.id);
+		if (h.trackingMode === 'interval_cadence' && !isLogged) return false;
 		if (h.status !== 'active' && !isLogged) return false;
 		if (h.parentId) {
 			const parent = habitById.get(h.parentId);
@@ -386,7 +395,7 @@ export function evaluateDayStatusColor(
 			}
 		} else {
 			const actualMinutes = resolveEffectiveCadenceMinutes(log);
-			const plannedMinutes = log.plannedMinutesSnapshot ?? habit.defaultMinutesPerInterval;
+			const plannedMinutes = log.plannedMinutesSnapshot ?? 0;
 			if (actualMinutes <= 0) {
 				zeroCount++;
 			} else if (plannedMinutes <= 0 || actualMinutes >= plannedMinutes) {
