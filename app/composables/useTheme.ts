@@ -61,14 +61,9 @@ export function useTheme() {
 		}
 	}
 
-	function toggle() {
-		setTheme(!isDark.value);
-	}
-
 	return {
 		isDark,
 		init,
-		setTheme,
-		toggle
+		setTheme
 	};
 }

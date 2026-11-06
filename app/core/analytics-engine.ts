@@ -494,14 +494,10 @@ export function buildFullAnalyticsReport(params: {
 	} = params;
 
 	const habitById = new Map(habits.map((h) => [h.id, h]));
-	const childrenByParentId = new Map<string, HabitEntity[]>();
-	for (const h of habits) {
-		if (h.parentId) {
-			const list = childrenByParentId.get(h.parentId) ?? [];
-			list.push(h);
-			childrenByParentId.set(h.parentId, list);
-		}
-	}
+	const childrenByParentId = Map.groupBy(
+		habits.filter((h) => Boolean(h.parentId)),
+		(h) => h.parentId!
+	);
 
 	const entryByDate = new Map(entries.map((e) => [e.dateIso, e]));
 	const logsByDate = new Map<string, Map<string, AnalyticsRawLog>>();
@@ -547,26 +543,6 @@ export function buildFullAnalyticsReport(params: {
 		(selectedHabitId ? habitById.get(selectedHabitId) : null) ??
 		selectableHabits[0]?.habit ??
 		null;
-
-	let optimalDaysCount = 0;
-	let partialDaysCount = 0;
-	let failedDaysCount = 0;
-	for (const dIso of dateList) {
-		const entry = entryByDate.get(dIso);
-		if (!entry) continue;
-		if (entry.dayStatus === 'optimal') optimalDaysCount++;
-		else if (entry.dayStatus === 'partial') partialDaysCount++;
-		else if (entry.dayStatus === 'failed') failedDaysCount++;
-	}
-	const totalLoggedDays = optimalDaysCount + partialDaysCount + failedDaysCount;
-	const overallConsistencyRate =
-		totalLoggedDays > 0
-			? Math.round(((optimalDaysCount + partialDaysCount) / totalLoggedDays) * 100)
-			: 0;
-
-	const eventsInWindow = lifecycleEvents.filter(
-		(e) => e.effectiveDateIso >= startIso && e.effectiveDateIso <= endIso
-	);
 
 	const comparisonRows: HabitComparisonRow[] = selectableHabits.map((item) => {
 		const h = item.habit;
@@ -651,12 +627,7 @@ export function buildFullAnalyticsReport(params: {
 			todayIso
 		);
 
-		const eventsByDate = new Map<string, HabitEvolutionItem[]>();
-		for (const ev of evolutionTimeline) {
-			const list = eventsByDate.get(ev.effectiveDateIso) ?? [];
-			list.push(ev);
-			eventsByDate.set(ev.effectiveDateIso, list);
-		}
+		const eventsByDate = Map.groupBy(evolutionTimeline, (ev) => ev.effectiveDateIso);
 
 		const dailySeries: HabitDailyPoint[] = [];
 		const recentValidScores: number[] = [];
@@ -860,14 +831,6 @@ export function buildFullAnalyticsReport(params: {
 		endDateIso: endIso,
 		totalDaysInWindow: dateList.length,
 		selectableHabits,
-		macroStats: {
-			totalLoggedDays,
-			optimalDaysCount,
-			partialDaysCount,
-			failedDaysCount,
-			overallConsistencyRate,
-			totalLifecycleChanges: eventsInWindow.length
-		},
 		selectedHabitReport,
 		comparisonRows
 	};

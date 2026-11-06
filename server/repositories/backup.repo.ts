@@ -1,6 +1,7 @@
-import { like } from 'drizzle-orm';
+import { getTableColumns, like, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { db, ensureDatabaseReady } from '../database/index';
+import type { DbExecutor } from './daily-tracker.repo';
 import {
 	books,
 	cadencePlans,
@@ -18,19 +19,36 @@ import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
+async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
+	await tx.delete(habitLogs);
+	await tx.delete(dailyEntries);
+	await tx.delete(cadencePlans);
+	await tx.delete(habitLifecycleEvents);
+	await tx.delete(reflectionTags);
+	await tx.delete(habits);
+	await tx.delete(books);
+	await tx.delete(mediaLogs);
+	await tx.delete(calendarEvents);
+	await tx.delete(notes);
+}
+
+function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
+	const cols = getTableColumns(table);
+	const excludeSet = new Set(excludeKeys);
+	const updateSet: Record<string, unknown> = {};
+
+	for (const [propKey, col] of Object.entries(cols)) {
+		if (!excludeSet.has(propKey)) {
+			updateSet[propKey] = sql.raw(`excluded."${col.name}"`);
+		}
+	}
+	return updateSet;
+}
+
 export async function clearAllDatabaseRecords(): Promise<void> {
 	await ensureDatabaseReady();
 	await db.transaction(async (tx) => {
-		await tx.delete(habitLogs);
-		await tx.delete(dailyEntries);
-		await tx.delete(cadencePlans);
-		await tx.delete(habitLifecycleEvents);
-		await tx.delete(reflectionTags);
-		await tx.delete(habits);
-		await tx.delete(books);
-		await tx.delete(mediaLogs);
-		await tx.delete(calendarEvents);
-		await tx.delete(notes);
+		await truncateAllWorkspaceTables(tx);
 	});
 
 	bumpServerStructuralVersion();
@@ -126,16 +144,7 @@ export async function importDatabaseFromJson(
 
 	await db.transaction(async (tx) => {
 		if (mode === 'replace') {
-			await tx.delete(habitLogs);
-			await tx.delete(dailyEntries);
-			await tx.delete(cadencePlans);
-			await tx.delete(habitLifecycleEvents);
-			await tx.delete(reflectionTags);
-			await tx.delete(habits);
-			await tx.delete(books);
-			await tx.delete(mediaLogs);
-			await tx.delete(calendarEvents);
-			await tx.delete(notes);
+			await truncateAllWorkspaceTables(tx);
 		}
 
 		const existingData = {
@@ -154,82 +163,57 @@ export async function importDatabaseFromJson(
 		const merged = computeSmartBackupMerge(existingData, data);
 		skippedDuplicatesCount = merged.skippedDuplicatesCount;
 
-		const upsertRows = async <T extends Record<string, unknown>>(
+		const batchUpsertRows = async <T extends Record<string, unknown>>(
 			table: PgTable,
-			targetCol: PgColumn,
-			rows: ReadonlyArray<T>
+			targetCols: PgColumn | PgColumn[],
+			rows: ReadonlyArray<T>,
+			excludeKeys: string[] = ['id']
 		) => {
-			for (const row of rows) {
-				await tx
-					.insert(table)
-					.values(row as Record<string, unknown>)
-					.onConflictDoUpdate({
-						target: targetCol,
-						set: row as Record<string, unknown>
-					});
-				totalImported++;
-			}
+			if (rows.length === 0) return;
+			await tx
+				.insert(table)
+				.values(rows as Record<string, unknown>[])
+				.onConflictDoUpdate({
+					target: targetCols,
+					set: buildConflictUpdateSet(table, excludeKeys)
+				});
+			totalImported += rows.length;
 		};
 
-		await upsertRows(habits, habits.id, merged.habitsToUpsert);
-
-		for (const e of merged.dailyEntriesToUpsert) {
-			const { id: _id, ...entryFields } = e;
-			await tx
-				.insert(dailyEntries)
-				.values(e)
-				.onConflictDoUpdate({
-					target: dailyEntries.dateIso,
-					set: entryFields
-				});
-			totalImported++;
-		}
-
-		for (const l of merged.habitLogsToUpsert) {
-			const { id: _id, ...logFields } = l;
-			await tx
-				.insert(habitLogs)
-				.values(l)
-				.onConflictDoUpdate({
-					target: [habitLogs.dateIso, habitLogs.habitId],
-					set: logFields
-				});
-			totalImported++;
-		}
-
-		for (const c of merged.cadencePlansToUpsert) {
-			const { id: _id, ...planFields } = c;
-			await tx
-				.insert(cadencePlans)
-				.values(c)
-				.onConflictDoUpdate({
-					target: [cadencePlans.dateIso, cadencePlans.habitId],
-					set: planFields
-				});
-			totalImported++;
-		}
-
-		await upsertRows(books, books.id, merged.booksToUpsert);
-		await upsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
-		await upsertRows(notes, notes.id, merged.notesToUpsert);
-		await upsertRows(calendarEvents, calendarEvents.id, merged.calendarEventsToUpsert);
-		await upsertRows(
+		await batchUpsertRows(habits, habits.id, merged.habitsToUpsert);
+		await batchUpsertRows(
+			dailyEntries,
+			dailyEntries.dateIso,
+			merged.dailyEntriesToUpsert,
+			['id', 'dateIso']
+		);
+		await batchUpsertRows(
+			habitLogs,
+			[habitLogs.dateIso, habitLogs.habitId],
+			merged.habitLogsToUpsert,
+			['id']
+		);
+		await batchUpsertRows(
+			cadencePlans,
+			[cadencePlans.dateIso, cadencePlans.habitId],
+			merged.cadencePlansToUpsert,
+			['id']
+		);
+		await batchUpsertRows(books, books.id, merged.booksToUpsert);
+		await batchUpsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
+		await batchUpsertRows(notes, notes.id, merged.notesToUpsert);
+		await batchUpsertRows(calendarEvents, calendarEvents.id, merged.calendarEventsToUpsert);
+		await batchUpsertRows(
 			habitLifecycleEvents,
 			habitLifecycleEvents.id,
 			merged.lifecycleEventsToUpsert
 		);
-
-		for (const tag of merged.reflectionTagsToUpsert) {
-			const { id: _id, ...tagFields } = tag;
-			await tx
-				.insert(reflectionTags)
-				.values(tag)
-				.onConflictDoUpdate({
-					target: reflectionTags.label,
-					set: tagFields
-				});
-			totalImported++;
-		}
+		await batchUpsertRows(
+			reflectionTags,
+			reflectionTags.label,
+			merged.reflectionTagsToUpsert,
+			['id', 'label']
+		);
 	});
 
 	bumpServerStructuralVersion();

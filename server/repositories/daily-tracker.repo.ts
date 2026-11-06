@@ -1,8 +1,10 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '../database/index';
+import crypto from 'node:crypto';
 import {
 	cadencePlans,
 	dailyEntries,
+	habitLifecycleEvents,
 	habitLogs,
 	habits,
 	reflectionTags
@@ -250,6 +252,27 @@ export async function saveCadencePlansForDate(
 						updatedAtIso: nowIso
 					})
 					.where(eq(habits.id, habit.id));
+
+				await tx.insert(habitLifecycleEvents).values({
+					id: crypto.randomUUID(),
+					habitId: habit.id,
+					habitTitleSnapshot: habit.title,
+					eventType: 'CADENCE_UPDATED',
+					effectiveDateIso: input.targetDateIso,
+					summary: `تنظیم برای روز بعد: در هر ${item.cadenceWindowMinutes} دقیقه، ${item.plannedMinutesPerInterval} دقیقه (${item.plannedIntervals} بازه)`,
+					reason: input.reason || 'تنظیم از شب قبل',
+					previousStateJson: JSON.stringify({
+						intervals: habit.defaultIntervals,
+						minutes: habit.defaultMinutesPerInterval,
+						window: habit.cadenceWindowMinutes
+					}),
+					newStateJson: JSON.stringify({
+						intervals: item.plannedIntervals,
+						minutes: item.plannedMinutesPerInterval,
+						window: item.cadenceWindowMinutes
+					}),
+					createdAtIso: nowIso
+				});
 
 				habitMap.set(habit.id, {
 					...habit,

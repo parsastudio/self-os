@@ -1,5 +1,7 @@
 import { toPersianDigits } from '~/domain/calendar';
 
+const handlerMap = new WeakMap<HTMLElement, () => void>();
+
 export default defineNuxtPlugin((nuxtApp) => {
 	nuxtApp.vueApp.directive('persian-digits', {
 		mounted(el: HTMLInputElement | HTMLTextAreaElement) {
@@ -18,13 +20,14 @@ export default defineNuxtPlugin((nuxtApp) => {
 				}
 			};
 
-			(el as unknown as Record<string, unknown>)._persianHandler = handleInput;
+			handlerMap.set(el, handleInput);
 			el.addEventListener('input', handleInput);
 		},
 		unmounted(el: HTMLInputElement | HTMLTextAreaElement) {
-			const handler = (el as unknown as Record<string, unknown>)._persianHandler as ((e: Event) => void) | undefined;
+			const handler = handlerMap.get(el);
 			if (handler) {
 				el.removeEventListener('input', handler);
+				handlerMap.delete(el);
 			}
 		}
 	});

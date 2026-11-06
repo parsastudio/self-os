@@ -94,3 +94,72 @@ export function buildRollingAreaPath(
 	const lineSegments = coords.map((c) => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
 	return `M ${first.x.toFixed(1)} ${baselineY} ${lineSegments} L ${last.x.toFixed(1)} ${baselineY} Z`;
 }
+
+export interface RenderedChartBar {
+	pt: HabitDailyPoint;
+	idx: number;
+	cx: number;
+	hasVisibleBar: boolean;
+	barX: number;
+	barY: number;
+	barHeight: number;
+	barRx: number;
+	showAxisLabel: boolean;
+}
+
+export function buildRenderedChartBars(
+	series: ReadonlyArray<HabitDailyPoint>,
+	isCadence: boolean,
+	maxCadenceMinutes: number,
+	barWidth: number
+): RenderedChartBar[] {
+	const { PAD_TOP, PLOT_H } = CHART_DIMENSIONS;
+	const total = series.length;
+
+	return series.map((pt, idx) => {
+		const cx = getChartX(idx, total);
+		const hasVisibleBar =
+			(isCadence && pt.actualMinutes !== null && pt.actualMinutes > 0) ||
+			(!isCadence && pt.score !== null && pt.score > 0) ||
+			pt.outcome === 'failed' ||
+			pt.outcome === 'skipped';
+
+		const barY = isCadence
+			? pt.actualMinutes !== null && pt.actualMinutes > 0
+				? getChartYFromMinutes(pt.actualMinutes, maxCadenceMinutes)
+				: PAD_TOP + PLOT_H - 6
+			: pt.score !== null && pt.score > 0
+				? getChartYFromScore(pt.score)
+				: pt.outcome === 'failed'
+					? PAD_TOP + PLOT_H - 7
+					: PAD_TOP + PLOT_H - 12;
+
+		const barHeight = Math.max(0, PAD_TOP + PLOT_H - barY);
+		const showAxisLabel =
+			idx === 0 ||
+			idx === total - 1 ||
+			idx === Math.floor(total / 2) ||
+			(total <= 14 && idx % 2 === 0);
+
+		return {
+			pt,
+			idx,
+			cx,
+			hasVisibleBar,
+			barX: cx - barWidth / 2,
+			barY,
+			barHeight,
+			barRx: Math.min(5, barWidth / 2),
+			showAxisLabel
+		};
+	});
+}
+
+export function getChartBarColorVar(outcome: HabitDailyPoint['outcome']): string {
+	if (outcome === 'gold') return 'var(--tier-gold)';
+	if (outcome === 'silver') return 'var(--tier-silver)';
+	if (outcome === 'bronze') return 'var(--tier-bronze)';
+	if (outcome === 'failed') return 'var(--state-failed)';
+	if (outcome === 'skipped') return 'var(--text-muted)';
+	return 'var(--border-hairline)';
+}

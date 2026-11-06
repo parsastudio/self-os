@@ -187,15 +187,10 @@ export function buildHabitTree(
 	cadenceHabits: HabitEntity[];
 } {
 	const applicableHabits = getApplicableHabitsForDate(habits, options);
-	const childrenByParent = new Map<string, HabitEntity[]>();
-
-	for (const h of applicableHabits) {
-		if (h.parentId) {
-			const list = childrenByParent.get(h.parentId) ?? [];
-			list.push(h);
-			childrenByParent.set(h.parentId, list);
-		}
-	}
+	const childrenByParent = Map.groupBy(
+		applicableHabits.filter((h) => Boolean(h.parentId)),
+		(h) => h.parentId!
+	);
 
 	const tieredRoots: HabitTreeNode[] = [];
 	const cadenceHabits: HabitEntity[] = [];
@@ -289,7 +284,6 @@ export function computeDailyCompletionStats(params: {
 	isDirty: boolean;
 }): {
 	completed: number;
-	goldCount: number;
 	total: number;
 	percent: number;
 } {
@@ -308,10 +302,9 @@ export function computeDailyCompletionStats(params: {
 	});
 
 	const total = trackable.length;
-	if (total === 0) return { completed: 0, goldCount: 0, total: 0, percent: 100 };
+	if (total === 0) return { completed: 0, total: 0, percent: 100 };
 
 	let completed = 0;
-	let goldCount = 0;
 
 	for (const h of trackable) {
 		const log = logsByHabitId[h.id];
@@ -319,26 +312,19 @@ export function computeDailyCompletionStats(params: {
 
 		if (h.trackingMode === 'tiered') {
 			const tier = log.achievedTier;
-			if (tier === TIER_SCORES.SKIPPED) {
+			if (tier === TIER_SCORES.SKIPPED || (tier !== null && tier !== undefined && tier > 0)) {
 				completed++;
-			} else if (tier !== null && tier !== undefined && tier > 0) {
-				completed++;
-				const maxTier = getMaxSupportedTier(h);
-				if (tier === maxTier) goldCount++;
 			}
 		} else {
 			const actual = resolveEffectiveCadenceMinutes(log);
-			const planned = log.plannedMinutesSnapshot ?? 0;
 			if (actual > 0 && (hasExistingEntry || isDirty)) {
 				completed++;
-				if (planned <= 0 || actual >= planned) goldCount++;
 			}
 		}
 	}
 
 	return {
 		completed,
-		goldCount,
 		total,
 		percent: Math.round((completed / total) * 100)
 	};

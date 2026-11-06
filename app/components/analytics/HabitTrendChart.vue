@@ -2,10 +2,11 @@
 import { ref, computed } from 'vue';
 import {
 	CHART_DIMENSIONS,
+	buildRenderedChartBars,
 	buildRollingAreaPath,
 	buildRollingPolylinePoints,
 	computeMaxCadenceMinutes,
-	getChartX as getX,
+	getChartBarColorVar,
 	getChartYFromMinutes,
 	getChartYFromScore as getYFromScore
 } from '~/core/chart-math';
@@ -72,58 +73,14 @@ const barWidth = computed(() => {
 
 const hitAreaWidth = computed(() => Math.max(barWidth.value, 12));
 
-const renderedBars = computed(() => {
-	const series = props.report.dailySeries;
-	const total = series.length;
-	const bw = barWidth.value;
-
-	return series.map((pt, idx) => {
-		const cx = getX(idx, total);
-		const hasVisibleBar =
-			(isCadence.value && pt.actualMinutes !== null && pt.actualMinutes > 0) ||
-			(!isCadence.value && pt.score !== null && pt.score > 0) ||
-			pt.outcome === 'failed' ||
-			pt.outcome === 'skipped';
-
-		const barY = isCadence.value
-			? pt.actualMinutes !== null && pt.actualMinutes > 0
-				? getYFromMins(pt.actualMinutes)
-				: PAD_TOP + PLOT_H - 6
-			: pt.score !== null && pt.score > 0
-				? getYFromScore(pt.score)
-				: pt.outcome === 'failed'
-					? PAD_TOP + PLOT_H - 7
-					: PAD_TOP + PLOT_H - 12;
-
-		const barHeight = Math.max(0, PAD_TOP + PLOT_H - barY);
-		const showAxisLabel =
-			idx === 0 ||
-			idx === total - 1 ||
-			idx === Math.floor(total / 2) ||
-			(total <= 14 && idx % 2 === 0);
-
-		return {
-			pt,
-			idx,
-			cx,
-			hasVisibleBar,
-			barX: cx - bw / 2,
-			barY,
-			barHeight,
-			barRx: Math.min(5, bw / 2),
-			showAxisLabel
-		};
-	});
-});
-
-function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
-	if (outcome === 'gold') return 'var(--tier-gold)';
-	if (outcome === 'silver') return 'var(--tier-silver)';
-	if (outcome === 'bronze') return 'var(--tier-bronze)';
-	if (outcome === 'failed') return 'var(--state-failed)';
-	if (outcome === 'skipped') return 'var(--text-muted)';
-	return 'var(--border-hairline)';
-}
+const renderedBars = computed(() =>
+	buildRenderedChartBars(
+		props.report.dailySeries,
+		isCadence.value,
+		maxCadenceMinutes.value,
+		barWidth.value
+	)
+);
 </script>
 
 <template>
@@ -271,7 +228,7 @@ function getBarColorVar(outcome: HabitDailyPoint['outcome']): string {
 						:width="barWidth"
 						:height="item.barHeight"
 						:rx="item.barRx"
-						:fill="getBarColorVar(item.pt.outcome)"
+						:fill="getChartBarColorVar(item.pt.outcome)"
 						:opacity="activePointIndex === item.idx ? '1' : '0.82'"
 					/>
 

@@ -757,14 +757,6 @@ export const FullAnalyticsReportSchema = z.object({
 			displayLabel: z.string()
 		})
 	),
-	macroStats: z.object({
-		totalLoggedDays: z.number(),
-		optimalDaysCount: z.number(),
-		partialDaysCount: z.number(),
-		failedDaysCount: z.number(),
-		overallConsistencyRate: z.number(),
-		totalLifecycleChanges: z.number()
-	}),
 	selectedHabitReport: SelectedHabitAnalyticsSchema.nullable(),
 	comparisonRows: z.array(HabitComparisonRowSchema)
 });

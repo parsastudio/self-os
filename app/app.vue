@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, onUnmounted } from 'vue';
+
+let handleVisibilityChange: (() => void) | null = null;
 
 onMounted(() => {
 	if (!import.meta.client || !('serviceWorker' in navigator)) return;
@@ -18,11 +20,20 @@ onMounted(() => {
 
 	void checkForSwUpdate();
 
-	document.addEventListener('visibilitychange', () => {
+	handleVisibilityChange = () => {
 		if (document.visibilityState === 'visible') {
 			void checkForSwUpdate();
 		}
-	});
+	};
+
+	document.addEventListener('visibilitychange', handleVisibilityChange);
+});
+
+onUnmounted(() => {
+	if (handleVisibilityChange) {
+		document.removeEventListener('visibilitychange', handleVisibilityChange);
+		handleVisibilityChange = null;
+	}
 });
 </script>
 

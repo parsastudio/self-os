@@ -111,7 +111,6 @@ export function assembleJalaliMonthArchive(params: {
 	eventsInMonth: CalendarEventEntity[];
 	booksInMonth: BookEntity[];
 	mediaInMonth: MediaEntity[];
-	upcomingEvents: UpcomingEventBannerItem[];
 }) {
 	const {
 		jy,
@@ -123,41 +122,28 @@ export function assembleJalaliMonthArchive(params: {
 		logsInMonth,
 		eventsInMonth,
 		booksInMonth,
-		mediaInMonth,
-		upcomingEvents
+		mediaInMonth
 	} = params;
 
 	const grid = buildJalaliMonthGrid(jy, jm, todayIso);
 	const startIso = grid.days[0]?.iso ?? todayIso;
 
 	const habitMap = new Map(allHabits.map((h) => [h.id, h]));
-	const parentHabitIds = new Set<string>();
-	for (const h of allHabits) {
-		if (h.parentId) parentHabitIds.add(h.parentId);
-	}
+	const parentHabitIds = new Set(
+		allHabits.filter((h) => Boolean(h.parentId)).map((h) => h.parentId!)
+	);
 
 	const entryByIso = new Map(entriesInMonth.map((e) => [e.dateIso, e]));
-	const logsByIso = new Map<string, AnalyticsRawLog[]>();
-	for (const log of logsInMonth) {
-		const list = logsByIso.get(log.dateIso) ?? [];
-		list.push(log);
-		logsByIso.set(log.dateIso, list);
-	}
+	const logsByIso = Map.groupBy(logsInMonth, (log) => log.dateIso);
 
-	const annualEventsByJalaliKey = new Map<string, CalendarEventEntity[]>();
-	const datedEventsByIso = new Map<string, CalendarEventEntity[]>();
-	for (const ev of eventsInMonth) {
-		if (ev.isAnnual) {
-			const key = `${ev.jalaliMonth}-${ev.jalaliDay}`;
-			const list = annualEventsByJalaliKey.get(key) ?? [];
-			list.push(ev);
-			annualEventsByJalaliKey.set(key, list);
-		} else if (ev.dateIso) {
-			const list = datedEventsByIso.get(ev.dateIso) ?? [];
-			list.push(ev);
-			datedEventsByIso.set(ev.dateIso, list);
-		}
-	}
+	const annualEventsByJalaliKey = Map.groupBy(
+		eventsInMonth.filter((ev) => ev.isAnnual),
+		(ev) => `${ev.jalaliMonth}-${ev.jalaliDay}`
+	);
+	const datedEventsByIso = Map.groupBy(
+		eventsInMonth.filter((ev) => !ev.isAnnual && Boolean(ev.dateIso)),
+		(ev) => ev.dateIso!
+	);
 
 	const booksActivityByIso = new Map<string, CalendarDayAggregate['booksActivity']>();
 	for (const b of booksInMonth) {
@@ -268,29 +254,12 @@ export function assembleJalaliMonthArchive(params: {
 				? todayIso
 				: (jalaliPartsToIso({ jy, jm, jd: 1 }) ?? startIso);
 
-	const monthStats = {
-		optimalDays: daysAggregate.filter((d) => d.entry?.dayStatus === 'optimal').length,
-		partialDays: daysAggregate.filter((d) => d.entry?.dayStatus === 'partial').length,
-		failedDays: daysAggregate.filter((d) => d.entry?.dayStatus === 'failed').length,
-		totalEvents: eventsInMonth.length,
-		finishedBooksCount: daysAggregate.reduce(
-			(acc, d) => acc + d.booksActivity.filter((b) => b.activityKind === 'finished').length,
-			0
-		),
-		finishedMediaCount: daysAggregate.reduce(
-			(acc, d) => acc + d.mediaActivity.filter((m) => m.activityKind === 'finished').length,
-			0
-		)
-	};
-
 	return {
 		year: grid.year,
 		month: grid.month,
 		monthName: grid.monthName,
 		leadingEmptyCells: grid.leadingEmptyCells,
 		selectedIso: defaultSelectedIso,
-		days: daysAggregate,
-		monthStats,
-		upcomingEvents
+		days: daysAggregate
 	};
 }

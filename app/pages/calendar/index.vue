@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import { assembleJalaliMonthArchive, computeUpcomingEventsBanner } from '~/core/calendar-engine';
+import { assembleJalaliMonthArchive } from '~/core/calendar-engine';
 import {
 	JALALI_MONTH_NAMES,
 	getJalaliMonthLength,
@@ -101,15 +101,8 @@ const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
 
 const userSelectedIso = ref<string | null>(null);
 
-const archiveData = computed(() => {
-	const { todayAndUpcoming } = computeUpcomingEventsBanner({
-		allEvents: allEvents.value,
-		referenceDateIso: todayIso.value,
-		todayIso: todayIso.value,
-		horizonDays: 14
-	});
-
-	return assembleJalaliMonthArchive({
+const archiveData = computed(() =>
+	assembleJalaliMonthArchive({
 		jy: currentYear.value,
 		jm: currentMonth.value,
 		todayIso: todayIso.value,
@@ -119,10 +112,9 @@ const archiveData = computed(() => {
 		logsInMonth: monthLogs.value,
 		eventsInMonth: allEvents.value,
 		booksInMonth: allBooks.value,
-		mediaInMonth: allMedia.value,
-		upcomingEvents: todayAndUpcoming
-	});
-});
+		mediaInMonth: allMedia.value
+	})
+);
 
 const selectedIso = computed(
 	() => userSelectedIso.value || archiveData.value.selectedIso

@@ -25,7 +25,7 @@ interface Props {
 	isLiveDirty?: boolean;
 	hasExistingEntry?: boolean;
 	saveState?: 'idle' | 'saving' | 'saved' | 'error';
-	completionStats: { completed: number; goldCount: number; total: number; percent: number };
+	completionStats: { completed: number; total: number; percent: number };
 }
 
 const props = withDefaults(defineProps<Props>(), {
