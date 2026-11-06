@@ -2,6 +2,7 @@
   "name": "personal-os-nuxt",
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@10.6.5",
   "scripts": {
     "start": "node .output/server/index.mjs",
     "build": "nuxt build",
