@@ -11,7 +11,6 @@ on:
       - master
 
 env:
-  IMAGE_NAME: ghcr.io/parsastudio/personal-os:latest
   CONTAINER_NAME: new-life-app
 
 jobs:
@@ -57,12 +56,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalize image name to lowercase
+        id: meta
+        run: |
+          echo "image=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]'):latest" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
-          tags: ${{ env.IMAGE_NAME }}
+          tags: ${{ steps.meta.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -72,12 +76,13 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          envs: GHCR_TOKEN,GHCR_USER
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG
           script: |
             set -e
 
@@ -107,7 +112,7 @@ jobs:
 
             FINAL_DB_URL="postgresql://${PG_USER}:${PG_PASS}@${DB_HOST}:5432/${DB_NAME}"
 
-            docker pull ghcr.io/parsastudio/personal-os:latest
+            docker pull "$IMAGE_TAG"
             docker stop new-life-app || true
             docker rm new-life-app || true
 
@@ -121,6 +126,6 @@ jobs:
               -e NITRO_PORT=3000 \
               -e TZ=Asia/Tehran \
               -e DATABASE_URL="$FINAL_DB_URL" \
-              ghcr.io/parsastudio/personal-os:latest
+              "$IMAGE_TAG"
 
             docker image prune -f
