@@ -1,7 +1,6 @@
 import { defineEventHandler, readBody, setCookie, createError } from 'h3';
 import { ChangePasswordInputSchema } from '~/domain/schemas';
 import {
-	verifyPassword,
 	changeMasterPassword,
 	getSessionCookieOptions,
 	SESSION_COOKIE_NAME
@@ -14,14 +13,6 @@ export default defineEventHandler(async (event) => {
 		throw createError({
 			statusCode: 400,
 			statusMessage: parsed.error.issues[0]?.message ?? 'اطلاعات وارد شده نامعتبر است'
-		});
-	}
-
-	const isCurrentValid = await verifyPassword(parsed.data.currentPassword);
-	if (!isCurrentValid) {
-		throw createError({
-			statusCode: 401,
-			statusMessage: 'رمز عبور فعلی نادرست است'
 		});
 	}
 
