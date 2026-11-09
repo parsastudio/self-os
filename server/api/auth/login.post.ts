@@ -52,26 +52,50 @@ function pruneExpiredLoginAttempts(now: number): void {
 	}
 }
 
+function isPrivateOrLoopbackIp(ip: string): boolean {
+	const normalized = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+	if (
+		normalized === '127.0.0.1' ||
+		normalized === '::1' ||
+		normalized === 'local' ||
+		normalized.startsWith('127.') ||
+		normalized.startsWith('10.') ||
+		normalized.startsWith('192.168.') ||
+		normalized.startsWith('fc') ||
+		normalized.startsWith('fd') ||
+		normalized.startsWith('fe80:')
+	) {
+		return true;
+	}
+	const match172 = normalized.match(/^172\.(\d{1,3})\./);
+	if (match172) {
+		const secondOctet = Number(match172[1]);
+		if (secondOctet >= 16 && secondOctet <= 31) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function resolveClientRateLimitKey(event: H3Event): string {
-	const socketIp = (event.node.req.socket?.remoteAddress || 'local').slice(0, 45);
+	const socketIp = (event.node.req.socket?.remoteAddress || 'local').trim().slice(0, 45);
+	if (!isPrivateOrLoopbackIp(socketIp)) {
+		return socketIp;
+	}
+
+	const cfConnectingIp = getRequestHeader(event, 'cf-connecting-ip')?.trim().slice(0, 45);
 	const realIpHeader = getRequestHeader(event, 'x-real-ip')?.trim().slice(0, 45);
 	const forwardedParts = getRequestHeader(event, 'x-forwarded-for')
 		?.split(',')
 		.map((part) => part.trim())
 		.filter(Boolean);
-	const lastForwardedIp = forwardedParts?.length
-		? forwardedParts[forwardedParts.length - 1]?.slice(0, 45)
-		: undefined;
+	const firstPublicForwardedIp =
+		forwardedParts?.find((ip) => !isPrivateOrLoopbackIp(ip))?.slice(0, 45) ??
+		forwardedParts?.[0]?.slice(0, 45);
 
-	const isLocalReverseProxy =
-		socketIp === '127.0.0.1' ||
-		socketIp === '::1' ||
-		socketIp.startsWith('::ffff:127.') ||
-		socketIp.startsWith('::ffff:172.') ||
-		socketIp.startsWith('172.');
-
-	if (isLocalReverseProxy && (realIpHeader || lastForwardedIp)) {
-		return `${socketIp}:${realIpHeader || lastForwardedIp}`;
+	const resolvedClientIp = cfConnectingIp || realIpHeader || firstPublicForwardedIp;
+	if (resolvedClientIp) {
+		return `proxy:${resolvedClientIp}`;
 	}
 	return socketIp;
 }

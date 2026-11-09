@@ -35,14 +35,31 @@ export async function getReflectionTags(): Promise<string[]> {
 
 export type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
 
+const MAX_CLOCK_SKEW_MS = 60 * 1000;
+
+export function clampClientTimestampIso(
+	candidateIso: string | null | undefined,
+	referenceNowMs = Date.now()
+): string {
+	const fallbackIso = new Date(referenceNowMs).toISOString();
+	if (!candidateIso) return fallbackIso;
+	const parsedMs = Date.parse(candidateIso);
+	if (Number.isNaN(parsedMs)) return fallbackIso;
+	if (parsedMs > referenceNowMs + MAX_CLOCK_SKEW_MS) {
+		return fallbackIso;
+	}
+	return new Date(parsedMs).toISOString();
+}
+
 export async function saveDailyEntryAndLogs(
 	input: SaveDailyEntryInput,
 	preloadedHabitMap?: ReadonlyMap<string, HabitEntity>,
 	txExecutor?: DbExecutor
 ): Promise<void> {
 	await ensureDatabaseReady();
-	const nowIso = new Date().toISOString();
-	const entryUpdatedAtIso = input.updatedAtIso || nowIso;
+	const nowMs = Date.now();
+	const nowIso = new Date(nowMs).toISOString();
+	const entryUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
 	const normalizedJournal = input.journalText?.trim() ? input.journalText.trim() : null;
 	const habitMap =
 		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
@@ -54,6 +71,16 @@ export async function saveDailyEntryAndLogs(
 			.where(eq(dailyEntries.dateIso, input.dateIso))
 			.limit(1);
 		const existing = existingRows[0];
+
+		if (isDailyEntryEmpty(input)) {
+			if (existing && input.updatedAtIso && entryUpdatedAtIso < existing.updatedAtIso) {
+				return;
+			}
+			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
+			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
+			await bumpServerStructuralVersion(nowIso, tx);
+			return;
+		}
 
 		if (existing) {
 			if (!input.updatedAtIso || entryUpdatedAtIso >= existing.updatedAtIso) {
@@ -78,13 +105,6 @@ export async function saveDailyEntryAndLogs(
 				tagsJson: JSON.stringify(input.tags),
 				updatedAtIso: entryUpdatedAtIso
 			});
-		}
-
-		if (isDailyEntryEmpty(input)) {
-			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
-			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
-			await bumpServerStructuralVersion(nowIso, tx);
-			return;
 		}
 
 		const previousLogs = await tx
@@ -113,17 +133,23 @@ export async function saveDailyEntryAndLogs(
 				continue;
 			}
 
+			const sanitizedLogUpdatedAtIso = log.updatedAtIso
+				? clampClientTimestampIso(log.updatedAtIso, nowMs)
+				: entryUpdatedAtIso;
+
 			if (
 				prev?.updatedAtIso &&
-				log.updatedAtIso &&
-				log.updatedAtIso < prev.updatedAtIso
+				sanitizedLogUpdatedAtIso < prev.updatedAtIso
 			) {
 				continue;
 			}
 
 			const resolvedLogValues = resolveDailyHabitLogSnapshot({
 				habit,
-				log,
+				log: {
+					...log,
+					updatedAtIso: sanitizedLogUpdatedAtIso
+				},
 				previousLog: prev,
 				fallbackUpdatedAtIso: nowIso
 			});
@@ -159,12 +185,15 @@ export async function saveCadencePlansForDate(
 	txExecutor?: DbExecutor
 ): Promise<void> {
 	await ensureDatabaseReady();
-	const nowIso = new Date().toISOString();
-	const batchUpdatedAtIso = input.updatedAtIso || nowIso;
+	const nowMs = Date.now();
+	const nowIso = new Date(nowMs).toISOString();
+	const batchUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
 
 	const applyOperations = async (tx: DbExecutor) => {
 		for (const item of input.items) {
-			const itemUpdatedAtIso = item.updatedAtIso || batchUpdatedAtIso;
+			const itemUpdatedAtIso = item.updatedAtIso
+				? clampClientTimestampIso(item.updatedAtIso, nowMs)
+				: batchUpdatedAtIso;
 			const existingRows = await tx
 				.select()
 				.from(cadencePlans)

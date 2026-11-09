@@ -111,6 +111,21 @@ jobs:
             fi
 
             FINAL_DB_URL="postgresql://${PG_USER}:${PG_PASS}@${DB_HOST}:5432/${DB_NAME}"
+            EXISTING_HMAC=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' new-life-app 2>/dev/null | grep '^SESSION_HMAC_SECRET=' | cut -d'=' -f2- || true)
+            if [ -z "$EXISTING_HMAC" ]; then
+              EXISTING_HMAC=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)
+            fi
+
+            ENV_FILE=$(mktemp /tmp/new-life-env.XXXXXX)
+            chmod 600 "$ENV_FILE"
+            cat <<EOF > "$ENV_FILE"
+            NODE_ENV=production
+            NITRO_HOST=0.0.0.0
+            NITRO_PORT=3000
+            TZ=Asia/Tehran
+            DATABASE_URL=${FINAL_DB_URL}
+            SESSION_HMAC_SECRET=${EXISTING_HMAC}
+            EOF
 
             docker pull "$IMAGE_TAG"
             docker stop new-life-app || true
@@ -121,11 +136,8 @@ jobs:
               --restart unless-stopped \
               $NETWORK_ARG \
               -p 127.0.0.1:3090:3000 \
-              -e NODE_ENV=production \
-              -e NITRO_HOST=0.0.0.0 \
-              -e NITRO_PORT=3000 \
-              -e TZ=Asia/Tehran \
-              -e DATABASE_URL="$FINAL_DB_URL" \
+              --env-file "$ENV_FILE" \
               "$IMAGE_TAG"
 
+            rm -f "$ENV_FILE"
             docker image prune -f

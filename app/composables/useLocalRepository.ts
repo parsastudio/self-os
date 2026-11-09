@@ -1,5 +1,6 @@
 import { type LocalDailyEntryRecord, type LocalHabitLogRecord, type SyncMetaRecord, useAppDatabase } from '~/composables/useAppDatabase';
 import { createLocalBackupOperations } from '~/composables/useLocalBackupOperations';
+import { clonePlain } from '~/utils/clone';
 import {
 	buildCreatedHabitWithLifecycle,
 	buildUpdatedHabitWithLifecycle,
@@ -50,10 +51,6 @@ export function onLocalMutationStaged(listener: () => void): () => void {
  * Every write operation writes instantly to indexed Dexie tables
  * and stages an atomic mutation record into `syncOutbox`.
  */
-function clonePlain<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
-
 export function useLocalRepository() {
 	const db = useAppDatabase();
 
@@ -866,18 +863,72 @@ export function useLocalRepository() {
 				.map((p) => p.id);
 			if (plansToDelete.length > 0) await db.cadencePlans.bulkDelete(plansToDelete);
 
-			// Upsert non-pending server entities
-			await db.habits.bulkPut(ws.habits.filter((h) => !pendingIds.has(`habit:${h.id}`)));
+			const isServerRecordNewerOrEqual = (
+				serverIso: string | null | undefined,
+				localIso: string | null | undefined
+			): boolean => {
+				if (!localIso) return true;
+				if (!serverIso) return false;
+				return serverIso >= localIso;
+			};
+
+			const localHabitMap = new Map((await db.habits.toArray()).map((h) => [h.id, h]));
+			await db.habits.bulkPut(
+				ws.habits.filter(
+					(h) =>
+						!pendingIds.has(`habit:${h.id}`) &&
+						isServerRecordNewerOrEqual(h.updatedAtIso, localHabitMap.get(h.id)?.updatedAtIso)
+				)
+			);
+
+			const localPlanMap = new Map(allLocalPlans.map((p) => [p.id, p]));
 			await db.cadencePlans.bulkPut(
-				ws.cadencePlans.filter((c) => !pendingIds.has(`cadence:${c.dateIso}`))
+				ws.cadencePlans.filter(
+					(c) =>
+						!pendingIds.has(`cadence:${c.dateIso}`) &&
+						!pendingCadenceDates.has(c.dateIso) &&
+						isServerRecordNewerOrEqual(c.updatedAtIso, localPlanMap.get(c.id)?.updatedAtIso)
+				)
 			);
-			await db.books.bulkPut(ws.books.filter((b) => !pendingIds.has(`book:${b.id}`)));
-			await db.media.bulkPut(ws.media.filter((m) => !pendingIds.has(`media:${m.id}`)));
-			await db.notes.bulkPut(ws.notes.filter((n) => !pendingIds.has(`note:${n.id}`)));
+
+			const localBookMap = new Map((await db.books.toArray()).map((b) => [b.id, b]));
+			await db.books.bulkPut(
+				ws.books.filter(
+					(b) =>
+						!pendingIds.has(`book:${b.id}`) &&
+						isServerRecordNewerOrEqual(b.updatedAtIso, localBookMap.get(b.id)?.updatedAtIso)
+				)
+			);
+
+			const localMediaMap = new Map((await db.media.toArray()).map((m) => [m.id, m]));
+			await db.media.bulkPut(
+				ws.media.filter(
+					(m) =>
+						!pendingIds.has(`media:${m.id}`) &&
+						isServerRecordNewerOrEqual(m.updatedAtIso, localMediaMap.get(m.id)?.updatedAtIso)
+				)
+			);
+
+			const localNoteMap = new Map((await db.notes.toArray()).map((n) => [n.id, n]));
+			await db.notes.bulkPut(
+				ws.notes.filter(
+					(n) =>
+						!pendingIds.has(`note:${n.id}`) &&
+						isServerRecordNewerOrEqual(n.updatedAtIso, localNoteMap.get(n.id)?.updatedAtIso)
+				)
+			);
+
+			const localEventMap = new Map((await db.calendarEvents.toArray()).map((ev) => [ev.id, ev]));
 			await db.calendarEvents.bulkPut(
-				ws.calendarEvents.filter((ev) => !pendingIds.has(`event:${ev.id}`))
+				ws.calendarEvents.filter(
+					(ev) =>
+						!pendingIds.has(`event:${ev.id}`) &&
+						isServerRecordNewerOrEqual(ev.updatedAtIso, localEventMap.get(ev.id)?.updatedAtIso)
+				)
 			);
-			await db.lifecycleEvents.bulkPut(ws.lifecycleEvents);
+			await db.lifecycleEvents.bulkPut(
+				ws.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
+			);
 
 			if (ws.availableTags && ws.availableTags.length > 0) {
 				const existingTags = await db.reflectionTags.toArray();
@@ -905,9 +956,16 @@ export function useLocalRepository() {
 				await db.dailyEntries.bulkDelete(entriesToDelete);
 			}
 
+			const localEntryMap = new Map(
+				(await db.dailyEntries.toArray()).map((e) => [e.dateIso, e])
+			);
 			const entriesToPut: LocalDailyEntryRecord[] = [];
 			for (const e of ws.entries) {
-				if (!pendingDailyDates.has(e.dateIso)) {
+				const localEntry = localEntryMap.get(e.dateIso);
+				if (
+					!pendingDailyDates.has(e.dateIso) &&
+					isServerRecordNewerOrEqual(e.updatedAtIso, localEntry?.updatedAtIso)
+				) {
 					entriesToPut.push({
 						dateIso: e.dateIso,
 						dayStatus: e.dayStatus,
@@ -924,6 +982,7 @@ export function useLocalRepository() {
 
 			const serverLogIds = new Set(ws.logs.map((l) => l.id || `log:${l.dateIso}:${l.habitId}`));
 			const allLocalLogs = await db.habitLogs.toArray();
+			const localLogMap = new Map(allLocalLogs.map((l) => [l.id, l]));
 			const logsToDelete = allLocalLogs
 				.filter((l) => !serverLogIds.has(l.id) && !pendingDailyDates.has(l.dateIso))
 				.map((l) => l.id);
@@ -933,9 +992,14 @@ export function useLocalRepository() {
 
 			const logsToPut: LocalHabitLogRecord[] = [];
 			for (const l of ws.logs) {
-				if (!pendingDailyDates.has(l.dateIso)) {
+				const logId = l.id || `log:${l.dateIso}:${l.habitId}`;
+				const localLog = localLogMap.get(logId);
+				if (
+					!pendingDailyDates.has(l.dateIso) &&
+					isServerRecordNewerOrEqual(l.updatedAtIso, localLog?.updatedAtIso)
+				) {
 					logsToPut.push({
-						id: l.id || `log:${l.dateIso}:${l.habitId}`,
+						id: logId,
 						dateIso: l.dateIso,
 						habitId: l.habitId,
 						habitTitleSnapshot: l.habitTitleSnapshot ?? null,

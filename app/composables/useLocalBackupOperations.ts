@@ -5,10 +5,7 @@ import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
 import { DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/constants';
 import type { DatabaseBackupPayload, SyncOutboxMutation } from '~/domain/schemas';
 import { parseTagsJson } from '~/domain/tags';
-
-function clonePlain<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
+import { clonePlain } from '~/utils/clone';
 
 export function createLocalBackupOperations(
 	db: PersonalOSDatabase,

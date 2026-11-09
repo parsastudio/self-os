@@ -22,7 +22,17 @@ const DEFAULT_SESSION_HMAC_DOMAIN_KEY = 'newlife-personal-os-session-v2-domain-k
 
 function getActiveSessionHmacKey(): string {
 	const envSecret = process.env.SESSION_HMAC_SECRET?.trim();
-	return envSecret && envSecret.length >= 16 ? envSecret : DEFAULT_SESSION_HMAC_DOMAIN_KEY;
+	if (envSecret && envSecret.length >= 16) {
+		return envSecret;
+	}
+	const dbUrlFallback = process.env.DATABASE_URL?.trim();
+	if (dbUrlFallback && dbUrlFallback.length >= 16) {
+		return crypto
+			.createHmac('sha256', DEFAULT_SESSION_HMAC_DOMAIN_KEY)
+			.update(dbUrlFallback)
+			.digest('hex');
+	}
+	return DEFAULT_SESSION_HMAC_DOMAIN_KEY;
 }
 
 export const SESSION_COOKIE_NAME = 'newlife_session';
