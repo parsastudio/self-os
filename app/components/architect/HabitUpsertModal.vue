@@ -119,11 +119,17 @@ function handleSubmit() {
 			status: selectedStatus.value,
 			scheduleLabel: scheduleLabel.value.trim() || null,
 			notes: notes.value.trim() || null,
-			bronzeDesc: bronzeDesc.value.trim() || null,
-			silverDesc: silverDesc.value.trim() || null,
-			goldDesc: goldDesc.value.trim() || null,
-			emergencyMinDesc: emergencyMinDesc.value.trim() || null,
-			defaultMinutesPerInterval: 0,
+			bronzeDesc:
+				structureKind.value === 'interval_cadence' ? null : (bronzeDesc.value.trim() || null),
+			silverDesc:
+				structureKind.value === 'interval_cadence' ? null : (silverDesc.value.trim() || null),
+			goldDesc:
+				structureKind.value === 'interval_cadence' ? null : (goldDesc.value.trim() || null),
+			emergencyMinDesc:
+				structureKind.value === 'interval_cadence'
+					? (emergencyMinDesc.value.trim() || null)
+					: null,
+			defaultMinutesPerInterval: props.editingHabit.defaultMinutesPerInterval,
 			reason: reason.value.trim() || 'ویرایش قوانین طرح'
 		});
 	} else {

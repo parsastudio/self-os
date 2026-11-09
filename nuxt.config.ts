@@ -53,11 +53,6 @@ export default defineNuxtConfig({
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
         { rel: 'apple-touch-icon', href: '/favicon.svg' },
         { rel: 'preload', href: '/Vazirmatn.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }
-      ],
-      script: [
-        {
-          innerHTML: `(function(){try{var s=localStorage.getItem('newlife_theme');var d=s?s==='dark':true;var r=document.documentElement;r.classList.toggle('dark',d);r.style.colorScheme=d?'dark':'light';}catch(e){}})();`
-        }
       ]
     }
   },

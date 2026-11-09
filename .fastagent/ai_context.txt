@@ -521,7 +521,13 @@ export async function saveDailyEntryAndLogs(
 				habit?.trackingMode === 'tiered' &&
 				(log.achievedTier === null || log.achievedTier === undefined);
 
-			if (isUnloggedTiered) {
+			const isUnscheduledAndUnloggedCadence =
+				habit?.trackingMode === 'interval_cadence' &&
+				(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
+				(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
+				(!log.totalActualMinutes || log.totalActualMinutes <= 0);
+
+			if (isUnloggedTiered || isUnscheduledAndUnloggedCadence) {
 				if (prev) {
 					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
 					bumpServerStructuralVersion(entryUpdatedAtIso);
@@ -631,6 +637,14 @@ export async function saveCadencePlansForDate(
 				.limit(1);
 			const existing = existingRows[0];
 
+			if (item.plannedMinutesPerInterval <= 0) {
+				if (existing) {
+					await tx.delete(cadencePlans).where(eq(cadencePlans.id, existing.id));
+					bumpServerStructuralVersion(nowIso);
+				}
+				continue;
+			}
+
 			if (existing) {
 				await tx
 					.update(cadencePlans)
@@ -648,53 +662,6 @@ export async function saveCadencePlansForDate(
 					habitId: item.habitId,
 					plannedIntervals: item.plannedIntervals,
 					plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-					cadenceWindowMinutes: item.cadenceWindowMinutes,
-					updatedAtIso: nowIso
-				});
-			}
-
-			const habit = habitMap.get(item.habitId);
-			if (
-				habit &&
-				(habit.defaultIntervals !== item.plannedIntervals ||
-					habit.defaultMinutesPerInterval !== item.plannedMinutesPerInterval ||
-					habit.cadenceWindowMinutes !== item.cadenceWindowMinutes)
-			) {
-				await tx
-					.update(habits)
-					.set({
-						defaultIntervals: item.plannedIntervals,
-						defaultMinutesPerInterval: item.plannedMinutesPerInterval,
-						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: nowIso
-					})
-					.where(eq(habits.id, habit.id));
-
-				await tx.insert(habitLifecycleEvents).values({
-					id: crypto.randomUUID(),
-					habitId: habit.id,
-					habitTitleSnapshot: habit.title,
-					eventType: 'CADENCE_UPDATED',
-					effectiveDateIso: input.targetDateIso,
-					summary: `تنظیم برای روز بعد: در هر ${item.cadenceWindowMinutes} دقیقه، ${item.plannedMinutesPerInterval} دقیقه (${item.plannedIntervals} بازه)`,
-					reason: input.reason || 'تنظیم از شب قبل',
-					previousStateJson: JSON.stringify({
-						intervals: habit.defaultIntervals,
-						minutes: habit.defaultMinutesPerInterval,
-						window: habit.cadenceWindowMinutes
-					}),
-					newStateJson: JSON.stringify({
-						intervals: item.plannedIntervals,
-						minutes: item.plannedMinutesPerInterval,
-						window: item.cadenceWindowMinutes
-					}),
-					createdAtIso: nowIso
-				});
-
-				habitMap.set(habit.id, {
-					...habit,
-					defaultIntervals: item.plannedIntervals,
-					defaultMinutesPerInterval: item.plannedMinutesPerInterval,
 					cadenceWindowMinutes: item.cadenceWindowMinutes,
 					updatedAtIso: nowIso
 				});
@@ -2605,9 +2572,11 @@ export function getApplicableHabitsForDate(
 		dateIso?: string;
 		hasExistingEntry?: boolean;
 		loggedHabitIds?: ReadonlySet<string>;
+		scheduledCadenceHabitIds?: ReadonlySet<string>;
 	}
 ): HabitEntity[] {
 	const loggedSet = options?.loggedHabitIds ?? new Set<string>();
+	const scheduledCadenceSet = options?.scheduledCadenceHabitIds;
 	const dateIso = options?.dateIso;
 	const habitById = new Map(habits.map((h) => [h.id, h]));
 
@@ -2624,6 +2593,9 @@ export function getApplicableHabitsForDate(
 		}
 		if (h.status === 'archived') {
 			return false;
+		}
+		if (h.trackingMode === 'interval_cadence') {
+			return Boolean(scheduledCadenceSet?.has(h.id));
 		}
 		if (h.parentId) {
 			const parent = habitById.get(h.parentId);
@@ -2644,6 +2616,7 @@ export function buildHabitTree(
 		dateIso?: string;
 		hasExistingEntry?: boolean;
 		loggedHabitIds?: ReadonlySet<string>;
+		scheduledCadenceHabitIds?: ReadonlySet<string>;
 	}
 ): {
 	tieredRoots: HabitTreeNode[];
@@ -2805,7 +2778,9 @@ export function evaluateDayStatusColor(
 			.filter(
 				(l) =>
 					(l.achievedTier !== null && l.achievedTier !== undefined) ||
-					l.actualMinutesPerInterval !== null ||
+					(l.plannedMinutesSnapshot !== null &&
+						l.plannedMinutesSnapshot !== undefined &&
+						l.plannedMinutesSnapshot > 0) ||
 					resolveEffectiveCadenceMinutes(l) > 0
 			)
 			.map((l) => l.habitId)
@@ -2813,6 +2788,7 @@ export function evaluateDayStatusColor(
 	const habitById = new Map(habits.map((h) => [h.id, h]));
 	const trackable = habits.filter((h) => {
 		const isLogged = loggedIds.has(h.id);
+		if (h.trackingMode === 'interval_cadence' && !isLogged) return false;
 		if (h.status !== 'active' && !isLogged) return false;
 		if (h.parentId) {
 			const parent = habitById.get(h.parentId);
@@ -2849,7 +2825,7 @@ export function evaluateDayStatusColor(
 			}
 		} else {
 			const actualMinutes = resolveEffectiveCadenceMinutes(log);
-			const plannedMinutes = log.plannedMinutesSnapshot ?? habit.defaultMinutesPerInterval;
+			const plannedMinutes = log.plannedMinutesSnapshot ?? 0;
 			if (actualMinutes <= 0) {
 				zeroCount++;
 			} else if (plannedMinutes <= 0 || actualMinutes >= plannedMinutes) {
@@ -3631,37 +3607,23 @@ function evaluateSingleLeafHabitDay(
 		const plannedMinutes =
 			log?.plannedMinutesSnapshot && log.plannedMinutesSnapshot > 0
 				? log.plannedMinutesSnapshot
-				: habit.defaultMinutesPerInterval > 0
-					? habit.defaultMinutesPerInterval
-					: 10;
+				: null;
+		const actualMinutes = log ? resolveEffectiveCadenceMinutes(log) : 0;
+		const completedIntervals = log?.completedIntervals ?? null;
 
-		if (!log && !hasDailyEntry) {
+		if (!plannedMinutes && actualMinutes <= 0) {
 			return {
 				outcome: 'unlogged',
 				tierLevel: null,
 				score: null,
 				ruleSnapshot: null,
 				actualMinutes: null,
-				plannedMinutes,
+				plannedMinutes: null,
 				completedIntervals: null
 			};
 		}
 
-		const actualMinutes = log ? resolveEffectiveCadenceMinutes(log) : 0;
-		const completedIntervals = log?.completedIntervals ?? null;
-
 		if (actualMinutes <= 0) {
-			if (!log) {
-				return {
-					outcome: 'unlogged',
-					tierLevel: null,
-					score: null,
-					ruleSnapshot: null,
-					actualMinutes: null,
-					plannedMinutes,
-					completedIntervals: null
-				};
-			}
 			return {
 				outcome: 'failed',
 				tierLevel: 0,
@@ -3673,7 +3635,8 @@ function evaluateSingleLeafHabitDay(
 			};
 		}
 
-		const ratio = plannedMinutes > 0 ? actualMinutes / plannedMinutes : 1;
+		const effectiveTarget = plannedMinutes ?? actualMinutes;
+		const ratio = effectiveTarget > 0 ? actualMinutes / effectiveTarget : 1;
 		const score = Math.min(100, Math.round(ratio * 100));
 
 		if (ratio >= CADENCE_SUCCESS_RATIOS.GOLD_THRESHOLD) {
@@ -3681,9 +3644,11 @@ function evaluateSingleLeafHabitDay(
 				outcome: 'gold',
 				tierLevel: 3,
 				score: QUALITY_SCORES.GOLD,
-				ruleSnapshot: `${actualMinutes} دقیقه (تکمیل هدف ${plannedMinutes} دقیقه)`,
+				ruleSnapshot: plannedMinutes
+					? `${actualMinutes} دقیقه (تکمیل هدف ${plannedMinutes} دقیقه)`
+					: `${actualMinutes} دقیقه انجام‌شده`,
 				actualMinutes,
-				plannedMinutes,
+				plannedMinutes: effectiveTarget,
 				completedIntervals
 			};
 		}
@@ -4343,7 +4308,7 @@ export function buildFullAnalyticsReport(params: {
 			avgPlannedMinutes:
 				cadenceLoggedDays > 0
 					? Number((totalPlannedMinutes / cadenceLoggedDays).toFixed(1))
-					: targetHabit.defaultMinutesPerInterval,
+					: 0,
 			weekdayStats,
 			bestWeekday: bestWeekday ?? null,
 			weakestWeekday: weakestWeekday ?? null,
@@ -4574,6 +4539,16 @@ export function assembleJalaliMonthArchive(params: {
 				continue;
 			}
 
+			const actualMinutes = resolveEffectiveCadenceMinutes(log);
+			const plannedMinutes = log.plannedMinutesSnapshot ?? null;
+			if (
+				trackingMode === 'interval_cadence' &&
+				actualMinutes <= 0 &&
+				(!plannedMinutes || plannedMinutes <= 0)
+			) {
+				continue;
+			}
+
 			const title = log.habitTitleSnapshot || h?.title || 'طرح حذف‌شده';
 			const achievedRule =
 				log.achievedRuleSnapshot ||
@@ -4587,10 +4562,9 @@ export function assembleJalaliMonthArchive(params: {
 				trackingMode,
 				achievedTier: log.achievedTier,
 				achievedRule,
-				actualMinutes: resolveEffectiveCadenceMinutes(log),
+				actualMinutes,
 				completedIntervals: log.completedIntervals ?? null,
-				plannedMinutes:
-					log.plannedMinutesSnapshot ?? h?.defaultMinutesPerInterval ?? null,
+				plannedMinutes,
 				isArchived: h ? h.status === 'archived' : true,
 				specSnapshot
 			});
@@ -5131,6 +5105,10 @@ export function onLocalMutationStaged(listener: () => void): () => void {
  * Every write operation writes instantly to indexed Dexie tables
  * and stages an atomic mutation record into `syncOutbox`.
  */
+function clonePlain<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export function useLocalRepository() {
 	const db = useAppDatabase();
 
@@ -5138,6 +5116,7 @@ export function useLocalRepository() {
 		mutation: SyncOutboxMutation,
 		applyLocal: () => Promise<void>
 	): Promise<void> {
+		const plainMutation = clonePlain(mutation);
 		await db.transaction('rw', [
 			db.syncOutbox,
 			db.habits,
@@ -5152,7 +5131,7 @@ export function useLocalRepository() {
 			db.reflectionTags
 		], async () => {
 			await applyLocal();
-			await db.syncOutbox.put(mutation);
+			await db.syncOutbox.put(plainMutation);
 		});
 
 		for (const listener of mutationStagedListeners) {
@@ -5209,6 +5188,17 @@ export function useLocalRepository() {
 						continue;
 					}
 
+					const isUnscheduledAndUnloggedCadence =
+						habit?.trackingMode === 'interval_cadence' &&
+						(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
+						(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
+						(!log.totalActualMinutes || log.totalActualMinutes <= 0);
+
+					if (isUnscheduledAndUnloggedCadence) {
+						await db.habitLogs.delete(logId);
+						continue;
+					}
+
 					const logRecord: LocalHabitLogRecord = {
 						id: logId,
 						dateIso: input.dateIso,
@@ -5242,56 +5232,18 @@ export function useLocalRepository() {
 
 			await stageMutation(mutation, async () => {
 				for (const item of input.items) {
-					await db.cadencePlans.put({
-						id: `plan:${input.targetDateIso}:${item.habitId}`,
-						dateIso: input.targetDateIso,
-						habitId: item.habitId,
-						plannedIntervals: item.plannedIntervals,
-						plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: nowIso
-					});
-
-					const habit = await db.habits.get(item.habitId);
-					if (
-						habit &&
-						(habit.defaultIntervals !== item.plannedIntervals ||
-							habit.defaultMinutesPerInterval !== item.plannedMinutesPerInterval ||
-							habit.cadenceWindowMinutes !== item.cadenceWindowMinutes)
-					) {
-						await db.habits.update(habit.id, {
-							defaultIntervals: item.plannedIntervals,
-							defaultMinutesPerInterval: item.plannedMinutesPerInterval,
+					const planId = `plan:${input.targetDateIso}:${item.habitId}`;
+					if (item.plannedMinutesPerInterval <= 0) {
+						await db.cadencePlans.delete(planId);
+					} else {
+						await db.cadencePlans.put({
+							id: planId,
+							dateIso: input.targetDateIso,
+							habitId: item.habitId,
+							plannedIntervals: item.plannedIntervals,
+							plannedMinutesPerInterval: item.plannedMinutesPerInterval,
 							cadenceWindowMinutes: item.cadenceWindowMinutes,
 							updatedAtIso: nowIso
-						});
-
-						const lifecycleEvent: LifecycleEventEntity = {
-							id: crypto.randomUUID(),
-							habitId: habit.id,
-							habitTitleSnapshot: habit.title,
-							eventType: 'CADENCE_UPDATED',
-							effectiveDateIso: input.targetDateIso,
-							summary: `تنظیم برای روز بعد: در هر ${item.cadenceWindowMinutes} دقیقه، ${item.plannedMinutesPerInterval} دقیقه (${item.plannedIntervals} بازه)`,
-							reason: input.reason || 'تنظیم از شب قبل',
-							previousStateJson: JSON.stringify({
-								intervals: habit.defaultIntervals,
-								minutes: habit.defaultMinutesPerInterval,
-								window: habit.cadenceWindowMinutes
-							}),
-							newStateJson: JSON.stringify({
-								intervals: item.plannedIntervals,
-								minutes: item.plannedMinutesPerInterval,
-								window: item.cadenceWindowMinutes
-							}),
-							createdAtIso: nowIso
-						};
-						await db.lifecycleEvents.put(lifecycleEvent);
-						await db.syncOutbox.put({
-							id: `lifecycle:${lifecycleEvent.id}`,
-							kind: 'ADD_LIFECYCLE_EVENT',
-							queuedAtIso: nowIso,
-							payload: lifecycleEvent
 						});
 					}
 				}
@@ -6736,25 +6688,22 @@ export function useDailyTracker(dateIso: Ref<string>) {
 						updatedAtIso: existing.updatedAtIso ?? null
 					};
 				} else {
-					const effectivePlannedIntervals =
-						habit.trackingMode === 'interval_cadence'
-							? (plannedIntervals ?? habit.defaultIntervals)
-							: plannedIntervals;
-					const effectivePlannedMinutes =
-						habit.trackingMode === 'interval_cadence'
-							? (plannedMinutes ?? habit.defaultMinutesPerInterval)
-							: plannedMinutes;
-
 					nextLogs[habit.id] = {
 						habitId: habit.id,
 						habitTitleSnapshot: habit.title,
 						achievedTier: null,
 						achievedRuleSnapshot: null,
 						completedIntervals: null,
-						actualMinutesPerInterval: habit.trackingMode === 'interval_cadence' ? 0 : null,
-						totalActualMinutes: habit.trackingMode === 'interval_cadence' ? 0 : null,
-						plannedIntervalsSnapshot: effectivePlannedIntervals,
-						plannedMinutesSnapshot: effectivePlannedMinutes,
+						actualMinutesPerInterval:
+							habit.trackingMode === 'interval_cadence' && plannedMinutes && plannedMinutes > 0
+								? 0
+								: null,
+						totalActualMinutes:
+							habit.trackingMode === 'interval_cadence' && plannedMinutes && plannedMinutes > 0
+								? 0
+								: null,
+						plannedIntervalsSnapshot: plannedIntervals,
+						plannedMinutesSnapshot: plannedMinutes,
 						updatedAtIso: null
 					};
 				}
@@ -6765,11 +6714,10 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			const nextTomorrow: Record<string, CadenceDraftItem> = {};
 			for (const habit of habits.value.filter((h) => h.trackingMode === 'interval_cadence')) {
 				const tPlan = tomorrowPlanMap.get(habit.id);
-				const todayPlan = dayPlanMap.get(habit.id);
 				nextTomorrow[habit.id] = {
 					habitId: habit.id,
 					plannedIntervals: 1,
-					plannedMinutesPerInterval: tPlan?.plannedMinutesPerInterval ?? todayPlan?.plannedMinutesPerInterval ?? 0,
+					plannedMinutesPerInterval: tPlan?.plannedMinutesPerInterval ?? 0,
 					cadenceWindowMinutes: 60
 				};
 			}
@@ -6780,11 +6728,37 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		{ immediate: true }
 	);
 
+	const scheduledCadenceHabitIds = computed<ReadonlySet<string>>(() => {
+		const set = new Set<string>();
+		for (const plan of dayCadencePlans.value) {
+			if (plan.plannedMinutesPerInterval > 0) {
+				set.add(plan.habitId);
+			}
+		}
+		for (const log of logs.value) {
+			if (
+				(log.plannedMinutesSnapshot !== null &&
+					log.plannedMinutesSnapshot !== undefined &&
+					log.plannedMinutesSnapshot > 0) ||
+				resolveEffectiveCadenceMinutes(log) > 0
+			) {
+				set.add(log.habitId);
+			}
+		}
+		return set;
+	});
+
+	const schedulableCadenceHabits = computed(() =>
+		habits.value
+			.filter((h) => h.trackingMode === 'interval_cadence' && h.status === 'active')
+			.sort((a, b) => a.sortOrder - b.sortOrder)
+	);
+
 	const loggedHabitIds = computed<ReadonlySet<string>>(() => {
 		const set = new Set<string>();
 		for (const log of Object.values(logsByHabitId.value)) {
 			const hasTier = log.achievedTier !== null && log.achievedTier !== undefined;
-			const hasMinutes = Boolean(entry.value) && resolveEffectiveCadenceMinutes(log) > 0;
+			const hasMinutes = resolveEffectiveCadenceMinutes(log) > 0;
 			if (hasTier || hasMinutes) {
 				set.add(log.habitId);
 			}
@@ -6796,7 +6770,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		getApplicableHabitsForDate(habits.value, {
 			dateIso: dateIso.value,
 			hasExistingEntry: Boolean(entry.value),
-			loggedHabitIds: loggedHabitIds.value
+			loggedHabitIds: loggedHabitIds.value,
+			scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
 		})
 	);
 
@@ -6804,7 +6779,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		buildHabitTree(habits.value, {
 			dateIso: dateIso.value,
 			hasExistingEntry: Boolean(entry.value),
-			loggedHabitIds: loggedHabitIds.value
+			loggedHabitIds: loggedHabitIds.value,
+			scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
 		})
 	);
 
@@ -6831,7 +6807,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			journalText: journalText.value.trim() || null,
 			tags: [...selectedTags.value],
 			updatedAtIso: new Date().toISOString(),
-			logs: Object.values(logsByHabitId.value)
+			logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
 		};
 	}
 
@@ -6892,9 +6868,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 						? current.plannedMinutesSnapshot
 						: current.actualMinutesPerInterval && current.actualMinutesPerInterval > 0
 							? current.actualMinutesPerInterval
-							: habit.defaultMinutesPerInterval > 0
-								? habit.defaultMinutesPerInterval
-								: 10;
+							: 0;
+				if (plannedMinutes <= 0) continue;
 				const intervals = current.completedIntervals ?? null;
 				updated[habit.id] = {
 					...current,
@@ -6960,13 +6935,16 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		for (const habit of habits.value) {
 			const current = updated[habit.id];
 			if (!current) continue;
+			const isScheduledCadence =
+				habit.trackingMode === 'interval_cadence' &&
+				scheduledCadenceHabitIds.value.has(habit.id);
 			updated[habit.id] = {
 				...current,
 				achievedTier: null,
 				achievedRuleSnapshot: null,
 				completedIntervals: null,
-				actualMinutesPerInterval: habit.trackingMode === 'interval_cadence' ? 0 : null,
-				totalActualMinutes: habit.trackingMode === 'interval_cadence' ? 0 : null,
+				actualMinutesPerInterval: isScheduledCadence ? 0 : null,
+				totalActualMinutes: isScheduledCadence ? 0 : null,
 				updatedAtIso: nowIso
 			};
 		}
@@ -7033,7 +7011,12 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	}
 
 	async function saveTomorrowCadencePlans(): Promise<void> {
-		const items = Object.values(tomorrowPlansByHabitId.value);
+		const items = Object.values(tomorrowPlansByHabitId.value).map((item) => ({
+			habitId: item.habitId,
+			plannedIntervals: item.plannedIntervals,
+			plannedMinutesPerInterval: item.plannedMinutesPerInterval,
+			cadenceWindowMinutes: item.cadenceWindowMinutes
+		}));
 		await localRepo.daily.saveCadencePlans({
 			targetDateIso: tomorrowIso.value,
 			items
@@ -7063,6 +7046,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		allEntries,
 		calendarEvents,
 		tree,
+		schedulableCadenceHabits,
 		applicableHabits,
 		availableTags,
 		reflectionNote,
@@ -8895,7 +8879,6 @@ const bronzeDesc = ref(props.editingHabit?.bronzeDesc ?? '');
 const silverDesc = ref(props.editingHabit?.silverDesc ?? '');
 const goldDesc = ref(props.editingHabit?.goldDesc ?? '');
 const emergencyMinDesc = ref(props.editingHabit?.emergencyMinDesc ?? '');
-const defaultMinutesPerInterval = ref<number>(props.editingHabit?.defaultMinutesPerInterval ?? 10);
 const notes = ref(props.editingHabit?.notes ?? '');
 const reason = ref('');
 
@@ -8962,10 +8945,7 @@ function handleSubmit() {
 			silverDesc: silverDesc.value.trim() || null,
 			goldDesc: goldDesc.value.trim() || null,
 			emergencyMinDesc: emergencyMinDesc.value.trim() || null,
-			defaultMinutesPerInterval:
-				structureKind.value === 'interval_cadence'
-					? Math.max(1, Number(defaultMinutesPerInterval.value) || 10)
-					: undefined,
+			defaultMinutesPerInterval: 0,
 			reason: reason.value.trim() || 'ویرایش قوانین طرح'
 		});
 	} else {
@@ -8983,10 +8963,7 @@ function handleSubmit() {
 			goldDesc: goldDesc.value.trim() || undefined,
 			emergencyMinDesc: emergencyMinDesc.value.trim() || undefined,
 			defaultIntervals: 1,
-			defaultMinutesPerInterval:
-				structureKind.value === 'interval_cadence'
-					? Math.max(1, Number(defaultMinutesPerInterval.value) || 10)
-					: 10,
+			defaultMinutesPerInterval: 0,
 			cadenceWindowMinutes: 60,
 			reason: reason.value.trim() || undefined
 		});
@@ -9108,19 +9085,11 @@ function handleSubmit() {
 				</label>
 			</div>
 
-			<!-- تنظیمات هدف روزانه و حداقل اضطراری طرح ریتمی -->
-			<div v-else-if="structureKind === 'interval_cadence'" class="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-elevated p-4 sm:grid-cols-2">
-				<div>
-					<label for="h-default-mins" class="mb-1.5 block text-xs font-bold text-accent-text">هدف پیش‌فرض روزانه (دقیقه)</label>
-					<input
-						id="h-default-mins"
-						v-model.number="defaultMinutesPerInterval"
-						type="number"
-						min="1"
-						required
-						class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 font-mono text-sm font-black text-fg"
-					/>
-				</div>
+			<!-- تنظیمات حداقل اضطراری طرح ریتمی -->
+			<div v-else-if="structureKind === 'interval_cadence'" class="space-y-2 rounded-2xl border border-border bg-elevated p-4">
+				<p class="text-xs font-bold text-fg-secondary">
+					این طرح فقط در روزهایی که از شب قبل در بخش «تنظیم ریتم فردا» برایش زمان تعیین کنید در صفحه ثبت روزانه و آمار ظاهر می‌شود.
+				</p>
 				<div>
 					<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>
 					<input
@@ -9454,9 +9423,7 @@ const emit = defineEmits<{
 const plannedMinutes = computed(() =>
 	props.log?.plannedMinutesSnapshot && props.log.plannedMinutesSnapshot > 0
 		? props.log.plannedMinutesSnapshot
-		: props.habit.defaultMinutesPerInterval > 0
-			? props.habit.defaultMinutesPerInterval
-			: 10
+		: 0
 );
 
 const actualMinutes = computed(() => props.log?.actualMinutesPerInterval ?? 0);
@@ -10045,6 +10012,16 @@ const emit = defineEmits<{
 
 const showReflectionDrawer = ref(false);
 const showTomorrowDrawer = ref(false);
+const isSavedTomorrowToast = ref(false);
+
+function handleSaveTomorrow() {
+	emit('saveTomorrowPlans');
+	isSavedTomorrowToast.value = true;
+	setTimeout(() => {
+		isSavedTomorrowToast.value = false;
+		showTomorrowDrawer.value = false;
+	}, 900);
+}
 
 const tomorrowHuman = computed(() => formatJalaliHuman(props.tomorrowIso));
 const activeNotesBadgeCount = computed(
@@ -10186,10 +10163,15 @@ const activeNotesBadgeCount = computed(
 			<div class="flex justify-end">
 				<button
 					type="button"
-					class="h-10 rounded-xl bg-accent px-5 text-xs font-black text-accent-fg transition active:scale-98"
-					@click="emit('saveTomorrowPlans')"
+					class="h-10 rounded-xl px-5 text-xs font-black transition active:scale-98"
+					:class="
+						isSavedTomorrowToast
+							? 'bg-optimal text-on-solid'
+							: 'bg-accent text-accent-fg'
+					"
+					@click="handleSaveTomorrow"
 				>
-					ذخیره برنامه فردا
+					{{ isSavedTomorrowToast ? 'ذخیره شد ✓' : 'ذخیره برنامه فردا' }}
 				</button>
 			</div>
 		</div>
@@ -12802,7 +12784,7 @@ const groupedTieredSections = computed(() => {
 
 		<template v-else>
 			<TrackerActionToolbar
-				:cadence-habits="tracker.tree.value.cadenceHabits"
+				:cadence-habits="tracker.schedulableCadenceHabits.value"
 				:tomorrow-iso="tracker.tomorrowIso.value"
 				:available-tags="tracker.availableTags.value"
 				:selected-tags="tracker.selectedTags.value"

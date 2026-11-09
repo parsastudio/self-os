@@ -11,7 +11,8 @@ import {
 	getMaxSupportedTier,
 	isHabitNodeCompleted,
 	resolveEffectiveCadenceMinutes,
-	resolveHabitRuleSnapshot
+	resolveHabitRuleSnapshot,
+	resolveHistoricalHabitForDate
 } from '~/core/habit-engine';
 import { shiftIsoDate } from '~/domain/calendar';
 import { DEFAULT_REFLECTION_TAGS, TIER_SCORES } from '~/domain/constants';
@@ -44,6 +45,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const dayCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
 	const tomorrowCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(tomorrowIso.value).toArray(), [], tomorrowIso);
 	const calendarEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
+	const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 	// Local mutable state
 	const reflectionNote = ref('');
@@ -195,8 +197,22 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		return set;
 	});
 
+	const effectiveHabitsForDate = computed<HabitEntity[]>(() => {
+		const logSnapshotByHabitId = new Map(
+			logs.value.map((l) => [l.habitId, l.habitSnapshotJson ?? null])
+		);
+		return habits.value.map((habit) =>
+			resolveHistoricalHabitForDate({
+				habit,
+				dateIso: dateIso.value,
+				logSnapshotJson: logSnapshotByHabitId.get(habit.id),
+				lifecycleEvents: lifecycleEvents.value
+			})
+		);
+	});
+
 	const applicableHabits = computed(() =>
-		getApplicableHabitsForDate(habits.value, {
+		getApplicableHabitsForDate(effectiveHabitsForDate.value, {
 			dateIso: dateIso.value,
 			hasExistingEntry: Boolean(entry.value),
 			loggedHabitIds: loggedHabitIds.value,
@@ -205,7 +221,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	);
 
 	const tree = computed(() =>
-		buildHabitTree(habits.value, {
+		buildHabitTree(effectiveHabitsForDate.value, {
 			dateIso: dateIso.value,
 			hasExistingEntry: Boolean(entry.value),
 			loggedHabitIds: loggedHabitIds.value,
@@ -326,7 +342,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		const current = logsByHabitId.value[habitId];
 		if (!current) return;
 		const nowIso = new Date().toISOString();
-		const habit = habits.value.find((h) => h.id === habitId);
+		const habit = effectiveHabitsForDate.value.find((h) => h.id === habitId);
 
 		logsByHabitId.value[habitId] = {
 			...current,
@@ -340,7 +356,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	}
 
 	function setParentGroupAllTier(parentId: string, tier: number) {
-		const children = habits.value.filter((h) => h.parentId === parentId && h.status === 'active');
+		const children = effectiveHabitsForDate.value.filter((h) => h.parentId === parentId && h.status === 'active');
 		const allAlreadySelected =
 			children.length > 0 && children.every((child) => logsByHabitId.value[child.id]?.achievedTier === tier);
 		const targetTier = allAlreadySelected ? null : tier;
@@ -455,7 +471,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	function isNodeCompleted(habitId: string): boolean {
 		return isHabitNodeCompleted({
 			habitId,
-			habits: habits.value,
+			habits: effectiveHabitsForDate.value,
 			logsByHabitId: logsByHabitId.value,
 			hasExistingEntry: Boolean(entry.value),
 			isDirty: isDirty.value
@@ -463,7 +479,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	}
 
 	function getCompositeNotation(parentId: string): string {
-		const children = habits.value
+		const children = effectiveHabitsForDate.value
 			.filter((h) => h.parentId === parentId && h.status === 'active')
 			.sort((a, b) => a.sortOrder - b.sortOrder);
 		return computeCompositeParentDisplay(children, logsByHabitId.value);

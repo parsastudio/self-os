@@ -608,10 +608,11 @@ export const LocalReflectionTagRecordSchema = z.object({
 export type LocalReflectionTagRecord = z.infer<typeof LocalReflectionTagRecordSchema>;
 
 export const SyncMetaRecordSchema = z.object({
-	key: z.literal('meta:sync'),
+	key: z.enum(['meta:sync', 'meta:theme']),
 	clientId: z.string(),
 	knownServerVersionIso: z.string().nullable(),
-	lastSyncedAtIso: z.string().nullable()
+	lastSyncedAtIso: z.string().nullable(),
+	themeMode: z.enum(['dark', 'light']).optional()
 });
 export type SyncMetaRecord = z.infer<typeof SyncMetaRecordSchema>;
 

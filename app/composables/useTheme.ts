@@ -1,18 +1,38 @@
 import { ref } from 'vue';
+import { getAppDatabase } from '~/composables/useAppDatabase';
 
-function getInitialDarkState(): boolean {
+const isDark = ref(true);
+
+async function loadThemeFromDb(): Promise<boolean> {
 	if (!import.meta.client) return true;
 	try {
-		const stored = localStorage.getItem('newlife_theme');
-		if (stored === 'light') return false;
-		if (stored === 'dark') return true;
+		const db = getAppDatabase();
+		if (!db) return true;
+		const record = await db.syncMeta.get('meta:theme');
+		if (record?.themeMode === 'light') return false;
+		if (record?.themeMode === 'dark') return true;
 	} catch {
-		// ignore storage access errors
+		// ignore db access errors
 	}
 	return true;
 }
 
-const isDark = ref(getInitialDarkState());
+async function persistThemeToDb(dark: boolean): Promise<void> {
+	if (!import.meta.client) return;
+	try {
+		const db = getAppDatabase();
+		if (!db) return;
+		await db.syncMeta.put({
+			key: 'meta:theme',
+			clientId: '',
+			knownServerVersionIso: null,
+			lastSyncedAtIso: null,
+			themeMode: dark ? 'dark' : 'light'
+		});
+	} catch {
+		// ignore db write errors
+	}
+}
 
 export function useTheme() {
 	function applyToDom() {
@@ -24,8 +44,11 @@ export function useTheme() {
 
 	function init() {
 		if (!import.meta.client) return;
-		isDark.value = getInitialDarkState();
 		applyToDom();
+		void loadThemeFromDb().then((storedDark) => {
+			isDark.value = storedDark;
+			applyToDom();
+		});
 	}
 
 	function setTheme(dark: boolean) {
@@ -40,11 +63,7 @@ export function useTheme() {
 
 		const applyChange = () => {
 			isDark.value = dark;
-			try {
-				localStorage.setItem('newlife_theme', isDark.value ? 'dark' : 'light');
-			} catch {
-				// ignore quota errors
-			}
+			void persistThemeToDb(isDark.value);
 			applyToDom();
 		};
 

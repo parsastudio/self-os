@@ -699,24 +699,19 @@ export function useLocalRepository() {
 	};
 
 	async function getSyncMeta(): Promise<SyncMetaRecord> {
-		const fallback: SyncMetaRecord = {
-			key: 'meta:sync',
-			clientId: typeof localStorage !== 'undefined' ? (localStorage.getItem('newlife_client_id') ?? '') : '',
-			knownServerVersionIso: null,
-			lastSyncedAtIso: null
-		};
-
-		if (!fallback.clientId && typeof localStorage !== 'undefined') {
-			fallback.clientId = crypto.randomUUID();
-			try {
-				localStorage.setItem('newlife_client_id', fallback.clientId);
-			} catch {
-				// ignore quota errors
-			}
+		const existing = await db.syncMeta.get('meta:sync');
+		if (existing && existing.clientId) {
+			return existing;
 		}
 
-		const meta = await db.syncMeta.get('meta:sync');
-		return meta || fallback;
+		const initialized: SyncMetaRecord = {
+			key: 'meta:sync',
+			clientId: existing?.clientId || crypto.randomUUID(),
+			knownServerVersionIso: existing?.knownServerVersionIso ?? null,
+			lastSyncedAtIso: existing?.lastSyncedAtIso ?? null
+		};
+		await db.syncMeta.put(initialized);
+		return initialized;
 	}
 
 	async function saveSyncMeta(meta: SyncMetaRecord): Promise<void> {

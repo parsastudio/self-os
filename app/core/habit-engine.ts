@@ -161,7 +161,7 @@ export function getApplicableHabitsForDate(
 		if (loggedSet.has(h.id) || parentIdsWithLoggedChildren.has(h.id)) {
 			return true;
 		}
-		if (h.status === 'archived') {
+		if (h.status === 'archived' || h.status === 'paused') {
 			return false;
 		}
 		if (h.trackingMode === 'interval_cadence') {
@@ -169,7 +169,7 @@ export function getApplicableHabitsForDate(
 		}
 		if (h.parentId) {
 			const parent = habitById.get(h.parentId);
-			if (!parent || parent.status === 'archived') {
+			if (!parent || parent.status === 'archived' || parent.status === 'paused') {
 				return false;
 			}
 		}
@@ -178,6 +178,80 @@ export function getApplicableHabitsForDate(
 		}
 		return true;
 	});
+}
+
+export function resolveHistoricalHabitForDate(params: {
+	habit: HabitEntity;
+	dateIso: string;
+	logSnapshotJson?: string | null;
+	lifecycleEvents?: ReadonlyArray<LifecycleEventEntity>;
+}): HabitEntity {
+	const { habit, dateIso, logSnapshotJson, lifecycleEvents } = params;
+
+	if (logSnapshotJson) {
+		try {
+			const parsed = JSON.parse(logSnapshotJson) as Partial<HabitHistoricalSpec>;
+			return {
+				...habit,
+				title: parsed.title || habit.title,
+				category: parsed.category || habit.category,
+				scheduleLabel:
+					parsed.scheduleLabel !== undefined ? parsed.scheduleLabel : habit.scheduleLabel,
+				notes: parsed.notes !== undefined ? parsed.notes : habit.notes,
+				bronzeDesc: parsed.bronzeDesc !== undefined ? parsed.bronzeDesc : habit.bronzeDesc,
+				silverDesc: parsed.silverDesc !== undefined ? parsed.silverDesc : habit.silverDesc,
+				goldDesc: parsed.goldDesc !== undefined ? parsed.goldDesc : habit.goldDesc,
+				emergencyMinDesc:
+					parsed.emergencyMinDesc !== undefined
+						? parsed.emergencyMinDesc
+						: habit.emergencyMinDesc,
+				isSituational:
+					parsed.isSituational !== undefined ? Boolean(parsed.isSituational) : habit.isSituational
+			};
+		} catch {
+			// Fallback to lifecycle events or current habit
+		}
+	}
+
+	if (lifecycleEvents && lifecycleEvents.length > 0) {
+		const futureEvents = lifecycleEvents
+			.filter(
+				(ev) =>
+					ev.habitId === habit.id &&
+					ev.effectiveDateIso > dateIso &&
+					Boolean(ev.previousStateJson)
+			)
+			.sort((a, b) =>
+				a.createdAtIso > b.createdAtIso ? 1 : a.createdAtIso < b.createdAtIso ? -1 : 0
+			);
+
+		const earliestFutureEvent = futureEvents[0];
+		if (earliestFutureEvent?.previousStateJson) {
+			try {
+				const prev = JSON.parse(earliestFutureEvent.previousStateJson) as Partial<HabitEntity>;
+				return {
+					...habit,
+					title: prev.title || habit.title,
+					scheduleLabel:
+						prev.scheduleLabel !== undefined ? prev.scheduleLabel : habit.scheduleLabel,
+					notes: prev.notes !== undefined ? prev.notes : habit.notes,
+					bronzeDesc: prev.bronzeDesc !== undefined ? prev.bronzeDesc : habit.bronzeDesc,
+					silverDesc: prev.silverDesc !== undefined ? prev.silverDesc : habit.silverDesc,
+					goldDesc: prev.goldDesc !== undefined ? prev.goldDesc : habit.goldDesc,
+					emergencyMinDesc:
+						prev.emergencyMinDesc !== undefined
+							? prev.emergencyMinDesc
+							: habit.emergencyMinDesc,
+					isSituational:
+						prev.isSituational !== undefined ? Boolean(prev.isSituational) : habit.isSituational
+				};
+			} catch {
+				// Ignore malformed JSON
+			}
+		}
+	}
+
+	return habit;
 }
 
 export function buildHabitTree(
@@ -409,6 +483,12 @@ export function evaluateDayStatusColor(
 	return 'partial';
 }
 
+const STATUS_LABELS_FA: Record<string, string> = {
+	active: 'فعال',
+	paused: 'متوقف موقت',
+	archived: 'بایگانی‌شده'
+};
+
 export function extractLifecycleRuleDiffs(
 	prevJson: string | null,
 	newJson: string | null
@@ -419,22 +499,38 @@ export function extractLifecycleRuleDiffs(
 		const next = JSON.parse(newJson) as Record<string, unknown>;
 		const diffs: HabitRuleDiffItem[] = [];
 
-		const fields: Array<{ key: string; label: string }> = [
+		const trackingMode = String(next.trackingMode ?? prev.trackingMode ?? 'tiered');
+		const isCadence = trackingMode === 'interval_cadence';
+
+		const baseFields: Array<{ key: string; label: string }> = [
 			{ key: 'title', label: 'عنوان طرح' },
 			{ key: 'scheduleLabel', label: 'زمان انجام' },
-			{ key: 'bronzeDesc', label: 'شرط برنز (حداقل)' },
-			{ key: 'silverDesc', label: 'شرط نقره' },
-			{ key: 'goldDesc', label: 'شرط طلا' },
-			{ key: 'emergencyMinDesc', label: 'حداقل اضطراری' },
-			{ key: 'defaultMinutesPerInterval', label: 'دقیقه هدف در هر بازه' },
-			{ key: 'cadenceWindowMinutes', label: 'پنجره زمانی تکرار (دقیقه)' },
-			{ key: 'status', label: 'وضعیت فعال‌بودن' },
+			...(isCadence
+				? [
+						{ key: 'emergencyMinDesc', label: 'حداقل اضطراری' },
+						{ key: 'defaultMinutesPerInterval', label: 'دقیقه هدف در هر بازه' },
+						{ key: 'cadenceWindowMinutes', label: 'پنجره زمانی تکرار (دقیقه)' }
+					]
+				: [
+						{ key: 'bronzeDesc', label: 'شرط برنز (حداقل)' },
+						{ key: 'silverDesc', label: 'شرط نقره' },
+						{ key: 'goldDesc', label: 'شرط طلا' }
+					]),
+			{ key: 'status', label: 'وضعیت طرح' },
 			{ key: 'notes', label: 'تبصره طرح' }
 		];
 
-		for (const f of fields) {
-			const oldVal = String(prev[f.key] ?? '').trim();
-			const newVal = String(next[f.key] ?? '').trim();
+		for (const f of baseFields) {
+			if (!(f.key in next)) continue;
+
+			let oldVal = String(prev[f.key] ?? '').trim();
+			let newVal = String(next[f.key] ?? '').trim();
+
+			if (f.key === 'status') {
+				oldVal = STATUS_LABELS_FA[oldVal] ?? oldVal;
+				newVal = STATUS_LABELS_FA[newVal] ?? newVal;
+			}
+
 			if (oldVal !== newVal && (oldVal !== '' || newVal !== '')) {
 				diffs.push({
 					fieldLabel: f.label,
@@ -539,8 +635,11 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		}
 	} else if (current.status !== input.status) {
 		eventType = input.status === 'archived' ? 'DELETED' : 'STATUS_CHANGED';
-		summary = `تغییر وضعیت «${input.title}» به ${input.status}`;
+		const statusLabel = STATUS_LABELS_FA[input.status] ?? input.status;
+		summary = `تغییر وضعیت «${input.title}» به ${statusLabel}`;
 	}
+
+	const isCadence = current.trackingMode === 'interval_cadence';
 
 	const updatedHabit: HabitEntity = {
 		...current,
@@ -552,12 +651,12 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		status: input.status,
 		scheduleLabel: input.scheduleLabel?.trim() || null,
 		notes: input.notes?.trim() || null,
-		bronzeDesc: input.bronzeDesc?.trim() || null,
-		silverDesc: input.silverDesc?.trim() || null,
-		goldDesc: input.goldDesc?.trim() || null,
-		emergencyMinDesc: input.emergencyMinDesc?.trim() || null,
+		bronzeDesc: isCadence ? null : (input.bronzeDesc?.trim() || null),
+		silverDesc: isCadence ? null : (input.silverDesc?.trim() || null),
+		goldDesc: isCadence ? null : (input.goldDesc?.trim() || null),
+		emergencyMinDesc: isCadence ? (input.emergencyMinDesc?.trim() || null) : null,
 		defaultMinutesPerInterval:
-			input.defaultMinutesPerInterval !== undefined
+			isCadence && input.defaultMinutesPerInterval !== undefined
 				? input.defaultMinutesPerInterval
 				: current.defaultMinutesPerInterval,
 		updatedAtIso: nowIso
@@ -572,7 +671,7 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		summary,
 		reason: input.reason,
 		previousStateJson: JSON.stringify(current),
-		newStateJson: JSON.stringify(input),
+		newStateJson: JSON.stringify(updatedHabit),
 		createdAtIso: nowIso
 	};
 
