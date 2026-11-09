@@ -55,8 +55,9 @@ function resolveDateRangeWindow(
 		if (l.dateIso < minIso) minIso = l.dateIso;
 	}
 	for (const h of habits) {
-		if (h.createdAtIso && h.createdAtIso < minIso) {
-			minIso = h.createdAtIso;
+		const createdDateIso = h.createdAtIso ? h.createdAtIso.slice(0, 10) : '';
+		if (createdDateIso && createdDateIso < minIso) {
+			minIso = createdDateIso;
 		}
 	}
 

@@ -4,12 +4,13 @@ import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateHabitInput, HabitEntity, MutateHabitStructureInput } from '~/domain/schemas';
 import ArchitectHabitCard from '~/components/architect/ArchitectHabitCard.vue';
-import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.vue';
->>>>>>>
-<<<<<<< SEARCH
 		<!-- مودال درج و ویرایش طرح -->
-		<HabitUpsertModal
+		<LazyArchitectHabitUpsertModal
 			v-if="activeModal"
+import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
+=======
+import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.vue';
+import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
 =======
 		<!-- مودال درج و ویرایش طرح -->
 		<LazyArchitectHabitUpsertModal
@@ -128,7 +129,7 @@ async function handleUpdateHabit(payload: MutateHabitStructureInput) {
 		<ArchivedHabitsSection :archived-habits="archivedHabits" @edit-habit="openEditModal" />
 
 		<!-- مودال درج و ویرایش طرح -->
-		<HabitUpsertModal
+		<LazyArchitectHabitUpsertModal
 			v-if="activeModal"
 			:key="`${activeModal}:${editingHabit?.id ?? createParentId}`"
 			:mode="activeModal"

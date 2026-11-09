@@ -7,7 +7,13 @@ import {
 	resolveHabitRuleSnapshot,
 	serializeHabitSpecSnapshot
 } from '~/core/habit-engine';
-import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, resolveCompletedRangeDates } from '~/domain/calendar';
+import {
+	generateId,
+	getTodayIso,
+	isoToJalaliParts,
+	isoToJalaliSlash,
+	resolveCompletedRangeDates
+} from '~/domain/calendar';
 import { buildDemoSeedDataset, DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/demo-seed';
 import { parseTagsJson } from '~/domain/tags';
 import type {
@@ -56,10 +62,11 @@ export function useLocalRepository() {
 	const db = useAppDatabase();
 
 	async function stageMutation(
-		mutation: SyncOutboxMutation,
+		mutations: SyncOutboxMutation | SyncOutboxMutation[],
 		applyLocal: () => Promise<void>
 	): Promise<void> {
-		const plainMutation = clonePlain(mutation);
+		const mutationList = Array.isArray(mutations) ? mutations : [mutations];
+		const plainMutations = mutationList.map((m) => clonePlain(m));
 		await db.transaction('rw', [
 			db.syncOutbox,
 			db.habits,
@@ -74,7 +81,9 @@ export function useLocalRepository() {
 			db.reflectionTags
 		], async () => {
 			await applyLocal();
-			await db.syncOutbox.put(plainMutation);
+			if (plainMutations.length > 0) {
+				await db.syncOutbox.bulkPut(plainMutations);
+			}
 		});
 
 		for (const listener of mutationStagedListeners) {
@@ -217,21 +226,23 @@ export function useLocalRepository() {
 			});
 
 			await stageMutation(
-				{
-					id: `habit:${newHabit.id}`,
-					kind: 'UPSERT_HABIT',
-					queuedAtIso: nowIso,
-					payload: newHabit
-				},
-				async () => {
-					await db.habits.put(newHabit);
-					await db.lifecycleEvents.put(lifecycleEvent);
-					await db.syncOutbox.put({
+				[
+					{
+						id: `habit:${newHabit.id}`,
+						kind: 'UPSERT_HABIT',
+						queuedAtIso: nowIso,
+						payload: newHabit
+					},
+					{
 						id: `lifecycle:${lifecycleEvent.id}`,
 						kind: 'ADD_LIFECYCLE_EVENT',
 						queuedAtIso: nowIso,
 						payload: lifecycleEvent
-					});
+					}
+				],
+				async () => {
+					await db.habits.put(newHabit);
+					await db.lifecycleEvents.put(lifecycleEvent);
 				}
 			);
 
@@ -254,44 +265,51 @@ export function useLocalRepository() {
 				nowIso
 			});
 
+			const cascadedChildren: HabitEntity[] = [];
+			if (current.status !== updatedHabit.status && !updatedHabit.parentId) {
+				const children = await db.habits
+					.where('parentId')
+					.equals(updatedHabit.id)
+					.toArray();
+				for (const child of children) {
+					if (child.status !== updatedHabit.status && child.status !== 'archived') {
+						cascadedChildren.push({
+							...child,
+							status: updatedHabit.status,
+							updatedAtIso: nowIso
+						});
+					}
+				}
+			}
+
 			await stageMutation(
-				{
-					id: `habit:${input.habitId}`,
-					kind: 'UPSERT_HABIT',
-					queuedAtIso: nowIso,
-					payload: updatedHabit
-				},
-				async () => {
-					await db.habits.put(updatedHabit);
-					await db.lifecycleEvents.put(lifecycleEvent);
-					await db.syncOutbox.put({
+				[
+					{
+						id: `habit:${input.habitId}`,
+						kind: 'UPSERT_HABIT',
+						queuedAtIso: nowIso,
+						payload: updatedHabit
+					},
+					{
 						id: `lifecycle:${lifecycleEvent.id}`,
 						kind: 'ADD_LIFECYCLE_EVENT',
 						queuedAtIso: nowIso,
 						payload: lifecycleEvent
-					});
-
-					if (current.status !== updatedHabit.status && !updatedHabit.parentId) {
-						const children = await db.habits
-							.where('parentId')
-							.equals(updatedHabit.id)
-							.toArray();
-						for (const child of children) {
-							if (child.status !== updatedHabit.status && child.status !== 'archived') {
-								const cascadedChild: HabitEntity = {
-									...child,
-									status: updatedHabit.status,
-									updatedAtIso: nowIso
-								};
-								await db.habits.put(cascadedChild);
-								await db.syncOutbox.put({
-									id: `habit:${cascadedChild.id}`,
-									kind: 'UPSERT_HABIT',
-									queuedAtIso: nowIso,
-									payload: cascadedChild
-								});
-							}
-						}
+					},
+					...cascadedChildren.map(
+						(cascadedChild): SyncOutboxMutation => ({
+							id: `habit:${cascadedChild.id}`,
+							kind: 'UPSERT_HABIT',
+							queuedAtIso: nowIso,
+							payload: cascadedChild
+						})
+					)
+				],
+				async () => {
+					await db.habits.put(updatedHabit);
+					await db.lifecycleEvents.put(lifecycleEvent);
+					if (cascadedChildren.length > 0) {
+						await db.habits.bulkPut(cascadedChildren);
 					}
 				}
 			);
@@ -317,7 +335,7 @@ export function useLocalRepository() {
 		return {
 			nowIso,
 			base: {
-				id: params.id || crypto.randomUUID(),
+				id: params.id || generateId(),
 				title: params.title.trim(),
 				startedAtIso,
 				finishedAtIso,
@@ -541,7 +559,7 @@ export function useLocalRepository() {
 		async create(input: UpsertNoteInput): Promise<NoteEntity> {
 			const nowIso = new Date().toISOString();
 			const newNote: NoteEntity = {
-				id: crypto.randomUUID(),
+				id: generateId(),
 				title: input.title.trim(),
 				content: input.content.trim(),
 				category: input.category.trim() || 'عمومی',
@@ -638,7 +656,7 @@ export function useLocalRepository() {
 			const nowIso = new Date().toISOString();
 
 			const newEvent: CalendarEventEntity = {
-				id: crypto.randomUUID(),
+				id: generateId(),
 				title: input.title.trim(),
 				eventType: input.eventType,
 				isAnnual,
@@ -714,7 +732,7 @@ export function useLocalRepository() {
 
 		const initialized: SyncMetaRecord = {
 			key: 'meta:sync',
-			clientId: existing?.clientId || crypto.randomUUID(),
+			clientId: existing?.clientId || generateId(),
 			knownServerVersionIso: existing?.knownServerVersionIso ?? null,
 			lastSyncedAtIso: existing?.lastSyncedAtIso ?? null
 		};
@@ -818,11 +836,18 @@ export function useLocalRepository() {
 			await db.lifecycleEvents.bulkPut(ws.lifecycleEvents);
 
 			if (ws.availableTags && ws.availableTags.length > 0) {
-				const tagRecords = ws.availableTags.map((label, idx) => ({
-					id: `tag-${idx + 1}`,
-					label,
-					sortOrder: idx + 1
-				}));
+				const existingTags = await db.reflectionTags.toArray();
+				const existingByLabel = new Map(existingTags.map((t) => [t.label, t]));
+				const uniqueLabels = Array.from(new Set(ws.availableTags));
+				const tagRecords = uniqueLabels.map((label, idx) => {
+					const matched = existingByLabel.get(label);
+					return {
+						id: matched?.id ?? `tag:${label}`,
+						label,
+						sortOrder: idx + 1
+					};
+				});
+				await db.reflectionTags.clear();
 				await db.reflectionTags.bulkPut(tagRecords);
 			}
 

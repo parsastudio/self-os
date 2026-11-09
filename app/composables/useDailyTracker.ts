@@ -450,7 +450,9 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	function copyTodayActualsToTomorrowPlan() {
 		const next = { ...tomorrowPlansByHabitId.value };
-		for (const habit of habits.value.filter((h) => h.trackingMode === 'interval_cadence')) {
+		for (const habit of habits.value.filter(
+			(h) => h.trackingMode === 'interval_cadence' && h.status === 'active'
+		)) {
 			const log = logsByHabitId.value[habit.id];
 			if (log) {
 				next[habit.id] = {

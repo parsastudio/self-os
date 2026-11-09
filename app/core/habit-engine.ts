@@ -1,3 +1,4 @@
+import { generateId } from '~/domain/calendar';
 import { COMPOSITE_FULL_LABEL, DEFAULT_HABIT_CATEGORY, TIER_SCORES } from '~/domain/constants';
 import type {
 	CreateHabitInput,
@@ -339,7 +340,11 @@ export function isHabitNodeCompleted(params: {
 	const habit = habits.find((h) => h.id === habitId);
 	if (!habit) return false;
 
-	const children = habits.filter((h) => h.parentId === habitId && h.status === 'active');
+	const children = habits.filter((h) => {
+		if (h.parentId !== habitId) return false;
+		const childTier = logsByHabitId[h.id]?.achievedTier;
+		return h.status === 'active' || (childTier !== null && childTier !== undefined);
+	});
 	if (children.length > 0) {
 		return children.every((c) => {
 			const tier = logsByHabitId[c.id]?.achievedTier;
@@ -566,7 +571,7 @@ export function buildCreatedHabitWithLifecycle(params: {
 	const { input, maxSortOrder, todayIso, nowIso } = params;
 
 	const habit: HabitEntity = {
-		id: crypto.randomUUID(),
+		id: generateId(),
 		parentId: input.parentId ?? null,
 		title: input.title.trim(),
 		category: input.category.trim() || DEFAULT_HABIT_CATEGORY,
@@ -589,7 +594,7 @@ export function buildCreatedHabitWithLifecycle(params: {
 	};
 
 	const lifecycleEvent: LifecycleEventEntity = {
-		id: crypto.randomUUID(),
+		id: generateId(),
 		habitId: habit.id,
 		habitTitleSnapshot: habit.title,
 		eventType: habit.parentId ? 'CONVERTED_TO_SUBHABIT' : 'CREATED',
@@ -659,7 +664,7 @@ export function buildUpdatedHabitWithLifecycle(params: {
 	};
 
 	const lifecycleEvent: LifecycleEventEntity = {
-		id: crypto.randomUUID(),
+		id: generateId(),
 		habitId: input.habitId,
 		habitTitleSnapshot: updatedHabit.title,
 		eventType,

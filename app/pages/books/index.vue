@@ -4,11 +4,12 @@ import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
-import BookItemCard from '~/components/books/BookItemCard.vue';
->>>>>>>
-<<<<<<< SEARCH
-		<BookUpsertModal
+		<LazyBooksBookUpsertModal
 			v-if="isModalOpen"
+import { BookOpen, Plus } from 'lucide-vue-next';
+=======
+import BookItemCard from '~/components/books/BookItemCard.vue';
+import { BookOpen, Plus } from 'lucide-vue-next';
 =======
 		<LazyBooksBookUpsertModal
 			v-if="isModalOpen"
@@ -118,7 +119,7 @@ async function handleDeleteBook(bookId: string) {
 			/>
 		</div>
 
-		<BookUpsertModal
+		<LazyBooksBookUpsertModal
 			v-if="isModalOpen"
 			:key="editingBook?.id ?? 'new'"
 			:editing-book="editingBook"

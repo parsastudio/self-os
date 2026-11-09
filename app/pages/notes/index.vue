@@ -5,11 +5,12 @@ import { useLocalRepository } from '~/composables/useLocalRepository';
 import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
-import NoteItemCard from '~/components/notes/NoteItemCard.vue';
->>>>>>>
-<<<<<<< SEARCH
-		<NoteUpsertModal
+		<LazyNotesNoteUpsertModal
 			v-if="isModalOpen"
+import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
+=======
+import NoteItemCard from '~/components/notes/NoteItemCard.vue';
+import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 =======
 		<LazyNotesNoteUpsertModal
 			v-if="isModalOpen"
@@ -283,7 +284,7 @@ async function handleDeleteNote(noteId: string) {
 			/>
 		</div>
 
-		<NoteUpsertModal
+		<LazyNotesNoteUpsertModal
 			v-if="isModalOpen"
 			:key="editingNote?.id ?? 'new'"
 			:editing-note="editingNote"

@@ -29,20 +29,31 @@ import type {
 const SYNC_STATE_SINGLETON_ID = 'singleton';
 let lastStructuralMutationIso = '1970-01-01T00:00:00.000Z';
 
+function resolveNextStructuralVersionIso(candidateIso?: string): string {
+	const nowMs = Date.now();
+	const candidateMs = candidateIso ? Date.parse(candidateIso) : nowMs;
+	const lastMs = Date.parse(lastStructuralMutationIso) || 0;
+	const nextMs = Math.max(
+		nowMs,
+		Number.isNaN(candidateMs) ? nowMs : candidateMs,
+		lastMs + 1
+	);
+	return new Date(nextMs).toISOString();
+}
+
 export async function bumpServerStructuralVersion(
-	iso = new Date().toISOString(),
+	iso?: string,
 	txExecutor?: DbExecutor
 ): Promise<void> {
-	if (iso > lastStructuralMutationIso) {
-		lastStructuralMutationIso = iso;
-	}
+	const effectiveIso = resolveNextStructuralVersionIso(iso);
+	lastStructuralMutationIso = effectiveIso;
 	await ensureDatabaseReady();
 	const executor = txExecutor ?? db;
 	await executor
 		.insert(syncState)
 		.values({
 			id: SYNC_STATE_SINGLETON_ID,
-			structuralVersionIso: iso
+			structuralVersionIso: effectiveIso
 		})
 		.onConflictDoUpdate({
 			target: syncState.id,
@@ -88,6 +99,9 @@ export async function processClientSyncRequest(
 ): Promise<ServerSyncResponse> {
 	await ensureDatabaseReady();
 	const versionBeforeMutations = await getServerMaxVersionIso();
+	if (versionBeforeMutations > lastStructuralMutationIso) {
+		lastStructuralMutationIso = versionBeforeMutations;
+	}
 	const hadRemoteUpdatesBeforePush = Boolean(
 		input.knownServerVersionIso && versionBeforeMutations > input.knownServerVersionIso
 	);

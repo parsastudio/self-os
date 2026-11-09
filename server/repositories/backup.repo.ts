@@ -162,6 +162,7 @@ export async function importDatabaseFromJson(
 		const merged = computeSmartBackupMerge(existingData, data);
 		skippedDuplicatesCount = merged.skippedDuplicatesCount;
 
+		const UPSERT_CHUNK_SIZE = 400;
 		const batchUpsertRows = async <T extends Record<string, unknown>>(
 			table: PgTable,
 			targetCols: PgColumn | PgColumn[],
@@ -169,13 +170,17 @@ export async function importDatabaseFromJson(
 			excludeKeys: string[] = ['id']
 		) => {
 			if (rows.length === 0) return;
-			await tx
-				.insert(table)
-				.values(rows as Record<string, unknown>[])
-				.onConflictDoUpdate({
-					target: targetCols,
-					set: buildConflictUpdateSet(table, excludeKeys)
-				});
+			const conflictSet = buildConflictUpdateSet(table, excludeKeys);
+			for (let offset = 0; offset < rows.length; offset += UPSERT_CHUNK_SIZE) {
+				const chunk = rows.slice(offset, offset + UPSERT_CHUNK_SIZE);
+				await tx
+					.insert(table)
+					.values(chunk as Record<string, unknown>[])
+					.onConflictDoUpdate({
+						target: targetCols,
+						set: conflictSet
+					});
+			}
 			totalImported += rows.length;
 		};
 

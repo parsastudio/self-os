@@ -83,7 +83,7 @@ export async function saveDailyEntryAndLogs(
 		if (isDailyEntryEmpty(input)) {
 			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
 			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
-			await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
+			await bumpServerStructuralVersion(nowIso, tx);
 			return;
 		}
 
@@ -97,7 +97,7 @@ export async function saveDailyEntryAndLogs(
 		for (const prevLog of previousLogs) {
 			if (!incomingHabitIds.has(prevLog.habitId)) {
 				await tx.delete(habitLogs).where(eq(habitLogs.id, prevLog.id));
-				await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
+				await bumpServerStructuralVersion(nowIso, tx);
 			}
 		}
 
@@ -118,7 +118,7 @@ export async function saveDailyEntryAndLogs(
 			if (isUnloggedTiered || isUnscheduledAndUnloggedCadence) {
 				if (prev) {
 					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
-					await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
+					await bumpServerStructuralVersion(nowIso, tx);
 				}
 				continue;
 			}

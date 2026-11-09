@@ -417,13 +417,10 @@ PATH: server/repositories/daily-tracker.repo.ts
 
 import { and, asc, eq } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '../database/index';
-import crypto from 'node:crypto';
 import {
 	cadencePlans,
 	dailyEntries,
-	habitLifecycleEvents,
 	habitLogs,
-	habits,
 	reflectionTags
 } from '../database/schema';
 import { getAllHabits } from './habits.repo';
@@ -503,7 +500,7 @@ export async function saveDailyEntryAndLogs(
 		if (isDailyEntryEmpty(input)) {
 			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
 			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
-			bumpServerStructuralVersion(entryUpdatedAtIso);
+			await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
 			return;
 		}
 
@@ -512,6 +509,14 @@ export async function saveDailyEntryAndLogs(
 			.from(habitLogs)
 			.where(eq(habitLogs.dateIso, input.dateIso));
 		const previousLogByHabitId = new Map(previousLogs.map((l) => [l.habitId, l]));
+		const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
+
+		for (const prevLog of previousLogs) {
+			if (!incomingHabitIds.has(prevLog.habitId)) {
+				await tx.delete(habitLogs).where(eq(habitLogs.id, prevLog.id));
+				await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
+			}
+		}
 
 		for (const log of input.logs) {
 			const habit = habitMap.get(log.habitId);
@@ -530,7 +535,7 @@ export async function saveDailyEntryAndLogs(
 			if (isUnloggedTiered || isUnscheduledAndUnloggedCadence) {
 				if (prev) {
 					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
-					bumpServerStructuralVersion(entryUpdatedAtIso);
+					await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
 				}
 				continue;
 			}
@@ -640,7 +645,7 @@ export async function saveCadencePlansForDate(
 			if (item.plannedMinutesPerInterval <= 0) {
 				if (existing) {
 					await tx.delete(cadencePlans).where(eq(cadencePlans.id, existing.id));
-					bumpServerStructuralVersion(nowIso);
+					await bumpServerStructuralVersion(nowIso, tx);
 				}
 				continue;
 			}
@@ -736,9 +741,8 @@ export async function clearAllDatabaseRecords(): Promise<void> {
 	await ensureDatabaseReady();
 	await db.transaction(async (tx) => {
 		await truncateAllWorkspaceTables(tx);
+		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
-
-	bumpServerStructuralVersion();
 }
 
 export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount: number }> {
@@ -816,7 +820,7 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 		).length;
 	});
 
-	bumpServerStructuralVersion();
+	await bumpServerStructuralVersion();
 	return { removedRecordsCount: removed };
 }
 
@@ -872,19 +876,19 @@ export async function importDatabaseFromJson(
 			dailyEntries,
 			dailyEntries.dateIso,
 			merged.dailyEntriesToUpsert,
-			['id', 'dateIso']
+			['dateIso']
 		);
 		await batchUpsertRows(
 			habitLogs,
 			[habitLogs.dateIso, habitLogs.habitId],
 			merged.habitLogsToUpsert,
-			['id']
+			[]
 		);
 		await batchUpsertRows(
 			cadencePlans,
 			[cadencePlans.dateIso, cadencePlans.habitId],
 			merged.cadencePlansToUpsert,
-			['id']
+			[]
 		);
 		await batchUpsertRows(books, books.id, merged.booksToUpsert);
 		await batchUpsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
@@ -899,11 +903,11 @@ export async function importDatabaseFromJson(
 			reflectionTags,
 			reflectionTags.label,
 			merged.reflectionTagsToUpsert,
-			['id', 'label']
+			['label']
 		);
+		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
 
-	bumpServerStructuralVersion();
 	return { importedRecordsCount: totalImported, skippedDuplicatesCount };
 }
 
@@ -925,10 +929,12 @@ import {
 	habitLogs,
 	habits,
 	mediaLogs,
-	notes
+	notes,
+	syncState
 } from '../database/schema';
 import { getAllHabits } from './habits.repo';
 import {
+	type DbExecutor,
 	getReflectionTags,
 	saveCadencePlansForDate,
 	saveDailyEntryAndLogs
@@ -940,12 +946,30 @@ import type {
 	SyncRequestPayload
 } from '~/domain/schemas';
 
+const SYNC_STATE_SINGLETON_ID = 'singleton';
 let lastStructuralMutationIso = '1970-01-01T00:00:00.000Z';
 
-export function bumpServerStructuralVersion(iso = new Date().toISOString()): void {
+export async function bumpServerStructuralVersion(
+	iso = new Date().toISOString(),
+	txExecutor?: DbExecutor
+): Promise<void> {
 	if (iso > lastStructuralMutationIso) {
 		lastStructuralMutationIso = iso;
 	}
+	await ensureDatabaseReady();
+	const executor = txExecutor ?? db;
+	await executor
+		.insert(syncState)
+		.values({
+			id: SYNC_STATE_SINGLETON_ID,
+			structuralVersionIso: iso
+		})
+		.onConflictDoUpdate({
+			target: syncState.id,
+			set: {
+				structuralVersionIso: sql`GREATEST(${syncState.structuralVersionIso}, excluded.structural_version_iso)`
+			}
+		});
 }
 
 export async function getServerMaxVersionIso(): Promise<string> {
@@ -969,6 +993,8 @@ export async function getServerMaxVersionIso(): Promise<string> {
 			SELECT MAX(updated_at_iso) AS ts FROM calendar_events
 			UNION ALL
 			SELECT MAX(created_at_iso) AS ts FROM habit_lifecycle_events
+			UNION ALL
+			SELECT MAX(structural_version_iso) AS ts FROM sync_state
 		) AS combined_timestamps
 	`);
 
@@ -996,71 +1022,76 @@ export async function processClientSyncRequest(
 		const allHabitsList = await getAllHabits();
 		const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
 
-		for (const mutation of sortedMutations) {
-			try {
+		await db.transaction(async (tx) => {
+			for (const mutation of sortedMutations) {
 				if (mutation.kind === 'SAVE_DAILY_ENTRY') {
-					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap);
+					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
-					await saveCadencePlansForDate(mutation.payload, preloadedHabitMap);
+					await saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'UPSERT_BOOK') {
-					await db
+					await tx
 						.insert(books)
 						.values(mutation.payload)
 						.onConflictDoUpdate({
 							target: books.id,
-							set: mutation.payload
+							set: mutation.payload,
+							setWhere: sql`${books.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${books.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_BOOK') {
-					await db.delete(books).where(eq(books.id, mutation.payload.bookId));
-					bumpServerStructuralVersion(mutation.queuedAtIso);
+					await tx.delete(books).where(eq(books.id, mutation.payload.bookId));
+					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
 				} else if (mutation.kind === 'UPSERT_MEDIA') {
-					await db
+					await tx
 						.insert(mediaLogs)
 						.values(mutation.payload)
 						.onConflictDoUpdate({
 							target: mediaLogs.id,
-							set: mutation.payload
+							set: mutation.payload,
+							setWhere: sql`${mediaLogs.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${mediaLogs.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_MEDIA') {
-					await db
+					await tx
 						.delete(mediaLogs)
 						.where(eq(mediaLogs.id, mutation.payload.mediaId));
-					bumpServerStructuralVersion(mutation.queuedAtIso);
+					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
 				} else if (mutation.kind === 'UPSERT_NOTE') {
-					await db
+					await tx
 						.insert(notes)
 						.values(mutation.payload)
 						.onConflictDoUpdate({
 							target: notes.id,
-							set: mutation.payload
+							set: mutation.payload,
+							setWhere: sql`excluded.updated_at_iso >= ${notes.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_NOTE') {
-					await db.delete(notes).where(eq(notes.id, mutation.payload.noteId));
-					bumpServerStructuralVersion(mutation.queuedAtIso);
+					await tx.delete(notes).where(eq(notes.id, mutation.payload.noteId));
+					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
 				} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
-					await db
+					await tx
 						.insert(calendarEvents)
 						.values(mutation.payload)
 						.onConflictDoUpdate({
 							target: calendarEvents.id,
-							set: mutation.payload
+							set: mutation.payload,
+							setWhere: sql`${calendarEvents.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${calendarEvents.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
-					await db
+					await tx
 						.delete(calendarEvents)
 						.where(eq(calendarEvents.id, mutation.payload.eventId));
-					bumpServerStructuralVersion(mutation.queuedAtIso);
+					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
 				} else if (mutation.kind === 'UPSERT_HABIT') {
-					await db
+					await tx
 						.insert(habits)
 						.values(mutation.payload)
 						.onConflictDoUpdate({
 							target: habits.id,
-							set: mutation.payload
+							set: mutation.payload,
+							setWhere: sql`${habits.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${habits.updatedAtIso}`
 						});
 					preloadedHabitMap.set(mutation.payload.id, mutation.payload);
 				} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
-					await db
+					await tx
 						.insert(habitLifecycleEvents)
 						.values(mutation.payload)
 						.onConflictDoUpdate({
@@ -1069,13 +1100,8 @@ export async function processClientSyncRequest(
 						});
 				}
 				appliedMutationIds.push(mutation.id);
-			} catch (err) {
-				console.error(
-					`[Sync] Failed to apply mutation ${mutation.id} (${mutation.kind}):`,
-					err
-				);
 			}
-		}
+		});
 	}
 
 	const serverVersionIso = await getServerMaxVersionIso();
@@ -1436,6 +1462,11 @@ async function bootstrapPostgreSqlSchema(): Promise<void> {
 			last_seen_at_iso TEXT NOT NULL
 		);
 
+		CREATE TABLE IF NOT EXISTS sync_state (
+			id TEXT PRIMARY KEY,
+			structural_version_iso TEXT NOT NULL
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_habits_parent_id ON habits(parent_id);
 		CREATE INDEX IF NOT EXISTS idx_habits_updated_at ON habits(updated_at_iso);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_cadence_plans_date_habit ON cadence_plans(date_iso, habit_id);
@@ -1716,6 +1747,11 @@ export const authSessions = pgTable(
 	(t) => [index('idx_auth_sessions_expires_at').on(t.expiresAtIso)]
 );
 
+export const syncState = pgTable('sync_state', {
+	id: text('id').primaryKey(),
+	structuralVersionIso: text('structural_version_iso').notNull()
+});
+
 
 ----------------------------------------------------------------
 
@@ -1801,7 +1837,7 @@ PATH: server/api/sync.post.ts
 ================================================================
 
 import { defineEventHandler, readBody, createError } from 'h3';
-import { SyncRequestPayloadSchema } from '~/domain/schemas';
+import { extractApiErrorInfo, SyncRequestPayloadSchema } from '~/domain/schemas';
 import { processClientSyncRequest } from '../repositories/sync.repo';
 
 export default defineEventHandler(async (event) => {
@@ -1821,10 +1857,10 @@ export default defineEventHandler(async (event) => {
 
 		return await processClientSyncRequest(parsed.data, appVersion);
 	} catch (err: unknown) {
-		const error = err as { statusCode?: number; statusMessage?: string; message?: string };
+		const info = extractApiErrorInfo(err, 'خطا در پردازش همگام‌سازی با سرور');
 		throw createError({
-			statusCode: error.statusCode || 500,
-			statusMessage: error.statusMessage || error.message || 'خطا در پردازش همگام‌سازی با سرور'
+			statusCode: info.statusCode,
+			statusMessage: info.message
 		});
 	}
 });
@@ -1889,7 +1925,14 @@ function pruneExpiredLoginAttempts(now: number): void {
 		}
 	}
 	if (failedLoginAttemptsByIp.size > MAX_TRACKED_IPS) {
-		const oldestKey = failedLoginAttemptsByIp.keys().next().value;
+		let oldestKey: string | null = null;
+		let oldestTimestamp = Infinity;
+		for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
+			if (entry.lastAttemptMs < oldestTimestamp) {
+				oldestTimestamp = entry.lastAttemptMs;
+				oldestKey = key;
+			}
+		}
 		if (oldestKey) {
 			failedLoginAttemptsByIp.delete(oldestKey);
 		}
@@ -2089,7 +2132,7 @@ PATH: .env.example
 ================================================================
 
 # PostgreSQL Connection String (VPS, Docker, Neon, or Supabase)
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/self_os"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/personal_os"
 
 # Optional Port Override
 APP_PORT=3000
@@ -2288,9 +2331,6 @@ export default defineNuxtConfig({
   },
 
   nitro: {
-    prerender: {
-      routes: ['/']
-    },
     experimental: {
       openAPI: false
     }
@@ -2598,7 +2638,7 @@ export function getApplicableHabitsForDate(
 				return false;
 			}
 		}
-		if (dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
+		if (dateIso && options?.hasExistingEntry && h.createdAtIso.slice(0, 10) > dateIso) {
 			return false;
 		}
 		return true;
@@ -2863,11 +2903,7 @@ export function evaluateDayStatusColor(
 			const parent = habitById.get(h.parentId);
 			if ((!parent || parent.status !== 'active') && !isLogged) return false;
 		}
-		const hasChildren = habits.some(
-			(child) =>
-				child.parentId === h.id &&
-				(child.status === 'active' || loggedIds.has(child.id))
-		);
+		const hasChildren = habits.some((child) => child.parentId === h.id);
 		return !hasChildren;
 	});
 
@@ -3115,43 +3151,18 @@ import type {
 	CadencePlanEntity,
 	CalendarEventEntity,
 	DatabaseBackupPayload,
+	ExistingWorkspaceData,
 	HabitEntity,
 	LifecycleEventEntity,
 	MediaEntity,
+	MergedBackupResult,
 	NoteEntity
 } from '~/domain/schemas';
 
 export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
 export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
 export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
-
-export interface ExistingWorkspaceData {
-	habits: HabitEntity[];
-	dailyEntries: BackupDailyEntryRow[];
-	habitLogs: BackupHabitLogRow[];
-	cadencePlans: CadencePlanEntity[];
-	books: BookEntity[];
-	media: MediaEntity[];
-	notes: NoteEntity[];
-	calendarEvents: CalendarEventEntity[];
-	lifecycleEvents: LifecycleEventEntity[];
-	reflectionTags: BackupReflectionTagRow[];
-}
-
-export interface MergedBackupResult {
-	habitsToUpsert: HabitEntity[];
-	dailyEntriesToUpsert: BackupDailyEntryRow[];
-	habitLogsToUpsert: BackupHabitLogRow[];
-	cadencePlansToUpsert: CadencePlanEntity[];
-	booksToUpsert: BookEntity[];
-	mediaToUpsert: MediaEntity[];
-	notesToUpsert: NoteEntity[];
-	calendarEventsToUpsert: CalendarEventEntity[];
-	lifecycleEventsToUpsert: LifecycleEventEntity[];
-	reflectionTagsToUpsert: BackupReflectionTagRow[];
-	addedOrUpdatedCount: number;
-	skippedDuplicatesCount: number;
-}
+export type { ExistingWorkspaceData, MergedBackupResult };
 
 function normText(str: string | null | undefined): string {
 	return (str ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -3500,8 +3511,9 @@ export function computeSmartBackupMerge(
 		}
 	}
 
-	// 10. Reflection Tags (Deduplicate by normalized label)
+	// 10. Reflection Tags (Deduplicate by normalized label & avoid ID collisions)
 	const existingTagLabels = new Set(existing.reflectionTags.map((t) => normText(t.label)));
+	const usedTagIds = new Set(existing.reflectionTags.map((t) => t.id));
 	const reflectionTagsToUpsert: BackupReflectionTagRow[] = [];
 
 	for (const incTag of incoming.reflectionTags) {
@@ -3509,8 +3521,13 @@ export function computeSmartBackupMerge(
 		if (existingTagLabels.has(normLabel)) {
 			skippedDuplicatesCount++;
 		} else {
-			reflectionTagsToUpsert.push(incTag);
+			const safeId = usedTagIds.has(incTag.id) ? `tag:${normLabel}` : incTag.id;
+			reflectionTagsToUpsert.push({
+				...incTag,
+				id: safeId
+			});
 			existingTagLabels.add(normLabel);
+			usedTagIds.add(safeId);
 		}
 	}
 
@@ -3560,8 +3577,8 @@ export function detectNoteSmartSignals(text: string): {
 	hasNumber: boolean;
 	firstUrl: string | null;
 } {
+	const linkMatch = text.match(LINK_PATTERN);
 	const normalized = normalizeDigits(text);
-	const linkMatch = normalized.match(LINK_PATTERN);
 	const rawLink = linkMatch ? linkMatch[0].replace(/[.,،؛!؟)+]+$/, '') : null;
 	const candidateUrl = rawLink
 		? /^https?:\/\//i.test(rawLink)
@@ -3631,7 +3648,7 @@ import {
 	getMaxSupportedTier,
 	resolveEffectiveCadenceMinutes,
 	resolveHabitRuleSnapshot
-} from './habit-engine';
+} from '~/core/habit-engine';
 
 function resolveDateRangeWindow(
 	range: AnalyticsTimeRange,
@@ -4453,7 +4470,7 @@ import {
 	parseHabitSpecSnapshot,
 	resolveEffectiveCadenceMinutes,
 	resolveHabitRuleSnapshot
-} from './habit-engine';
+} from '~/core/habit-engine';
 
 export function computeUpcomingEventsBanner(params: {
 	allEvents: CalendarEventEntity[];
@@ -4711,7 +4728,9 @@ export function assembleJalaliMonthArchive(params: {
 PATH: app/core/chart-math.ts
 ================================================================
 
-import type { HabitDailyPoint } from '~/domain/schemas';
+import type { HabitDailyPoint, RenderedChartBar } from '~/domain/schemas';
+
+export type { RenderedChartBar };
 
 export const CHART_DIMENSIONS = {
 	SVG_WIDTH: 860,
@@ -4806,18 +4825,6 @@ export function buildRollingAreaPath(
 	if (!first || !last) return '';
 	const lineSegments = coords.map((c) => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
 	return `M ${first.x.toFixed(1)} ${baselineY} ${lineSegments} L ${last.x.toFixed(1)} ${baselineY} Z`;
-}
-
-export interface RenderedChartBar {
-	pt: HabitDailyPoint;
-	idx: number;
-	cx: number;
-	hasVisibleBar: boolean;
-	barX: number;
-	barY: number;
-	barHeight: number;
-	barRx: number;
-	showAxisLabel: boolean;
 }
 
 export function buildRenderedChartBars(
@@ -4986,7 +4993,10 @@ export function useClientAuth() {
 			isAuthenticated.value = false;
 			isPasswordConfigured.value = serverPasswordConfigured ?? (record?.isPasswordConfigured ?? true);
 			if (record) {
-				await db.localAuth.delete('auth:session');
+				record.isAuthenticated = false;
+				record.isPasswordConfigured = isPasswordConfigured.value;
+				record.updatedAtIso = nowIso;
+				await db.localAuth.put(record);
 			}
 			isInitialized.value = true;
 			return {
@@ -5269,6 +5279,14 @@ export function useLocalRepository() {
 
 				const allHabits = await db.habits.toArray();
 				const habitMap = new Map(allHabits.map((h) => [h.id, h]));
+				const existingDayLogs = await db.habitLogs.where('dateIso').equals(input.dateIso).toArray();
+				const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
+
+				for (const existingLog of existingDayLogs) {
+					if (!incomingHabitIds.has(existingLog.habitId)) {
+						await db.habitLogs.delete(existingLog.id);
+					}
+				}
 
 				for (const log of input.logs) {
 					const habit = habitMap.get(log.habitId);
@@ -5905,6 +5923,11 @@ export function useLocalRepository() {
 					.filter((m) => m.kind === 'SAVE_DAILY_ENTRY')
 					.map((m) => m.payload.dateIso)
 			);
+			const pendingCadenceDates = new Set(
+				pending
+					.filter((m) => m.kind === 'SAVE_CADENCE_PLAN')
+					.map((m) => m.payload.targetDateIso)
+			);
 
 			// Reconcile remote deletions for collections where items can be hard-deleted
 			const serverBookIds = new Set(ws.books.map((b) => b.id));
@@ -5934,6 +5957,13 @@ export function useLocalRepository() {
 				(id) => !serverEventIds.has(id) && !pendingIds.has(`event:${id}`)
 			);
 			if (eventsToDelete.length > 0) await db.calendarEvents.bulkDelete(eventsToDelete);
+
+			const serverPlanIds = new Set(ws.cadencePlans.map((c) => c.id));
+			const allLocalPlans = await db.cadencePlans.toArray();
+			const plansToDelete = allLocalPlans
+				.filter((p) => !serverPlanIds.has(p.id) && !pendingCadenceDates.has(p.dateIso))
+				.map((p) => p.id);
+			if (plansToDelete.length > 0) await db.cadencePlans.bulkDelete(plansToDelete);
 
 			// Upsert non-pending server entities
 			await db.habits.bulkPut(ws.habits.filter((h) => !pendingIds.has(`habit:${h.id}`)));
@@ -6133,10 +6163,21 @@ export function useLocalRepository() {
 			db.notes,
 			db.calendarEvents,
 			db.lifecycleEvents,
-			db.reflectionTags
+			db.reflectionTags,
+			db.syncOutbox
 		], async () => {
+			const stagedMutations: SyncOutboxMutation[] = [];
+
 			if (merged.habitsToUpsert.length > 0) {
 				await db.habits.bulkPut(merged.habitsToUpsert);
+				for (const h of merged.habitsToUpsert) {
+					stagedMutations.push({
+						id: `habit:${h.id}`,
+						kind: 'UPSERT_HABIT',
+						queuedAtIso: nowIso,
+						payload: clonePlain(h)
+					});
+				}
 			}
 			if (merged.dailyEntriesToUpsert.length > 0) {
 				await db.dailyEntries.bulkPut(
@@ -6158,28 +6199,119 @@ export function useLocalRepository() {
 					}))
 				);
 			}
+			if (merged.dailyEntriesToUpsert.length > 0 || merged.habitLogsToUpsert.length > 0) {
+				const affectedDates = new Set<string>([
+					...merged.dailyEntriesToUpsert.map((e) => e.dateIso),
+					...merged.habitLogsToUpsert.map((l) => l.dateIso)
+				]);
+				for (const dateIso of affectedDates) {
+					const entryRec = await db.dailyEntries.get(dateIso);
+					const dayLogs = await db.habitLogs.where('dateIso').equals(dateIso).toArray();
+					if (entryRec) {
+						stagedMutations.push({
+							id: `daily:${dateIso}`,
+							kind: 'SAVE_DAILY_ENTRY',
+							queuedAtIso: nowIso,
+							payload: clonePlain({
+								dateIso,
+								dayStatus: entryRec.dayStatus,
+								reflectionNote: entryRec.reflectionNote,
+								journalText: entryRec.journalText,
+								tags: entryRec.tags,
+								updatedAtIso: entryRec.updatedAtIso,
+								logs: dayLogs
+							})
+						});
+					}
+				}
+			}
 			if (merged.cadencePlansToUpsert.length > 0) {
 				await db.cadencePlans.bulkPut(merged.cadencePlansToUpsert);
+				const affectedPlanDates = new Set(merged.cadencePlansToUpsert.map((p) => p.dateIso));
+				for (const targetDateIso of affectedPlanDates) {
+					const plansOnDate = await db.cadencePlans.where('dateIso').equals(targetDateIso).toArray();
+					stagedMutations.push({
+						id: `cadence:${targetDateIso}`,
+						kind: 'SAVE_CADENCE_PLAN',
+						queuedAtIso: nowIso,
+						payload: clonePlain({
+							targetDateIso,
+							items: plansOnDate.map((p) => ({
+								habitId: p.habitId,
+								plannedIntervals: p.plannedIntervals,
+								plannedMinutesPerInterval: p.plannedMinutesPerInterval,
+								cadenceWindowMinutes: p.cadenceWindowMinutes
+							}))
+						})
+					});
+				}
 			}
 			if (merged.booksToUpsert.length > 0) {
 				await db.books.bulkPut(merged.booksToUpsert);
+				for (const b of merged.booksToUpsert) {
+					stagedMutations.push({
+						id: `book:${b.id}`,
+						kind: 'UPSERT_BOOK',
+						queuedAtIso: nowIso,
+						payload: clonePlain(b)
+					});
+				}
 			}
 			if (merged.mediaToUpsert.length > 0) {
 				await db.media.bulkPut(merged.mediaToUpsert);
+				for (const m of merged.mediaToUpsert) {
+					stagedMutations.push({
+						id: `media:${m.id}`,
+						kind: 'UPSERT_MEDIA',
+						queuedAtIso: nowIso,
+						payload: clonePlain(m)
+					});
+				}
 			}
 			if (merged.notesToUpsert.length > 0) {
 				await db.notes.bulkPut(merged.notesToUpsert);
+				for (const n of merged.notesToUpsert) {
+					stagedMutations.push({
+						id: `note:${n.id}`,
+						kind: 'UPSERT_NOTE',
+						queuedAtIso: nowIso,
+						payload: clonePlain(n)
+					});
+				}
 			}
 			if (merged.calendarEventsToUpsert.length > 0) {
 				await db.calendarEvents.bulkPut(merged.calendarEventsToUpsert);
+				for (const ev of merged.calendarEventsToUpsert) {
+					stagedMutations.push({
+						id: `event:${ev.id}`,
+						kind: 'UPSERT_CALENDAR_EVENT',
+						queuedAtIso: nowIso,
+						payload: clonePlain(ev)
+					});
+				}
 			}
 			if (merged.lifecycleEventsToUpsert.length > 0) {
 				await db.lifecycleEvents.bulkPut(merged.lifecycleEventsToUpsert);
+				for (const lc of merged.lifecycleEventsToUpsert) {
+					stagedMutations.push({
+						id: `lifecycle:${lc.id}`,
+						kind: 'ADD_LIFECYCLE_EVENT',
+						queuedAtIso: nowIso,
+						payload: clonePlain(lc)
+					});
+				}
 			}
 			if (merged.reflectionTagsToUpsert.length > 0) {
 				await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
 			}
+			if (stagedMutations.length > 0) {
+				await db.syncOutbox.bulkPut(stagedMutations);
+			}
 		});
+
+		for (const listener of mutationStagedListeners) {
+			listener();
+		}
 
 		return {
 			addedOrUpdatedCount: merged.addedOrUpdatedCount,
@@ -6325,11 +6457,10 @@ export function useLocalRepository() {
 PATH: app/composables/useSyncEngine.ts
 ================================================================
 
-import { ref } from 'vue';
 import { onLocalMutationStaged, useLocalRepository } from '~/composables/useLocalRepository';
-import type { ServerSyncResponse } from '~/domain/schemas';
+import type { ServerSyncResponse, SyncStatusVisual } from '~/domain/schemas';
 
-export type SyncStatusVisual = 'synced' | 'local_pending' | 'syncing' | 'offline' | 'error';
+export type { SyncStatusVisual };
 
 const status = ref<SyncStatusVisual>('synced');
 const pendingCount = ref(0);
@@ -6585,10 +6716,11 @@ import { ref, shallowRef, watch, onScopeDispose, type Ref, type ShallowRef, type
 
 export type DexieLiveQueryRef<T> = ShallowRef<T> & {
 	isLoading: Ref<boolean>;
+	error: Ref<string | null>;
 };
 
 /**
- * Connects a Dexie liveQuery to a reactive Vue 3 ShallowRef with an attached `isLoading` state.
+ * Connects a Dexie liveQuery to a reactive Vue 3 ShallowRef with attached `isLoading` and `error` states.
  * Automatically tracks both IndexedDB table modifications and optional Vue reactive dependencies,
  * cleans up subscriptions on unmount, and handles SSR isolation safely.
  */
@@ -6598,8 +6730,10 @@ export function useDexieLiveQuery<T>(
 	deps?: WatchSource | WatchSource[]
 ): DexieLiveQueryRef<T> {
 	const isLoading = ref<boolean>(Boolean(import.meta.client));
+	const error = ref<string | null>(null);
 	const state = Object.assign(shallowRef<T>(initialValue), {
-		isLoading
+		isLoading,
+		error
 	}) as DexieLiveQueryRef<T>;
 
 	if (!import.meta.client) {
@@ -6618,20 +6752,24 @@ export function useDexieLiveQuery<T>(
 	function subscribeQuery() {
 		cleanup();
 		isLoading.value = true;
+		error.value = null;
 		try {
 			const observable: Observable<T> = liveQuery(querier);
 			subscription = observable.subscribe({
 				next: (val) => {
 					state.value = val;
+					error.value = null;
 					isLoading.value = false;
 				},
 				error: (err) => {
 					console.error('[Dexie liveQuery] Subscription error:', err);
+					error.value = err instanceof Error ? err.message : 'خطا در خواندن پایگاه داده محلی';
 					isLoading.value = false;
 				}
 			});
 		} catch (err) {
 			console.error('[Dexie liveQuery] Initialization error:', err);
+			error.value = err instanceof Error ? err.message : 'خطا در راه‌اندازی کوئری محلی';
 			isLoading.value = false;
 		}
 	}
@@ -6658,7 +6796,7 @@ export function useDexieLiveQuery<T>(
 PATH: app/composables/useDailyTracker.ts
 ================================================================
 
-import { ref, computed, watch, type Ref } from 'vue';
+import { onScopeDispose, type Ref } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -6677,18 +6815,14 @@ import {
 import { shiftIsoDate } from '~/domain/calendar';
 import { DEFAULT_REFLECTION_TAGS, TIER_SCORES } from '~/domain/constants';
 import type {
+	CadenceDraftItem,
 	DayStatusColor,
 	HabitEntity,
 	HabitLogItemInput,
 	SaveDailyEntryInput
 } from '~/domain/schemas';
 
-export interface CadenceDraftItem {
-	habitId: string;
-	plannedIntervals: number;
-	plannedMinutesPerInterval: number;
-	cadenceWindowMinutes: number;
-}
+export type { CadenceDraftItem };
 
 export function useDailyTracker(dateIso: Ref<string>) {
 	const db = useAppDatabase();
@@ -6718,6 +6852,16 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const isDirty = ref(false);
 
 	let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let pendingSavePayload: SaveDailyEntryInput | null = null;
+	let activeDraftDateIso = dateIso.value;
+
+	const isHydratingQueries = computed(
+		() =>
+			entry.isLoading.value ||
+			logs.isLoading.value ||
+			dayCadencePlans.isLoading.value ||
+			tomorrowCadencePlans.isLoading.value
+	);
 
 	const availableTags = computed(() => {
 		if (tagsRecords.value.length > 0) {
@@ -6728,25 +6872,16 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	// Synchronize when date or database queries change
 	watch(
-		[
-			dateIso,
-			entry,
-			logs,
-			habits,
-			dayCadencePlans,
-			tomorrowCadencePlans,
-			entry.isLoading,
-			logs.isLoading,
-			dayCadencePlans.isLoading,
-			tomorrowCadencePlans.isLoading
-		],
+		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
-			if (
-				entry.isLoading.value ||
-				logs.isLoading.value ||
-				dayCadencePlans.isLoading.value ||
-				tomorrowCadencePlans.isLoading.value
-			) {
+			if (activeDraftDateIso !== dateIso.value && pendingSavePayload) {
+				void flushPendingSave();
+			}
+			if (isHydratingQueries.value) {
+				return;
+			}
+			activeDraftDateIso = dateIso.value;
+			if (pendingSavePayload && pendingSavePayload.dateIso === dateIso.value) {
 				return;
 			}
 			reflectionNote.value = entry.value?.reflectionNote ?? '';
@@ -6919,6 +7054,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	function scheduleAutoSave(delayMs = 0) {
 		isDirty.value = true;
 		saveState.value = 'saving';
+		pendingSavePayload = buildDailyInputObject();
 
 		if (autoSaveTimer) clearTimeout(autoSaveTimer);
 
@@ -6937,18 +7073,29 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			clearTimeout(autoSaveTimer);
 			autoSaveTimer = null;
 		}
-		if (!dateIso.value) return;
+		const payloadToSave = pendingSavePayload ?? (dateIso.value ? buildDailyInputObject() : null);
+		pendingSavePayload = null;
+		if (!payloadToSave) return;
 
 		saveState.value = 'saving';
 		try {
-			const payload = buildDailyInputObject();
-			await localRepo.daily.saveDailyEntry(payload);
-			isDirty.value = false;
-			saveState.value = 'saved';
+			await localRepo.daily.saveDailyEntry(payloadToSave);
+			if (payloadToSave.dateIso === dateIso.value) {
+				isDirty.value = false;
+				saveState.value = 'saved';
+			}
 		} catch {
-			saveState.value = 'error';
+			if (payloadToSave.dateIso === dateIso.value) {
+				saveState.value = 'error';
+			}
 		}
 	}
+
+	onScopeDispose(() => {
+		if (pendingSavePayload) {
+			void flushPendingSave();
+		}
+	});
 
 	function markAllOptimalFiveSecond() {
 		const nowIso = new Date().toISOString();
@@ -7031,7 +7178,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 						: Math.min(targetTier, maxChildTier);
 			setTierExplicit(child.id, effectiveTier);
 		}
-		setTierExplicit(parentId, targetTier);
+		setTierExplicit(parentId, null);
 	}
 
 	function clearDay() {
@@ -7656,13 +7803,10 @@ PATH: app/components/ui/CustomSelect.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Check, ChevronDown } from 'lucide-vue-next';
+import type { SelectOption } from '~/domain/schemas';
 
-export interface SelectOption {
-	value: string | number;
-	label: string;
-}
+export type { SelectOption };
 
 interface Props {
 	id?: string;
@@ -7811,7 +7955,6 @@ PATH: app/components/ui/BaseModal.vue
 ================================================================
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
 import { X } from 'lucide-vue-next';
 
 interface Props {
@@ -8689,7 +8832,6 @@ PATH: app/components/notes/NoteItemCard.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
 import { detectNoteSmartSignals } from '~/core/note-signals';
 import { isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity } from '~/domain/schemas';
@@ -8697,40 +8839,21 @@ import { Check, Copy, ExternalLink, Pencil, Pin, Trash2 } from 'lucide-vue-next'
 
 interface Props {
 	note: NoteEntity;
+	isCopied?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+	isCopied: false
+});
 
 const emit = defineEmits<{
+	(e: 'copy', note: NoteEntity): void;
 	(e: 'edit', note: NoteEntity): void;
 	(e: 'togglePin', noteId: string, isPinned: boolean): void;
 	(e: 'delete', noteId: string): void;
 }>();
 
-const copied = ref(false);
-let copyTimer: ReturnType<typeof setTimeout> | null = null;
-
 const signals = computed(() => detectNoteSmartSignals(`${props.note.title} ${props.note.content}`));
-
-async function copyContent() {
-	try {
-		await navigator.clipboard.writeText(
-			props.note.title ? `${props.note.title}\n${props.note.content}` : props.note.content
-		);
-		copied.value = true;
-		if (copyTimer) clearTimeout(copyTimer);
-		copyTimer = setTimeout(() => {
-			copied.value = false;
-			copyTimer = null;
-		}, 1600);
-	} catch {
-		// ignore
-	}
-}
-
-onUnmounted(() => {
-	if (copyTimer) clearTimeout(copyTimer);
-});
 </script>
 
 <template>
@@ -8753,9 +8876,9 @@ onUnmounted(() => {
 						type="button"
 						class="flex h-8 w-8 items-center justify-center rounded-xl text-fg-muted transition hover:bg-elevated hover:text-fg active:scale-95"
 						title="کپی متن"
-						@click="copyContent"
+						@click="emit('copy', note)"
 					>
-						<Check v-if="copied" class="h-4 w-4 text-optimal" />
+						<Check v-if="isCopied" class="h-4 w-4 text-optimal" />
 						<Copy v-else class="h-4 w-4" />
 					</button>
 
@@ -9361,9 +9484,8 @@ PATH: app/components/architect/ArchitectHabitCard.vue
 ================================================================
 
 <script setup lang="ts">
-import { computed } from 'vue';
 import type { HabitEntity } from '~/domain/schemas';
-import ArchitectSubHabitGrid from './ArchitectSubHabitGrid.vue';
+import ArchitectSubHabitGrid from '~/components/architect/ArchitectSubHabitGrid.vue';
 import { BarChart3, Clock, Pencil, Plus } from 'lucide-vue-next';
 
 interface Props {
@@ -10316,7 +10438,6 @@ PATH: app/components/tracker/JalaliDateScrubber.vue
 ================================================================
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue';
 import {
 	buildRecentCalendarDays,
 	formatJalaliHuman,
@@ -10366,7 +10487,7 @@ const nextDayIso = computed(() => shiftIsoDate(props.currentDateIso, 1));
 const savedStatusByIso = computed(() => new Map(props.recentEntries.map((e) => [e.dateIso, e.dayStatus])));
 
 const calendarDays = computed(() =>
-	buildRecentCalendarDays<DayStatusColor>({
+	buildRecentCalendarDays({
 		currentDateIso: props.currentDateIso,
 		todayIso: todayIso.value,
 		savedStatusByIso: savedStatusByIso.value,
@@ -10377,19 +10498,7 @@ const calendarDays = computed(() =>
 	})
 );
 
-function handleKeydown(e: KeyboardEvent) {
-	const tag = (e.target as HTMLElement)?.tagName;
-	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-	if (e.key === '[') {
-		e.preventDefault();
-		emit('selectDate', prevDayIso.value);
-	} else if (e.key === ']') {
-		e.preventDefault();
-		emit('selectDate', nextDayIso.value);
-	}
-}
-
-function getDayCellClasses(day: CalendarScrubberDay<DayStatusColor>): string {
+function getDayCellClasses(day: CalendarScrubberDay): string {
 	const selectedGlow = day.isSelected
 		? 'border-2 -translate-y-0.5 shadow-(--shadow-card)'
 		: 'border hover:border-border-strong';
@@ -10403,13 +10512,6 @@ function getDayCellClasses(day: CalendarScrubberDay<DayStatusColor>): string {
 	return `${selectedGlow} ${day.isSelected ? 'border-failed bg-failed-soft' : 'border-failed-border bg-failed-soft'}`;
 }
 
-onMounted(() => {
-	window.addEventListener('keydown', handleKeydown);
-});
-
-onUnmounted(() => {
-	window.removeEventListener('keydown', handleKeydown);
-});
 </script>
 
 <template>
@@ -10535,7 +10637,7 @@ PATH: app/components/media/MediaUpsertModal.vue
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { getTodayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
+import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, MEDIA_CATEGORY_OPTIONS, MEDIA_STATUS_OPTIONS } from '~/domain/constants';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaStatus, UpdateMediaInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
@@ -10577,6 +10679,7 @@ const finishedJalali = ref(
 			: ''
 );
 const notes = ref(props.editingMedia?.notes ?? '');
+const validationError = ref<string | null>(null);
 
 const matchedSuggestion = computed(() =>
 	props.existingSuggestions.find(
@@ -10597,6 +10700,16 @@ function handleTitleChange(e: Event) {
 
 function handleSubmit() {
 	if (!title.value.trim() || props.isSubmitting) return;
+
+	const rangeCheck = validateJalaliDateRange({
+		startedJalali: startedJalali.value,
+		finishedJalali: finishedJalali.value
+	});
+	if (!rangeCheck.valid) {
+		validationError.value = rangeCheck.error ?? 'تاریخ وارد شده نامعتبر است';
+		return;
+	}
+	validationError.value = null;
 
 	if (props.editingMedia) {
 		emit('submit', {
@@ -10630,6 +10743,13 @@ function handleSubmit() {
 		</template>
 
 		<form class="space-y-4 overflow-y-auto p-5 sm:p-6" @submit.prevent="handleSubmit">
+			<div
+				v-if="validationError"
+				class="rounded-2xl border border-failed-border bg-failed-soft px-4 py-2.5 text-xs font-extrabold text-failed"
+			>
+				{{ validationError }}
+			</div>
+
 			<div>
 				<span class="mb-1.5 block text-xs font-bold text-fg-secondary">نوع اثر</span>
 				<div class="grid grid-cols-4 gap-1.5 rounded-2xl border border-border bg-elevated p-1">
@@ -11656,7 +11776,7 @@ PATH: app/components/books/BookUpsertModal.vue
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { getTodayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
+import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, BOOK_STATUS_OPTIONS } from '~/domain/constants';
 import type { BookEntity, BookStatus, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
@@ -11695,6 +11815,7 @@ const finishedJalali = ref(
 		: defaultJalaliToday
 );
 const notes = ref(props.editingBook?.notes ?? '');
+const validationError = ref<string | null>(null);
 
 const matchedSuggestion = computed(() =>
 	props.existingSuggestions.find(
@@ -11715,6 +11836,16 @@ function handleTitleChange(e: Event) {
 
 function handleSubmit() {
 	if (!title.value.trim() || props.isSubmitting) return;
+
+	const rangeCheck = validateJalaliDateRange({
+		startedJalali: startedJalali.value,
+		finishedJalali: finishedJalali.value
+	});
+	if (!rangeCheck.valid) {
+		validationError.value = rangeCheck.error ?? 'تاریخ وارد شده نامعتبر است';
+		return;
+	}
+	validationError.value = null;
 
 	if (props.editingBook) {
 		emit('submit', {
@@ -11748,6 +11879,13 @@ function handleSubmit() {
 		</template>
 
 		<form class="space-y-4 overflow-y-auto p-5 sm:p-6" @submit.prevent="handleSubmit">
+			<div
+				v-if="validationError"
+				class="rounded-2xl border border-failed-border bg-failed-soft px-4 py-2.5 text-xs font-extrabold text-failed"
+			>
+				{{ validationError }}
+			</div>
+
 			<div>
 				<div class="mb-1.5 flex items-center justify-between">
 					<label for="bk-title" class="block text-xs font-bold text-fg-secondary">نام کتاب</label>
@@ -11969,11 +12107,10 @@ PATH: app/pages/login/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { useSyncEngine } from '~/composables/useSyncEngine';
 import { toPersianDigits } from '~/domain/calendar';
+import { extractApiErrorInfo } from '~/domain/schemas';
 import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, Timer, WifiOff } from 'lucide-vue-next';
 
 definePageMeta({
@@ -12058,19 +12195,11 @@ function startCountdownTimer(durationMs: number): Promise<void> {
 }
 
 function extractErrorText(err: unknown, fallback: string): string {
-	if (err && typeof err === 'object' && 'data' in err) {
-		const data = (err as {
-			data?: {
-				statusMessage?: string;
-				data?: { failedAttempts?: number };
-			};
-		}).data;
-		if (typeof data?.data?.failedAttempts === 'number') {
-			failedAttempts.value = Math.max(failedAttempts.value, data.data.failedAttempts);
-		}
-		if (data?.statusMessage) return data.statusMessage;
+	const info = extractApiErrorInfo(err, fallback);
+	if (typeof info.failedAttempts === 'number') {
+		failedAttempts.value = Math.max(failedAttempts.value, info.failedAttempts);
 	}
-	return err instanceof Error ? err.message : fallback;
+	return info.message;
 }
 
 onMounted(async () => {
@@ -12344,7 +12473,6 @@ PATH: app/pages/timeline/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { extractLifecycleRuleDiffs } from '~/core/habit-engine';
@@ -12463,12 +12591,10 @@ PATH: app/pages/analytics/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { buildFullAnalyticsReport } from '~/core/analytics-engine';
-import { getYesterdayIso } from '~/domain/calendar';
+import { getTodayIso, getYesterdayIso, shiftIsoDate } from '~/domain/calendar';
 import type { AnalyticsTimeRange } from '~/domain/schemas';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
 import AnalyticsSummaryCards from '~/components/analytics/AnalyticsSummaryCards.vue';
@@ -12482,17 +12608,38 @@ const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
 
-const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
-const isHabitsLoading = habits.isLoading;
-const rawEntries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
-const rawLogs = useDexieLiveQuery(() => db.habitLogs.toArray(), []);
-const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
-
 const selectedRange = computed<AnalyticsTimeRange>(() => {
 	const r = route.query.range as AnalyticsTimeRange | undefined;
 	if (r && ['7d', '30d', '90d', 'all'].includes(r)) return r;
 	return '30d';
 });
+
+const queryLowerBoundIso = computed<string | null>(() => {
+	if (selectedRange.value === 'all') return null;
+	const lookbackDays =
+		selectedRange.value === '7d' ? 35 : selectedRange.value === '30d' ? 60 : 120;
+	return shiftIsoDate(getTodayIso(), -lookbackDays);
+});
+
+const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
+const isHabitsLoading = habits.isLoading;
+const rawEntries = useDexieLiveQuery(
+	() =>
+		queryLowerBoundIso.value
+			? db.dailyEntries.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
+			: db.dailyEntries.toArray(),
+	[],
+	queryLowerBoundIso
+);
+const rawLogs = useDexieLiveQuery(
+	() =>
+		queryLowerBoundIso.value
+			? db.habitLogs.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
+			: db.habitLogs.toArray(),
+	[],
+	queryLowerBoundIso
+);
+const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 const selectedHabitId = computed(() => {
 	const h = route.query.habit as string | undefined;
@@ -12590,24 +12737,41 @@ function selectHabitAndScroll(habitId: string) {
 			</NuxtLink>
 		</div>
 
-		<template v-else-if="report.selectedHabitReport">
-			<AnalyticsSummaryCards :report="report.selectedHabitReport" />
+		<NuxtErrorBoundary v-else-if="report.selectedHabitReport">
+			<div class="space-y-6">
+				<AnalyticsSummaryCards :report="report.selectedHabitReport" />
 
-			<HabitTrendChart :report="report.selectedHabitReport" />
+				<HabitTrendChart :report="report.selectedHabitReport" />
 
-			<HabitHeatmapMatrix :report="report.selectedHabitReport" />
+				<HabitHeatmapMatrix :report="report.selectedHabitReport" />
 
-			<HabitEvolutionTimeline
-				:habit-title="report.selectedHabitReport.habit.title"
-				:evolution-timeline="report.selectedHabitReport.evolutionTimeline"
-			/>
+				<HabitEvolutionTimeline
+					:habit-title="report.selectedHabitReport.habit.title"
+					:evolution-timeline="report.selectedHabitReport.evolutionTimeline"
+				/>
 
-			<HabitsComparisonTable
-				:rows="report.comparisonRows"
-				:selected-habit-id="selectedHabitId"
-				@select-habit="selectHabitAndScroll"
-			/>
-		</template>
+				<HabitsComparisonTable
+					:rows="report.comparisonRows"
+					:selected-habit-id="selectedHabitId"
+					@select-habit="selectHabitAndScroll"
+				/>
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در محاسبه و ترسیم نمودارهای آماری' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>
 
@@ -12619,7 +12783,6 @@ PATH: app/pages/memories/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { formatJalaliHuman, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
@@ -12789,12 +12952,10 @@ PATH: app/pages/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useDailyTracker } from '~/composables/useDailyTracker';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { computeUpcomingEventsBanner } from '~/core/calendar-engine';
-import { getTodayIso, getYesterdayIso, toPersianDigits } from '~/domain/calendar';
+import { getTodayIso, getYesterdayIso, shiftIsoDate, toPersianDigits } from '~/domain/calendar';
 import type { HabitTimeSlot, HabitTreeNode } from '~/domain/schemas';
 import JalaliDateScrubber from '~/components/tracker/JalaliDateScrubber.vue';
 import UpcomingEventsBanner from '~/components/tracker/UpcomingEventsBanner.vue';
@@ -12826,6 +12987,26 @@ const isHabitsLoading = tracker.habits.isLoading;
 function navigateToDate(iso: string) {
 	router.push({ query: { ...route.query, date: iso } });
 }
+
+function handleScrubberShortcut(e: KeyboardEvent) {
+	const tag = (e.target as HTMLElement | null)?.tagName;
+	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+	if (e.key === '[') {
+		e.preventDefault();
+		navigateToDate(shiftIsoDate(currentDateIso.value, -1));
+	} else if (e.key === ']') {
+		e.preventDefault();
+		navigateToDate(shiftIsoDate(currentDateIso.value, 1));
+	}
+}
+
+onMounted(() => {
+	window.addEventListener('keydown', handleScrubberShortcut);
+});
+
+onUnmounted(() => {
+	window.removeEventListener('keydown', handleScrubberShortcut);
+});
 
 const bannerCalculation = computed(() =>
 	computeUpcomingEventsBanner({
@@ -12912,7 +13093,8 @@ const groupedTieredSections = computed(() => {
 			</NuxtLink>
 		</div>
 
-		<template v-else>
+		<NuxtErrorBoundary v-else>
+			<div class="space-y-6">
 			<TrackerActionToolbar
 				:cadence-habits="tracker.schedulableCadenceHabits.value"
 				:tomorrow-iso="tracker.tomorrowIso.value"
@@ -12973,7 +13155,23 @@ const groupedTieredSections = computed(() => {
 				@change="tracker.scheduleAutoSave(750)"
 				@open-memories="router.push('/memories')"
 			/>
-		</template>
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در نمایش فهرست طرح‌های روزانه' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>
 
@@ -12985,7 +13183,6 @@ PATH: app/pages/notes/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -12993,7 +13190,13 @@ import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
 import NoteItemCard from '~/components/notes/NoteItemCard.vue';
-import NoteUpsertModal from '~/components/notes/NoteUpsertModal.vue';
+>>>>>>>
+<<<<<<< SEARCH
+		<NoteUpsertModal
+			v-if="isModalOpen"
+=======
+		<LazyNotesNoteUpsertModal
+			v-if="isModalOpen"
 import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -13012,6 +13215,29 @@ const selectedCategory = ref<string>('ALL');
 const isModalOpen = ref(false);
 const isSubmittingNote = ref(false);
 const editingNote = ref<NoteEntity | null>(null);
+const copiedNoteId = ref<string | null>(null);
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function handleCopyNote(note: NoteEntity) {
+	if (!import.meta.client || !navigator.clipboard) return;
+	try {
+		await navigator.clipboard.writeText(
+			note.title ? `${note.title}\n${note.content}` : note.content
+		);
+		copiedNoteId.value = note.id;
+		if (copyResetTimer) clearTimeout(copyResetTimer);
+		copyResetTimer = setTimeout(() => {
+			copiedNoteId.value = null;
+			copyResetTimer = null;
+		}, 1600);
+	} catch {
+		// ignore clipboard permission errors
+	}
+}
+
+onUnmounted(() => {
+	if (copyResetTimer) clearTimeout(copyResetTimer);
+});
 
 const categories = computed(() => {
 	const set = new Set<string>(['عمومی']);
@@ -13233,6 +13459,8 @@ async function handleDeleteNote(noteId: string) {
 				v-for="note in filteredNotes"
 				:key="note.id"
 				:note="note"
+				:is-copied="copiedNoteId === note.id"
+				@copy="handleCopyNote"
 				@edit="openEditModal"
 				@toggle-pin="handleTogglePin"
 				@delete="handleDeleteNote"
@@ -13259,15 +13487,21 @@ PATH: app/pages/architect/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateHabitInput, HabitEntity, MutateHabitStructureInput } from '~/domain/schemas';
 import ArchitectHabitCard from '~/components/architect/ArchitectHabitCard.vue';
 import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.vue';
-import HabitUpsertModal from '~/components/architect/HabitUpsertModal.vue';
+>>>>>>>
+<<<<<<< SEARCH
+		<!-- مودال درج و ویرایش طرح -->
+		<HabitUpsertModal
+			v-if="activeModal"
+=======
+		<!-- مودال درج و ویرایش طرح -->
+		<LazyArchitectHabitUpsertModal
+			v-if="activeModal"
 import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -13406,14 +13640,19 @@ PATH: app/pages/media/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter, UpdateMediaInput } from '~/domain/schemas';
 import MediaHeaderStats from '~/components/media/MediaHeaderStats.vue';
 import MediaItemCard from '~/components/media/MediaItemCard.vue';
-import MediaUpsertModal from '~/components/media/MediaUpsertModal.vue';
+>>>>>>>
+<<<<<<< SEARCH
+		<MediaUpsertModal
+			v-if="isModalOpen"
+=======
+		<LazyMediaUpsertModal
+			v-if="isModalOpen"
 import { Clapperboard, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -13580,8 +13819,6 @@ PATH: app/pages/calendar/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -13679,6 +13916,10 @@ const monthLogs = useDexieLiveQuery(
 const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
 const allBooks = useDexieLiveQuery(() => db.books.toArray(), []);
 const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
+
+const isCalendarLoading = computed(
+	() => allHabits.isLoading.value && monthEntries.isLoading.value && allHabits.value.length === 0
+);
 
 const userSelectedIso = ref<string | null>(null);
 
@@ -13808,6 +14049,12 @@ function goToToday() {
 			</div>
 		</section>
 
+		<div v-if="isCalendarLoading" class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12" aria-busy="true">
+			<div class="h-96 animate-pulse rounded-3xl border border-border bg-surface lg:col-span-7"></div>
+			<div class="h-80 animate-pulse rounded-3xl border border-border bg-surface lg:col-span-5"></div>
+		</div>
+
+		<NuxtErrorBoundary v-else>
 		<div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
 			<!-- گرید ماه جلالی -->
 			<div class="space-y-6 lg:col-span-7">
@@ -13867,6 +14114,22 @@ function goToToday() {
 				/>
 			</div>
 		</div>
+
+		<template #error="{ error, clearError }">
+			<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+				<p class="text-sm font-extrabold text-failed">
+					{{ error?.message || 'خطا در بارگذاری تقویم و رویدادهای ماه' }}
+				</p>
+				<button
+					type="button"
+					class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+					@click="clearError()"
+				>
+					تلاش مجدد
+				</button>
+			</div>
+		</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>
 
@@ -13878,14 +14141,19 @@ PATH: app/pages/books/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
 import BookItemCard from '~/components/books/BookItemCard.vue';
-import BookUpsertModal from '~/components/books/BookUpsertModal.vue';
+>>>>>>>
+<<<<<<< SEARCH
+		<BookUpsertModal
+			v-if="isModalOpen"
+=======
+		<LazyBooksBookUpsertModal
+			v-if="isModalOpen"
 import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -14012,8 +14280,6 @@ PATH: app/pages/settings/index.vue
 ================================================================
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -14022,7 +14288,7 @@ import { useTheme } from '~/composables/useTheme';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { toPersianDigits } from '~/domain/calendar';
 import { isDemoRecordId } from '~/domain/demo-seed';
-import { DatabaseBackupPayloadSchema } from '~/domain/schemas';
+import { DatabaseBackupPayloadSchema, extractApiErrorInfo } from '~/domain/schemas';
 import {
 	AlertTriangle,
 	Check,
@@ -14051,6 +14317,7 @@ const clientAuth = useClientAuth();
 
 const habits = useDexieLiveQuery(() => db.habits.toArray(), []);
 const entries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
+const isStatsLoading = computed(() => habits.isLoading.value || entries.isLoading.value);
 
 const selectedFile = ref<File | null>(null);
 const newPassword = ref('');
@@ -14064,6 +14331,8 @@ const isMutatingDemoSeed = ref(false);
 const isChangingPassword = ref(false);
 const isConfirmingClearAll = ref(false);
 const isClearingAll = ref(false);
+const isLoggingOut = ref(false);
+const isConfirmingOfflineLogout = ref(false);
 
 const activeDemoHabitsCount = computed(
 	() => habits.value.filter((h) => isDemoRecordId(h.id)).length
@@ -14267,31 +14536,42 @@ async function handleChangePassword() {
 		newPassword.value = '';
 		confirmNewPassword.value = '';
 	} catch (err: unknown) {
-		const statusMessage =
-			err && typeof err === 'object' && 'data' in err
-				? (err as { data?: { statusMessage?: string } }).data?.statusMessage
-				: undefined;
+		const info = extractApiErrorInfo(err, 'خطا در تغییر رمز');
 		passwordMessage.value = {
 			type: 'error',
-			text: statusMessage || (err instanceof Error ? err.message : 'خطا در تغییر رمز')
+			text: info.message
 		};
 	} finally {
 		isChangingPassword.value = false;
 	}
 }
 
-async function handleLogout() {
+async function handleLogout(forceOfflineLogout = false) {
+	if (isLoggingOut.value) return;
+
+	const pendingMutations = await localRepo.getPendingMutations();
+	if (!navigator.onLine && pendingMutations.length > 0 && !forceOfflineLogout) {
+		isConfirmingOfflineLogout.value = true;
+		return;
+	}
+
+	isLoggingOut.value = true;
+	isConfirmingOfflineLogout.value = false;
+
 	try {
 		if (navigator.onLine) {
+			await syncEngine.syncNow({ checkRemoteUpdates: false });
 			await $fetch('/api/auth/logout', { method: 'POST' });
 		}
 	} catch {
-		// ignore
+		// ignore network errors during logout cleanup
+	} finally {
+		syncEngine.reset();
+		await clientAuth.logout();
+		await localRepo.clearLocalData();
+		isLoggingOut.value = false;
+		router.push('/login');
 	}
-	syncEngine.reset();
-	await clientAuth.logout();
-	await localRepo.clearLocalData();
-	router.push('/login');
 }
 </script>
 
@@ -14353,7 +14633,14 @@ async function handleLogout() {
 					<Database class="h-5 w-5 text-accent-text" />
 					<h2 class="text-base font-black text-fg">پشتیبان‌گیری از داده‌ها</h2>
 				</div>
-				<span class="rounded-xl border border-border bg-elevated px-3 py-1 font-mono text-xs font-bold text-fg-secondary">
+				<span
+					v-if="isStatsLoading"
+					class="h-7 w-36 animate-pulse rounded-xl border border-border bg-elevated"
+				></span>
+				<span
+					v-else
+					class="rounded-xl border border-border bg-elevated px-3 py-1 font-mono text-xs font-bold text-fg-secondary"
+				>
 					{{ toPersianDigits(habits.length) }} طرح • {{ toPersianDigits(entries.length) }} روز ثبت‌شده
 				</span>
 			</div>
@@ -14500,14 +14787,40 @@ async function handleLogout() {
 				</div>
 			</form>
 
-			<div class="flex items-center justify-end border-t border-border pt-4">
+			<div class="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-end">
+				<div
+					v-if="isConfirmingOfflineLogout"
+					class="flex flex-1 flex-col justify-between gap-2.5 rounded-2xl border border-failed-border bg-failed-soft p-3.5 text-xs font-extrabold text-failed sm:flex-row sm:items-center"
+				>
+					<span>شما آفلاین هستید و تغییرات ارسال‌نشده دارید؛ با خروج از حساب، داده‌های محلی پاک می‌شوند.</span>
+					<div class="flex shrink-0 items-center gap-2">
+						<button
+							type="button"
+							class="h-8 rounded-xl border border-border bg-surface px-3 text-xs font-bold text-fg-secondary hover:text-fg"
+							@click="isConfirmingOfflineLogout = false"
+						>
+							انصراف
+						</button>
+						<button
+							type="button"
+							:disabled="isLoggingOut"
+							class="h-8 rounded-xl bg-failed px-3.5 text-xs font-black text-on-solid"
+							@click="handleLogout(true)"
+						>
+							خروج و پاک‌سازی
+						</button>
+					</div>
+				</div>
+
 				<button
+					v-else
 					type="button"
-					class="flex h-10 items-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-extrabold text-failed transition hover:opacity-90 active:scale-95"
-					@click="handleLogout"
+					:disabled="isLoggingOut"
+					class="flex h-10 items-center justify-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-extrabold text-failed transition hover:opacity-90 active:scale-95 disabled:opacity-50"
+					@click="handleLogout(false)"
 				>
 					<LogOut class="h-4 w-4" />
-					<span>خروج از حساب</span>
+					<span>{{ isLoggingOut ? 'در حال همگام‌سازی و خروج...' : 'خروج از حساب' }}</span>
 				</button>
 			</div>
 		</section>
@@ -14580,10 +14893,11 @@ import type {
 	BookStatus,
 	DayHabitOutcome,
 	DayStatusColor,
+	DayStatusMetaItem,
 	LifecycleEventType,
 	MediaCategory,
 	MediaStatus
-} from './schemas';
+} from '~/domain/schemas';
 
 export const DEFAULT_HABIT_CATEGORY = 'عمومی';
 
@@ -14618,14 +14932,6 @@ export const CADENCE_SUCCESS_RATIOS = {
 	GOLD_THRESHOLD: 1.0,
 	SILVER_THRESHOLD: 0.6
 } as const;
-
-export interface DayStatusMetaItem {
-	value: DayStatusColor;
-	label: string;
-	shortBadgeLabel: string;
-	dotClass: string;
-	softBadgeClasses: string;
-}
 
 export const DAY_STATUS_META: Record<DayStatusColor, DayStatusMetaItem> = {
 	optimal: {
@@ -14865,12 +15171,14 @@ PATH: app/domain/calendar.ts
 ================================================================
 
 import * as jalaali from 'jalaali-js';
+import type {
+	CalendarScrubberDay,
+	DayStatusColor,
+	JalaliMonthGridCell,
+	JalaliParts
+} from '~/domain/schemas';
 
-export interface JalaliParts {
-	jy: number;
-	jm: number;
-	jd: number;
-}
+export type { CalendarScrubberDay, JalaliMonthGridCell, JalaliParts };
 
 const PERSIAN_MONTHS = [
 	'فروردین',
@@ -14990,6 +15298,37 @@ export function jalaliSlashToIso(jalaliStr: string): string | null {
 	return jalaliPartsToIso({ jy, jm, jd });
 }
 
+export function validateJalaliDateRange(params: {
+	startedJalali?: string | null;
+	finishedJalali?: string | null;
+}): { valid: boolean; error?: string } {
+	const rawStart = params.startedJalali?.trim() ?? '';
+	const rawEnd = params.finishedJalali?.trim() ?? '';
+
+	let startIso: string | null = null;
+	let endIso: string | null = null;
+
+	if (rawStart) {
+		startIso = jalaliSlashToIso(rawStart);
+		if (!startIso) {
+			return { valid: false, error: 'فرمت تاریخ شروع معتبر نیست (مثال: ۱۴۰۴/۰۱/۱۵)' };
+		}
+	}
+
+	if (rawEnd) {
+		endIso = jalaliSlashToIso(rawEnd);
+		if (!endIso) {
+			return { valid: false, error: 'فرمت تاریخ پایان معتبر نیست (مثال: ۱۴۰۴/۰۱/۲۰)' };
+		}
+	}
+
+	if (startIso && endIso && endIso < startIso) {
+		return { valid: false, error: 'تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد' };
+	}
+
+	return { valid: true };
+}
+
 export function resolveCompletedRangeDates(params: {
 	startedJalali?: string | null;
 	finishedJalali?: string | null;
@@ -15051,24 +15390,15 @@ export function formatJalaliHuman(
 	};
 }
 
-export interface CalendarScrubberDay<TStatus extends string = string> {
-	iso: string;
-	jd: number;
-	weekdayShort: string;
-	monthName: string;
-	isSelected: boolean;
-	visualState: TStatus;
-}
-
-export function buildRecentCalendarDays<TStatus extends string>(params: {
+export function buildRecentCalendarDays(params: {
 	currentDateIso: string;
 	todayIso: string;
-	savedStatusByIso: Map<string, TStatus>;
-	liveStatus: TStatus;
+	savedStatusByIso: Map<string, DayStatusColor>;
+	liveStatus: DayStatusColor;
 	useLiveStatusForSelected: boolean;
-	defaultStatus: TStatus;
+	defaultStatus: DayStatusColor;
 	daysCount?: number;
-}): CalendarScrubberDay<TStatus>[] {
+}): CalendarScrubberDay[] {
 	const {
 		currentDateIso,
 		todayIso,
@@ -15080,7 +15410,7 @@ export function buildRecentCalendarDays<TStatus extends string>(params: {
 	} = params;
 
 	const anchorIso = currentDateIso > todayIso ? currentDateIso : todayIso;
-	const list: CalendarScrubberDay<TStatus>[] = [];
+	const list: CalendarScrubberDay[] = [];
 
 	for (let i = daysCount - 1; i >= 0; i--) {
 		const iso = shiftIsoDate(anchorIso, -i);
@@ -15117,15 +15447,6 @@ export function getDaysUntilIso(fromIso: string, targetIso: string): number {
 	const d1 = isoToDate(fromIso);
 	const d2 = isoToDate(targetIso);
 	return Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-export interface JalaliMonthGridCell {
-	iso: string;
-	jy: number;
-	jm: number;
-	jd: number;
-	weekdayLabel: string;
-	isToday: boolean;
 }
 
 export function buildJalaliMonthGrid(
@@ -15198,7 +15519,7 @@ import {
 	CADENCE_DEFAULTS,
 	DEFAULT_HABIT_CATEGORY,
 	TIER_SCORES
-} from './constants';
+} from '~/domain/constants';
 
 export const TrackingModeSchema = z.enum(['tiered', 'interval_cadence']);
 export type TrackingMode = z.infer<typeof TrackingModeSchema>;
@@ -15802,6 +16123,65 @@ export const LocalReflectionTagRecordSchema = z.object({
 });
 export type LocalReflectionTagRecord = z.infer<typeof LocalReflectionTagRecordSchema>;
 
+export const SelectOptionSchema = z.object({
+	value: z.union([z.string(), z.number()]),
+	label: z.string()
+});
+export type SelectOption = z.infer<typeof SelectOptionSchema>;
+
+export const JalaliPartsSchema = z.object({
+	jy: z.number().int(),
+	jm: z.number().int().min(1).max(12),
+	jd: z.number().int().min(1).max(31)
+});
+export type JalaliParts = z.infer<typeof JalaliPartsSchema>;
+
+export const CalendarScrubberDaySchema = z.object({
+	iso: z.string(),
+	jd: z.number().int(),
+	weekdayShort: z.string(),
+	monthName: z.string(),
+	isSelected: z.boolean(),
+	visualState: DayStatusColorSchema
+});
+export type CalendarScrubberDay = z.infer<typeof CalendarScrubberDaySchema>;
+
+export const JalaliMonthGridCellSchema = z.object({
+	iso: z.string(),
+	jy: z.number().int(),
+	jm: z.number().int(),
+	jd: z.number().int(),
+	weekdayLabel: z.string(),
+	isToday: z.boolean()
+});
+export type JalaliMonthGridCell = z.infer<typeof JalaliMonthGridCellSchema>;
+
+export const DayStatusMetaItemSchema = z.object({
+	value: DayStatusColorSchema,
+	label: z.string(),
+	shortBadgeLabel: z.string(),
+	dotClass: z.string(),
+	softBadgeClasses: z.string()
+});
+export type DayStatusMetaItem = z.infer<typeof DayStatusMetaItemSchema>;
+
+export const SyncStatusVisualSchema = z.enum([
+	'synced',
+	'local_pending',
+	'syncing',
+	'offline',
+	'error'
+]);
+export type SyncStatusVisual = z.infer<typeof SyncStatusVisualSchema>;
+
+export const CadenceDraftItemSchema = z.object({
+	habitId: z.string(),
+	plannedIntervals: z.number().int().min(0),
+	plannedMinutesPerInterval: z.number().min(0),
+	cadenceWindowMinutes: z.number().int().min(15)
+});
+export type CadenceDraftItem = z.infer<typeof CadenceDraftItemSchema>;
+
 export const SyncMetaRecordSchema = z.object({
 	key: z.enum(['meta:sync', 'meta:theme']),
 	clientId: z.string(),
@@ -15847,6 +16227,29 @@ export const HabitEvolutionItemSchema = z.object({
 	impactDelta: z.number().nullable()
 });
 export type HabitEvolutionItem = z.infer<typeof HabitEvolutionItemSchema>;
+
+export const RenderedChartBarSchema = z.object({
+	pt: z.lazy(() => HabitDailyPointSchema),
+	idx: z.number().int(),
+	cx: z.number(),
+	hasVisibleBar: z.boolean(),
+	barX: z.number(),
+	barY: z.number(),
+	barHeight: z.number(),
+	barRx: z.number(),
+	showAxisLabel: z.boolean()
+});
+export type RenderedChartBar = {
+	pt: HabitDailyPoint;
+	idx: number;
+	cx: number;
+	hasVisibleBar: boolean;
+	barX: number;
+	barY: number;
+	barHeight: number;
+	barRx: number;
+	showAxisLabel: boolean;
+};
 
 export const HabitDailyPointSchema = z.object({
 	dateIso: z.string(),
@@ -16009,7 +16412,70 @@ export const DatabaseBackupPayloadSchema = z.object({
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
 
-export { parseTagsJson } from './tags';
+export const ExistingWorkspaceDataSchema = DatabaseBackupPayloadSchema.shape.data;
+export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;
+
+export const MergedBackupResultSchema = z.object({
+	habitsToUpsert: z.array(HabitEntitySchema),
+	dailyEntriesToUpsert: ExistingWorkspaceDataSchema.shape.dailyEntries,
+	habitLogsToUpsert: ExistingWorkspaceDataSchema.shape.habitLogs,
+	cadencePlansToUpsert: z.array(CadencePlanEntitySchema),
+	booksToUpsert: z.array(BookEntitySchema),
+	mediaToUpsert: z.array(MediaEntitySchema),
+	notesToUpsert: z.array(NoteEntitySchema),
+	calendarEventsToUpsert: z.array(CalendarEventEntitySchema),
+	lifecycleEventsToUpsert: z.array(LifecycleEventEntitySchema),
+	reflectionTagsToUpsert: ExistingWorkspaceDataSchema.shape.reflectionTags,
+	addedOrUpdatedCount: z.number().int(),
+	skippedDuplicatesCount: z.number().int()
+});
+export type MergedBackupResult = z.infer<typeof MergedBackupResultSchema>;
+
+export const ApiErrorEnvelopeSchema = z
+	.object({
+		statusCode: z.number().optional(),
+		statusMessage: z.string().optional(),
+		message: z.string().optional(),
+		data: z
+			.object({
+				statusMessage: z.string().optional(),
+				data: z
+					.object({
+						failedAttempts: z.number().optional(),
+						nextDelaySeconds: z.number().optional()
+					})
+					.optional()
+			})
+			.optional()
+	})
+	.passthrough();
+
+export function extractApiErrorInfo(
+	err: unknown,
+	fallbackMessage: string
+): {
+	statusCode: number;
+	message: string;
+	failedAttempts?: number;
+} {
+	const parsed = ApiErrorEnvelopeSchema.safeParse(err);
+	if (parsed.success) {
+		const d = parsed.data;
+		const message =
+			d.data?.statusMessage || d.statusMessage || d.message || fallbackMessage;
+		return {
+			statusCode: d.statusCode || 500,
+			message,
+			failedAttempts: d.data?.data?.failedAttempts
+		};
+	}
+	if (err instanceof Error) {
+		return { statusCode: 500, message: err.message || fallbackMessage };
+	}
+	return { statusCode: 500, message: fallbackMessage };
+}
+
+export { parseTagsJson } from '~/domain/tags';
 
 
 ----------------------------------------------------------------
@@ -16478,8 +16944,6 @@ PATH: app/layouts/default.vue
 
 <script setup lang="ts">
 import { preloadRouteComponents } from '#app';
-import { computed, onMounted } from 'vue';
-import { useRoute } from 'vue-router';
 import { useSyncEngine } from '~/composables/useSyncEngine';
 import { useTheme } from '~/composables/useTheme';
 import { toPersianDigits } from '~/domain/calendar';
