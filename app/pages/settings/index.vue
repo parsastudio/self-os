@@ -6,7 +6,7 @@ import { useSyncEngine } from '~/composables/useSyncEngine';
 import { useTheme } from '~/composables/useTheme';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { toPersianDigits } from '~/domain/calendar';
-import { isDemoRecordId } from '~/domain/demo-seed';
+import { isDemoRecordId } from '~/domain/constants';
 import { DatabaseBackupPayloadSchema, extractApiErrorInfo } from '~/domain/schemas';
 import {
 	AlertTriangle,
@@ -167,15 +167,7 @@ async function importBackup() {
 		const mergeResult = await localRepo.restoreBackupPayload(parsed.data);
 
 		if (navigator.onLine) {
-			try {
-				await $fetch('/api/backup/import', {
-					method: 'POST',
-					body: parsed.data
-				});
-				void syncEngine.syncNow({ checkRemoteUpdates: true });
-			} catch {
-				// در صورت عدم دسترسی موقت به سرور، داده‌های محلی در Dexie ادغام شده‌اند
-			}
+			void syncEngine.syncNow({ checkRemoteUpdates: true });
 		}
 
 		const addedLabel = toPersianDigits(mergeResult.addedOrUpdatedCount);

@@ -1,7 +1,8 @@
 import type { PersonalOSDatabase } from '~/composables/useAppDatabase';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
+import { buildDemoSeedDataset } from '~/core/demo-seed';
 import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
-import { buildDemoSeedDataset, DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/demo-seed';
+import { DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/constants';
 import type { DatabaseBackupPayload, SyncOutboxMutation } from '~/domain/schemas';
 import { parseTagsJson } from '~/domain/tags';
 

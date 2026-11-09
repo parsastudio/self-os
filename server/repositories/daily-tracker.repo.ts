@@ -155,16 +155,16 @@ export async function saveDailyEntryAndLogs(
 
 export async function saveCadencePlansForDate(
 	input: SaveCadencePlanBatch,
-	preloadedHabitMap?: Map<string, HabitEntity>,
+	_preloadedHabitMap?: Map<string, HabitEntity>,
 	txExecutor?: DbExecutor
 ): Promise<void> {
 	await ensureDatabaseReady();
 	const nowIso = new Date().toISOString();
-	const habitMap =
-		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
+	const batchUpdatedAtIso = input.updatedAtIso || nowIso;
 
 	const applyOperations = async (tx: DbExecutor) => {
 		for (const item of input.items) {
+			const itemUpdatedAtIso = item.updatedAtIso || batchUpdatedAtIso;
 			const existingRows = await tx
 				.select()
 				.from(cadencePlans)
@@ -176,6 +176,13 @@ export async function saveCadencePlansForDate(
 				)
 				.limit(1);
 			const existing = existingRows[0];
+
+			if (
+				existing?.updatedAtIso &&
+				itemUpdatedAtIso < existing.updatedAtIso
+			) {
+				continue;
+			}
 
 			if (item.plannedMinutesPerInterval <= 0) {
 				if (existing) {
@@ -192,7 +199,7 @@ export async function saveCadencePlansForDate(
 						plannedIntervals: item.plannedIntervals,
 						plannedMinutesPerInterval: item.plannedMinutesPerInterval,
 						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: nowIso
+						updatedAtIso: itemUpdatedAtIso
 					})
 					.where(eq(cadencePlans.id, existing.id));
 			} else {
@@ -203,7 +210,7 @@ export async function saveCadencePlansForDate(
 					plannedIntervals: item.plannedIntervals,
 					plannedMinutesPerInterval: item.plannedMinutesPerInterval,
 					cadenceWindowMinutes: item.cadenceWindowMinutes,
-					updatedAtIso: nowIso
+					updatedAtIso: itemUpdatedAtIso
 				});
 			}
 		}

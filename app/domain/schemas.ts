@@ -72,9 +72,9 @@ export const HabitEntitySchema = z.object({
 	silverDesc: z.string().nullable(),
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
-	defaultIntervals: z.number().int().min(0),
-	defaultMinutesPerInterval: z.number().min(0),
-	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES),
+	defaultIntervals: z.number().int().min(0).max(96),
+	defaultMinutesPerInterval: z.number().min(0).max(1440),
+	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).max(1440),
 	sortOrder: z.number().int().default(0),
 	createdAtIso: z.string(),
 	updatedAtIso: z.string().nullable().optional()
@@ -109,9 +109,9 @@ export const CadencePlanEntitySchema = z.object({
 	id: z.string(),
 	dateIso: z.string(),
 	habitId: z.string(),
-	plannedIntervals: z.number().int().min(0),
-	plannedMinutesPerInterval: z.number().min(0),
-	cadenceWindowMinutes: z.number().int().min(15),
+	plannedIntervals: z.number().int().min(0).max(96),
+	plannedMinutesPerInterval: z.number().min(0).max(1440),
+	cadenceWindowMinutes: z.number().int().min(15).max(1440),
 	updatedAtIso: z.string().nullable().optional()
 });
 export type CadencePlanEntity = z.infer<typeof CadencePlanEntitySchema>;
@@ -127,11 +127,11 @@ export const HabitLogItemInputSchema = z.object({
 		.nullable(),
 	achievedRuleSnapshot: z.string().nullable().optional(),
 	habitSnapshotJson: z.string().nullable().optional(),
-	completedIntervals: z.number().int().min(0).nullable(),
-	actualMinutesPerInterval: z.number().min(0).nullable(),
-	totalActualMinutes: z.number().min(0).nullable(),
-	plannedIntervalsSnapshot: z.number().int().min(0).nullable(),
-	plannedMinutesSnapshot: z.number().min(0).nullable(),
+	completedIntervals: z.number().int().min(0).max(96).nullable(),
+	actualMinutesPerInterval: z.number().min(0).max(1440).nullable(),
+	totalActualMinutes: z.number().min(0).max(1440).nullable(),
+	plannedIntervalsSnapshot: z.number().int().min(0).max(96).nullable(),
+	plannedMinutesSnapshot: z.number().min(0).max(1440).nullable(),
 	updatedAtIso: z.string().nullable().optional()
 });
 export type HabitLogItemInput = z.infer<typeof HabitLogItemInputSchema>;
@@ -150,12 +150,14 @@ export type SaveDailyEntryInput = z.infer<typeof SaveDailyEntryInputSchema>;
 export const SaveCadencePlanBatchSchema = z.object({
 	targetDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	reason: z.string().optional(),
+	updatedAtIso: z.string().optional(),
 	items: z.array(
 		z.object({
 			habitId: z.string(),
-			plannedIntervals: z.number().int().min(0),
-			plannedMinutesPerInterval: z.number().min(0),
-			cadenceWindowMinutes: z.number().int().min(15)
+			plannedIntervals: z.number().int().min(0).max(96),
+			plannedMinutesPerInterval: z.number().min(0).max(1440),
+			cadenceWindowMinutes: z.number().int().min(15).max(1440),
+			updatedAtIso: z.string().optional()
 		})
 	)
 });
@@ -174,12 +176,13 @@ export const CreateHabitInputSchema = z.object({
 	silverDesc: z.string().nullable().optional(),
 	goldDesc: z.string().nullable().optional(),
 	emergencyMinDesc: z.string().nullable().optional(),
-	defaultIntervals: z.number().int().min(0).default(CADENCE_DEFAULTS.INTERVALS),
-	defaultMinutesPerInterval: z.number().min(0).default(CADENCE_DEFAULTS.MINUTES_PER_INTERVAL),
+	defaultIntervals: z.number().int().min(0).max(96).default(CADENCE_DEFAULTS.INTERVALS),
+	defaultMinutesPerInterval: z.number().min(0).max(1440).default(CADENCE_DEFAULTS.MINUTES_PER_INTERVAL),
 	cadenceWindowMinutes: z
 		.number()
 		.int()
 		.min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES)
+		.max(1440)
 		.default(CADENCE_DEFAULTS.WINDOW_MINUTES),
 	reason: z.string().optional()
 });
@@ -199,8 +202,8 @@ export const MutateHabitStructureSchema = z.object({
 	silverDesc: z.string().nullable(),
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
-	defaultMinutesPerInterval: z.number().min(0).optional(),
-	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).optional(),
+	defaultMinutesPerInterval: z.number().min(0).max(1440).optional(),
+	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).max(1440).optional(),
 	reason: z.string().min(2, 'نوشتن دلیل تغییر برای ثبت در تاریخچه الزامی است')
 });
 export type MutateHabitStructureInput = z.infer<typeof MutateHabitStructureSchema>;
@@ -741,6 +744,24 @@ export const LocalAuthRecordSchema = z.object({
 	updatedAtIso: z.string()
 });
 export type LocalAuthRecord = z.infer<typeof LocalAuthRecordSchema>;
+
+export const HabitLifecycleStateSnapshotSchema = z
+	.object({
+		title: z.string().nullable().optional(),
+		trackingMode: z.string().nullable().optional(),
+		scheduleLabel: z.string().nullable().optional(),
+		emergencyMinDesc: z.string().nullable().optional(),
+		defaultMinutesPerInterval: z.union([z.number(), z.string()]).nullable().optional(),
+		cadenceWindowMinutes: z.union([z.number(), z.string()]).nullable().optional(),
+		bronzeDesc: z.string().nullable().optional(),
+		silverDesc: z.string().nullable().optional(),
+		goldDesc: z.string().nullable().optional(),
+		status: z.string().nullable().optional(),
+		notes: z.string().nullable().optional(),
+		minutes: z.number().nullable().optional()
+	})
+	.passthrough();
+export type HabitLifecycleStateSnapshot = z.infer<typeof HabitLifecycleStateSnapshotSchema>;
 
 export const HabitRuleDiffItemSchema = z.object({
 	fieldLabel: z.string(),

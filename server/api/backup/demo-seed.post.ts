@@ -1,6 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3';
 import { importDatabaseFromJson, removeDemoSeedFromServer } from '~~/server/repositories/backup.repo';
-import { buildDemoSeedDataset } from '~/domain/demo-seed';
+import { buildDemoSeedDataset } from '~/core/demo-seed';
 import { DemoSeedActionSchema } from '~/domain/schemas';
 
 export default defineEventHandler(async (event) => {

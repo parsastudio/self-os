@@ -1,18 +1,20 @@
 import { generateId } from '~/domain/calendar';
 import { COMPOSITE_FULL_LABEL, DEFAULT_HABIT_CATEGORY, TIER_SCORES } from '~/domain/constants';
-import type {
-	CompositeChildrenStatus,
-	CreateHabitInput,
-	DayStatusColor,
-	HabitEntity,
-	HabitHistoricalSpec,
-	HabitLogItemInput,
-	HabitRuleDiffItem,
-	HabitTreeNode,
-	LifecycleEventEntity,
-	MutateHabitStructureInput,
-	SaveDailyEntryInput,
-	TierButtonDescriptor
+import {
+	HabitLifecycleStateSnapshotSchema,
+	type CompositeChildrenStatus,
+	type CreateHabitInput,
+	type DayStatusColor,
+	type HabitEntity,
+	type HabitHistoricalSpec,
+	type HabitLifecycleStateSnapshot,
+	type HabitLogItemInput,
+	type HabitRuleDiffItem,
+	type HabitTreeNode,
+	type LifecycleEventEntity,
+	type MutateHabitStructureInput,
+	type SaveDailyEntryInput,
+	type TierButtonDescriptor
 } from '~/domain/schemas';
 
 export function isDailyEntryEmpty(
@@ -569,7 +571,11 @@ export function computeDailyCompletionStats(params: {
 
 export function evaluateDayStatusColor(
 	habits: HabitEntity[],
-	logs: HabitLogItemInput[]
+	logs: HabitLogItemInput[],
+	options?: {
+		dateIso?: string;
+		scheduledCadenceHabitIds?: ReadonlySet<string>;
+	}
 ): DayStatusColor {
 	if (logs.length === 0) return 'failed';
 
@@ -586,14 +592,25 @@ export function evaluateDayStatusColor(
 			)
 			.map((l) => l.habitId)
 	);
+	const dateIso = options?.dateIso;
+	const scheduledCadenceSet = options?.scheduledCadenceHabitIds;
 	const habitById = new Map(habits.map((h) => [h.id, h]));
 	const trackable = habits.filter((h) => {
 		const isLogged = loggedIds.has(h.id);
-		if (h.trackingMode === 'interval_cadence' && !isLogged) return false;
-		if (h.status !== 'active' && !isLogged) return false;
+		if (isLogged) {
+			const hasChildren = habits.some((child) => child.parentId === h.id);
+			return !hasChildren;
+		}
+		if (dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
+			return false;
+		}
+		if (h.trackingMode === 'interval_cadence') {
+			return Boolean(scheduledCadenceSet?.has(h.id));
+		}
+		if (h.status !== 'active') return false;
 		if (h.parentId) {
 			const parent = habitById.get(h.parentId);
-			if ((!parent || parent.status !== 'active') && !isLogged) return false;
+			if (!parent || parent.status !== 'active') return false;
 		}
 		const hasChildren = habits.some((child) => child.parentId === h.id);
 		return !hasChildren;
@@ -648,33 +665,37 @@ export function extractLifecycleRuleDiffs(
 ): HabitRuleDiffItem[] {
 	if (!prevJson || !newJson) return [];
 	try {
-		const prev = JSON.parse(prevJson) as Record<string, unknown>;
-		const next = JSON.parse(newJson) as Record<string, unknown>;
+		const prevParsed = HabitLifecycleStateSnapshotSchema.safeParse(JSON.parse(prevJson));
+		const nextParsed = HabitLifecycleStateSnapshotSchema.safeParse(JSON.parse(newJson));
+		if (!prevParsed.success || !nextParsed.success) return [];
+
+		const prev = prevParsed.data;
+		const next = nextParsed.data;
 		const diffs: HabitRuleDiffItem[] = [];
 
 		const trackingMode = String(next.trackingMode ?? prev.trackingMode ?? 'tiered');
 		const isCadence = trackingMode === 'interval_cadence';
 
-		const baseFields: Array<{ key: string; label: string }> = [
+		const baseFields: Array<{ key: keyof HabitLifecycleStateSnapshot; label: string }> = [
 			{ key: 'title', label: 'عنوان طرح' },
 			{ key: 'scheduleLabel', label: 'زمان انجام' },
 			...(isCadence
-				? [
+				? ([
 						{ key: 'emergencyMinDesc', label: 'حداقل اضطراری' },
 						{ key: 'defaultMinutesPerInterval', label: 'دقیقه هدف در هر بازه' },
 						{ key: 'cadenceWindowMinutes', label: 'پنجره زمانی تکرار (دقیقه)' }
-					]
-				: [
+					] as const)
+				: ([
 						{ key: 'bronzeDesc', label: 'شرط برنز (حداقل)' },
 						{ key: 'silverDesc', label: 'شرط نقره' },
 						{ key: 'goldDesc', label: 'شرط طلا' }
-					]),
+					] as const)),
 			{ key: 'status', label: 'وضعیت طرح' },
 			{ key: 'notes', label: 'تبصره طرح' }
 		];
 
 		for (const f of baseFields) {
-			if (!(f.key in next)) continue;
+			if (next[f.key] === undefined) continue;
 
 			let oldVal = String(prev[f.key] ?? '').trim();
 			let newVal = String(next[f.key] ?? '').trim();

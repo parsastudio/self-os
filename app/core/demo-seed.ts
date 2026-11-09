@@ -1,4 +1,5 @@
 import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, shiftIsoDate } from '~/domain/calendar';
+import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX, isDemoRecordId } from '~/domain/constants';
 import { evaluateDayStatusColor, resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
 import type {
 	BookEntity,
@@ -12,12 +13,7 @@ import type {
 	NoteEntity
 } from '~/domain/schemas';
 
-export const DEMO_ID_PREFIX = 'demo:';
-export const DEMO_ENTRY_TAG = 'داده_آزمایشی';
-
-export function isDemoRecordId(id: string | null | undefined): boolean {
-	return Boolean(id && id.startsWith(DEMO_ID_PREFIX));
-}
+export { DEMO_ENTRY_TAG, DEMO_ID_PREFIX, isDemoRecordId };
 
 export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): DatabaseBackupPayload {
 	const nowIso = new Date().toISOString();
@@ -261,7 +257,10 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			});
 		}
 
-		const status = evaluateDayStatusColor(habits, rawDayLogs);
+		const status = evaluateDayStatusColor(habits, rawDayLogs, {
+			dateIso,
+			scheduledCadenceHabitIds: new Set(['demo:habit-deep-work'])
+		});
 		dailyEntries.push({
 			id: `demo:entry:${dateIso}`,
 			dateIso,

@@ -10,6 +10,13 @@ import type {
 
 export const DEFAULT_HABIT_CATEGORY = 'عمومی';
 
+export const DEMO_ID_PREFIX = 'demo:';
+export const DEMO_ENTRY_TAG = 'داده_آزمایشی';
+
+export function isDemoRecordId(id: string | null | undefined): boolean {
+	return Boolean(id && id.startsWith(DEMO_ID_PREFIX));
+}
+
 export const TIER_SCORES = {
 	SKIPPED: -1,
 	FAILED: 0,

@@ -171,12 +171,20 @@ export function useLocalRepository() {
 		},
 
 		async saveCadencePlans(input: SaveCadencePlanBatch): Promise<void> {
-			const nowIso = new Date().toISOString();
+			const nowIso = input.updatedAtIso || new Date().toISOString();
+			const payloadWithTimestamp: SaveCadencePlanBatch = {
+				...input,
+				updatedAtIso: nowIso,
+				items: input.items.map((item) => ({
+					...item,
+					updatedAtIso: item.updatedAtIso || nowIso
+				}))
+			};
 			const mutation: SyncOutboxMutation = {
 				id: `cadence:${input.targetDateIso}`,
 				kind: 'SAVE_CADENCE_PLAN',
 				queuedAtIso: nowIso,
-				payload: input
+				payload: payloadWithTimestamp
 			};
 
 			await stageMutation(mutation, async () => {

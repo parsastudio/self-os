@@ -231,7 +231,10 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	const computedDayStatus = computed<DayStatusColor>(() => {
 		if (manualDayStatus.value) return manualDayStatus.value;
-		return evaluateDayStatusColor(applicableHabits.value, Object.values(logsByHabitId.value));
+		return evaluateDayStatusColor(applicableHabits.value, Object.values(logsByHabitId.value), {
+			dateIso: dateIso.value,
+			scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
+		});
 	});
 
 	const completionStats = computed(() =>

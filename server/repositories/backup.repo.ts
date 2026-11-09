@@ -16,7 +16,7 @@ import {
 } from '~~/server/database/schema';
 import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
-import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
+import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/constants';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
 async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
@@ -35,7 +35,7 @@ async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
 function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
 	const cols = getTableColumns(table);
 	const excludeSet = new Set(excludeKeys);
-	const updateSet: Record<string, unknown> = {};
+	const updateSet: Record<string, ReturnType<typeof sql.raw>> = {};
 
 	for (const [propKey, col] of Object.entries(cols)) {
 		if (!excludeSet.has(propKey)) {
@@ -163,10 +163,10 @@ export async function importDatabaseFromJson(
 		skippedDuplicatesCount = merged.skippedDuplicatesCount;
 
 		const UPSERT_CHUNK_SIZE = 400;
-		const batchUpsertRows = async <T extends Record<string, unknown>>(
-			table: PgTable,
+		const batchUpsertRows = async <TTable extends PgTable>(
+			table: TTable,
 			targetCols: PgColumn | PgColumn[],
-			rows: ReadonlyArray<T>,
+			rows: ReadonlyArray<TTable['$inferInsert']>,
 			excludeKeys: string[] = ['id']
 		) => {
 			if (rows.length === 0) return;
@@ -175,7 +175,7 @@ export async function importDatabaseFromJson(
 				const chunk = rows.slice(offset, offset + UPSERT_CHUNK_SIZE);
 				await tx
 					.insert(table)
-					.values(chunk as Record<string, unknown>[])
+					.values(chunk)
 					.onConflictDoUpdate({
 						target: targetCols,
 						set: conflictSet

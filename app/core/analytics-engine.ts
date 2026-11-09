@@ -421,20 +421,37 @@ function buildEvolutionTimelineForHabit(
 }
 
 function computeStreaksFromSeries(
-	series: ReadonlyArray<{ outcome: DayHabitOutcome }>
+	series: ReadonlyArray<{ dateIso?: string; outcome: DayHabitOutcome }>,
+	habitCreatedDateIso?: string
 ): {
 	currentStreak: number;
 	bestStreak: number;
 } {
 	let bestStreak = 0;
 	let running = 0;
+	let hasSeenFirstActivity = false;
 
-	for (const pt of series) {
+	for (let i = 0; i < series.length; i++) {
+		const pt = series[i];
+		if (!pt) continue;
+		const isFinalDay = i === series.length - 1;
+
 		if (pt.outcome === 'gold' || pt.outcome === 'silver' || pt.outcome === 'bronze') {
+			hasSeenFirstActivity = true;
 			running++;
 			if (running > bestStreak) bestStreak = running;
+		} else if (pt.outcome === 'skipped') {
+			continue;
 		} else if (pt.outcome === 'failed') {
+			hasSeenFirstActivity = true;
 			running = 0;
+		} else if (pt.outcome === 'unlogged') {
+			if (isFinalDay) continue;
+			const isAfterCreation =
+				!habitCreatedDateIso || !pt.dateIso || pt.dateIso >= habitCreatedDateIso;
+			if (hasSeenFirstActivity && isAfterCreation) {
+				running = 0;
+			}
 		}
 	}
 
@@ -448,7 +465,6 @@ function computeStreaksFromSeries(
 		} else if (out === 'skipped') {
 			continue;
 		} else if (out === 'unlogged' && i === series.length - 1) {
-			// Allow the final day in window to be unlogged if the user hasn't logged it yet
 			continue;
 		} else {
 			break;
@@ -518,6 +534,11 @@ export function buildFullAnalyticsReport(params: {
 		fallbackEndDateIso
 	);
 
+	const { dateList: allTimeDateList } =
+		range === 'all'
+			? { dateList }
+			: resolveDateRangeWindow('all', entries, logs, habits, fallbackEndDateIso);
+
 	const sortedHabits = [...habits].sort((a, b) => {
 		if (a.status === 'archived' && b.status !== 'archived') return 1;
 		if (a.status !== 'archived' && b.status === 'archived') return -1;
@@ -585,7 +606,23 @@ export function buildFullAnalyticsReport(params: {
 				: 0;
 
 		const trendDelta = computeTrendDelta(validScores, avgQualityScore);
-		const { currentStreak, bestStreak } = computeStreaksFromSeries(seriesScores);
+		const habitCreatedDateIso = h.createdAtIso ? h.createdAtIso.slice(0, 10) : '';
+		const fullStreakSeries =
+			range === 'all'
+				? seriesScores.map((s) => ({ dateIso: s.iso, outcome: s.outcome }))
+				: allTimeDateList.map((dIso) => ({
+						dateIso: dIso,
+						outcome: evaluateHabitDay(
+							h,
+							children,
+							logsByDate.get(dIso),
+							entryByDate.has(dIso)
+						).outcome
+					}));
+		const { currentStreak, bestStreak } = computeStreaksFromSeries(
+			fullStreakSeries,
+			habitCreatedDateIso
+		);
 
 		const relevantIds = new Set([h.id, ...children.map((c) => c.id)]);
 		const lifecycleChangesCount = lifecycleEvents.filter(
@@ -711,7 +748,18 @@ export function buildFullAnalyticsReport(params: {
 
 		const trendDelta = computeTrendDelta(recentValidScores, avgQualityScore);
 
-		const { currentStreak, bestStreak } = computeStreaksFromSeries(dailySeries);
+		const targetComparisonRow = comparisonRows.find(
+			(r) => r.habit.id === targetHabit.id
+		);
+		const { currentStreak, bestStreak } = targetComparisonRow
+			? {
+					currentStreak: targetComparisonRow.currentStreak,
+					bestStreak: targetComparisonRow.bestStreak
+				}
+			: computeStreaksFromSeries(
+					dailySeries,
+					targetHabit.createdAtIso ? targetHabit.createdAtIso.slice(0, 10) : ''
+				);
 
 		const weekdayBuckets = Array.from({ length: 7 }, (_, idx) => ({
 			weekdayIndex: idx,
