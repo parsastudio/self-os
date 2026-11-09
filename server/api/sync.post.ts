@@ -1,6 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3';
 import { extractApiErrorInfo, SyncRequestPayloadSchema } from '~/domain/schemas';
-import { processClientSyncRequest } from '../repositories/sync.repo';
+import { processClientSyncRequest } from '~~/server/repositories/sync.repo';
 
 export default defineEventHandler(async (event) => {
 	try {

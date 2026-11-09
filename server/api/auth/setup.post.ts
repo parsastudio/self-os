@@ -5,8 +5,9 @@ import {
 	setupInitialPassword,
 	createAuthSession,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	if (await isPasswordConfigured()) {
@@ -29,7 +30,7 @@ export default defineEventHandler(async (event) => {
 
 	await setupInitialPassword(parsed.data.password);
 	const session = await createAuthSession();
-	const isSecure = process.env.NODE_ENV === 'production';
+	const isSecure = resolveIsSecureCookie(event);
 
 	setCookie(event, SESSION_COOKIE_NAME, session.token, getSessionCookieOptions(isSecure));
 

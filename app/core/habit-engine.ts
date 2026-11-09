@@ -139,6 +139,83 @@ export function resolveHabitRuleSnapshot(
 	return null;
 }
 
+export function shouldDiscardHabitLogItem(
+	habit: HabitEntity | undefined,
+	log: Pick<
+		HabitLogItemInput,
+		| 'achievedTier'
+		| 'plannedMinutesSnapshot'
+		| 'actualMinutesPerInterval'
+		| 'totalActualMinutes'
+	>
+): boolean {
+	const isUnloggedTiered =
+		habit?.trackingMode === 'tiered' &&
+		(log.achievedTier === null || log.achievedTier === undefined);
+
+	const isUnscheduledAndUnloggedCadence =
+		habit?.trackingMode === 'interval_cadence' &&
+		(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
+		(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
+		(!log.totalActualMinutes || log.totalActualMinutes <= 0);
+
+	return isUnloggedTiered || isUnscheduledAndUnloggedCadence;
+}
+
+export function resolveDailyHabitLogSnapshot(params: {
+	habit: HabitEntity | undefined;
+	log: HabitLogItemInput;
+	previousLog?: {
+		achievedTier: number | null;
+		habitTitleSnapshot: string | null;
+		achievedRuleSnapshot: string | null;
+		habitSnapshotJson: string | null;
+		plannedIntervalsSnapshot: number | null;
+		plannedMinutesSnapshot: number | null;
+	} | null;
+	fallbackUpdatedAtIso: string;
+}) {
+	const { habit, log, previousLog, fallbackUpdatedAtIso } = params;
+	const tierUnchanged = Boolean(
+		previousLog && previousLog.achievedTier === log.achievedTier
+	);
+
+	const habitTitleSnapshot =
+		(tierUnchanged && previousLog?.habitTitleSnapshot) ||
+		log.habitTitleSnapshot ||
+		habit?.title ||
+		previousLog?.habitTitleSnapshot ||
+		'طرح';
+
+	const achievedRuleSnapshot =
+		(tierUnchanged && previousLog?.achievedRuleSnapshot) ||
+		(habit ? resolveHabitRuleSnapshot(habit, log.achievedTier) : null) ||
+		log.achievedRuleSnapshot ||
+		previousLog?.achievedRuleSnapshot ||
+		null;
+
+	const habitSnapshotJson =
+		(tierUnchanged && previousLog?.habitSnapshotJson) ||
+		(habit
+			? serializeHabitSpecSnapshot(habit)
+			: (log.habitSnapshotJson ?? previousLog?.habitSnapshotJson ?? null));
+
+	return {
+		habitTitleSnapshot,
+		achievedTier: log.achievedTier,
+		achievedRuleSnapshot,
+		habitSnapshotJson,
+		completedIntervals: log.completedIntervals ?? null,
+		actualMinutesPerInterval: log.actualMinutesPerInterval ?? null,
+		totalActualMinutes: log.totalActualMinutes ?? null,
+		plannedIntervalsSnapshot:
+			log.plannedIntervalsSnapshot ?? previousLog?.plannedIntervalsSnapshot ?? null,
+		plannedMinutesSnapshot:
+			log.plannedMinutesSnapshot ?? previousLog?.plannedMinutesSnapshot ?? null,
+		updatedAtIso: log.updatedAtIso || fallbackUpdatedAtIso
+	};
+}
+
 export function getApplicableHabitsForDate(
 	habits: HabitEntity[],
 	options?: {

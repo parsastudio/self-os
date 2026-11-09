@@ -4,8 +4,8 @@ import {
 	buildCreatedHabitWithLifecycle,
 	buildUpdatedHabitWithLifecycle,
 	isDailyEntryEmpty,
-	resolveHabitRuleSnapshot,
-	serializeHabitSpecSnapshot
+	resolveDailyHabitLogSnapshot,
+	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import {
 	generateId,
@@ -128,6 +128,7 @@ export function useLocalRepository() {
 				const allHabits = await db.habits.toArray();
 				const habitMap = new Map(allHabits.map((h) => [h.id, h]));
 				const existingDayLogs = await db.habitLogs.where('dateIso').equals(input.dateIso).toArray();
+				const existingLogByHabitId = new Map(existingDayLogs.map((l) => [l.habitId, l]));
 				const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
 
 				for (const existingLog of existingDayLogs) {
@@ -138,43 +139,35 @@ export function useLocalRepository() {
 
 				for (const log of input.logs) {
 					const habit = habitMap.get(log.habitId);
-					const logId = `log:${input.dateIso}:${log.habitId}`;
+					const prev = existingLogByHabitId.get(log.habitId);
+					const logId = prev?.id || `log:${input.dateIso}:${log.habitId}`;
 
-					if (
-						habit?.trackingMode === 'tiered' &&
-						(log.achievedTier === null || log.achievedTier === undefined)
-					) {
+					if (shouldDiscardHabitLogItem(habit, log)) {
 						await db.habitLogs.delete(logId);
 						continue;
 					}
 
-					const isUnscheduledAndUnloggedCadence =
-						habit?.trackingMode === 'interval_cadence' &&
-						(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
-						(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
-						(!log.totalActualMinutes || log.totalActualMinutes <= 0);
-
-					if (isUnscheduledAndUnloggedCadence) {
-						await db.habitLogs.delete(logId);
-						continue;
-					}
+					const resolvedSnapshot = resolveDailyHabitLogSnapshot({
+						habit,
+						log,
+						previousLog: prev
+							? {
+									achievedTier: prev.achievedTier,
+									habitTitleSnapshot: prev.habitTitleSnapshot ?? null,
+									achievedRuleSnapshot: prev.achievedRuleSnapshot ?? null,
+									habitSnapshotJson: prev.habitSnapshotJson ?? null,
+									plannedIntervalsSnapshot: prev.plannedIntervalsSnapshot ?? null,
+									plannedMinutesSnapshot: prev.plannedMinutesSnapshot ?? null
+								}
+							: null,
+						fallbackUpdatedAtIso: nowIso
+					});
 
 					const logRecord: LocalHabitLogRecord = {
 						id: logId,
 						dateIso: input.dateIso,
 						habitId: log.habitId,
-						habitTitleSnapshot: log.habitTitleSnapshot || habit?.title || null,
-						achievedTier: log.achievedTier,
-						achievedRuleSnapshot:
-							log.achievedRuleSnapshot ||
-							(habit && log.achievedTier !== null ? resolveHabitRuleSnapshot(habit, log.achievedTier) : null),
-						habitSnapshotJson: habit ? serializeHabitSpecSnapshot(habit) : null,
-						completedIntervals: log.completedIntervals ?? null,
-						actualMinutesPerInterval: log.actualMinutesPerInterval ?? null,
-						totalActualMinutes: log.totalActualMinutes ?? null,
-						plannedIntervalsSnapshot: log.plannedIntervalsSnapshot ?? null,
-						plannedMinutesSnapshot: log.plannedMinutesSnapshot ?? null,
-						updatedAtIso: log.updatedAtIso || nowIso
+						...resolvedSnapshot
 					};
 					await db.habitLogs.put(logRecord);
 				}
@@ -266,6 +259,7 @@ export function useLocalRepository() {
 			});
 
 			const cascadedChildren: HabitEntity[] = [];
+			const cascadedLifecycleEvents: LifecycleEventEntity[] = [];
 			if (current.status !== updatedHabit.status && !updatedHabit.parentId) {
 				const children = await db.habits
 					.where('parentId')
@@ -273,11 +267,32 @@ export function useLocalRepository() {
 					.toArray();
 				for (const child of children) {
 					if (child.status !== updatedHabit.status && child.status !== 'archived') {
-						cascadedChildren.push({
-							...child,
-							status: updatedHabit.status,
-							updatedAtIso: nowIso
-						});
+						const { updatedHabit: nextChild, lifecycleEvent: childLc } =
+							buildUpdatedHabitWithLifecycle({
+								current: child,
+								input: {
+									habitId: child.id,
+									title: child.title,
+									category: child.category,
+									parentId: child.parentId,
+									timeSlot: child.timeSlot,
+									isSituational: child.isSituational,
+									status: updatedHabit.status,
+									scheduleLabel: child.scheduleLabel,
+									notes: child.notes,
+									bronzeDesc: child.bronzeDesc,
+									silverDesc: child.silverDesc,
+									goldDesc: child.goldDesc,
+									emergencyMinDesc: child.emergencyMinDesc,
+									defaultMinutesPerInterval: child.defaultMinutesPerInterval,
+									reason: input.reason
+								},
+								parentTitle: updatedHabit.title,
+								todayIso,
+								nowIso
+							});
+						cascadedChildren.push(nextChild);
+						cascadedLifecycleEvents.push(childLc);
 					}
 				}
 			}
@@ -303,6 +318,14 @@ export function useLocalRepository() {
 							queuedAtIso: nowIso,
 							payload: cascadedChild
 						})
+					),
+					...cascadedLifecycleEvents.map(
+						(childLc): SyncOutboxMutation => ({
+							id: `lifecycle:${childLc.id}`,
+							kind: 'ADD_LIFECYCLE_EVENT',
+							queuedAtIso: nowIso,
+							payload: childLc
+						})
 					)
 				],
 				async () => {
@@ -310,6 +333,9 @@ export function useLocalRepository() {
 					await db.lifecycleEvents.put(lifecycleEvent);
 					if (cascadedChildren.length > 0) {
 						await db.habits.bulkPut(cascadedChildren);
+					}
+					if (cascadedLifecycleEvents.length > 0) {
+						await db.lifecycleEvents.bulkPut(cascadedLifecycleEvents);
 					}
 				}
 			);
@@ -786,7 +812,21 @@ export function useLocalRepository() {
 					.map((m) => m.payload.targetDateIso)
 			);
 
-			// Reconcile remote deletions for collections where items can be hard-deleted
+			// Reconcile remote deletions for all collections (respecting staged local mutations)
+			const serverHabitIds = new Set(ws.habits.map((h) => h.id));
+			const localHabitIds = await db.habits.toCollection().primaryKeys();
+			const habitsToDelete = localHabitIds.filter(
+				(id) => !serverHabitIds.has(id) && !pendingIds.has(`habit:${id}`)
+			);
+			if (habitsToDelete.length > 0) await db.habits.bulkDelete(habitsToDelete);
+
+			const serverLifecycleIds = new Set(ws.lifecycleEvents.map((lc) => lc.id));
+			const localLifecycleIds = await db.lifecycleEvents.toCollection().primaryKeys();
+			const lifecyclesToDelete = localLifecycleIds.filter(
+				(id) => !serverLifecycleIds.has(id) && !pendingIds.has(`lifecycle:${id}`)
+			);
+			if (lifecyclesToDelete.length > 0) await db.lifecycleEvents.bulkDelete(lifecyclesToDelete);
+
 			const serverBookIds = new Set(ws.books.map((b) => b.id));
 			const localBookIds = await db.books.toCollection().primaryKeys();
 			const booksToDelete = localBookIds.filter(
@@ -1167,6 +1207,12 @@ export function useLocalRepository() {
 			}
 			if (merged.reflectionTagsToUpsert.length > 0) {
 				await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
+				stagedMutations.push({
+					id: 'tags:batch',
+					kind: 'UPSERT_REFLECTION_TAGS',
+					queuedAtIso: nowIso,
+					payload: clonePlain(merged.reflectionTagsToUpsert)
+				});
 			}
 			if (stagedMutations.length > 0) {
 				await db.syncOutbox.bulkPut(stagedMutations);

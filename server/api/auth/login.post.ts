@@ -4,8 +4,9 @@ import {
 	verifyPassword,
 	createAuthSession,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 const failedLoginAttemptsByIp = new Map<
 	string,
@@ -32,7 +33,7 @@ const MAX_TRACKED_IPS = 1000;
 function pruneExpiredLoginAttempts(now: number): void {
 	if (failedLoginAttemptsByIp.size < 100) return;
 	for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
-		if (now - entry.lastAttemptMs >= RESET_WINDOW_MS) {
+		if (entry.lockedUntilMs <= now && now - entry.lastAttemptMs >= RESET_WINDOW_MS) {
 			failedLoginAttemptsByIp.delete(key);
 		}
 	}
@@ -40,7 +41,7 @@ function pruneExpiredLoginAttempts(now: number): void {
 		let oldestKey: string | null = null;
 		let oldestTimestamp = Infinity;
 		for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
-			if (entry.lastAttemptMs < oldestTimestamp) {
+			if (entry.lockedUntilMs <= now && entry.lastAttemptMs < oldestTimestamp) {
 				oldestTimestamp = entry.lastAttemptMs;
 				oldestKey = key;
 			}
@@ -54,10 +55,13 @@ function pruneExpiredLoginAttempts(now: number): void {
 function resolveClientRateLimitKey(event: H3Event): string {
 	const socketIp = (event.node.req.socket?.remoteAddress || 'local').slice(0, 45);
 	const realIpHeader = getRequestHeader(event, 'x-real-ip')?.trim().slice(0, 45);
-	const forwardedHeader = getRequestHeader(event, 'x-forwarded-for')
-		?.split(',')[0]
-		?.trim()
-		.slice(0, 45);
+	const forwardedParts = getRequestHeader(event, 'x-forwarded-for')
+		?.split(',')
+		.map((part) => part.trim())
+		.filter(Boolean);
+	const lastForwardedIp = forwardedParts?.length
+		? forwardedParts[forwardedParts.length - 1]?.slice(0, 45)
+		: undefined;
 
 	const isLocalReverseProxy =
 		socketIp === '127.0.0.1' ||
@@ -66,8 +70,8 @@ function resolveClientRateLimitKey(event: H3Event): string {
 		socketIp.startsWith('::ffff:172.') ||
 		socketIp.startsWith('172.');
 
-	if (isLocalReverseProxy && (realIpHeader || forwardedHeader)) {
-		return `${socketIp}:${realIpHeader || forwardedHeader}`;
+	if (isLocalReverseProxy && (realIpHeader || lastForwardedIp)) {
+		return `${socketIp}:${realIpHeader || lastForwardedIp}`;
 	}
 	return socketIp;
 }
@@ -145,7 +149,7 @@ export default defineEventHandler(async (event) => {
 
 	failedLoginAttemptsByIp.delete(ip);
 	const session = await createAuthSession();
-	const isSecure = process.env.NODE_ENV === 'production';
+	const isSecure = resolveIsSecureCookie(event);
 
 	setCookie(event, SESSION_COOKIE_NAME, session.token, getSessionCookieOptions(isSecure));
 

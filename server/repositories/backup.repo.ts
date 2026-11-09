@@ -1,7 +1,7 @@
 import { getTableColumns, like, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
-import { db, ensureDatabaseReady } from '../database/index';
-import type { DbExecutor } from './daily-tracker.repo';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
+import type { DbExecutor } from '~~/server/repositories/daily-tracker.repo';
 import {
 	books,
 	cadencePlans,
@@ -13,8 +13,8 @@ import {
 	mediaLogs,
 	notes,
 	reflectionTags
-} from '../database/schema';
-import { bumpServerStructuralVersion } from './sync.repo';
+} from '~~/server/database/schema';
+import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';

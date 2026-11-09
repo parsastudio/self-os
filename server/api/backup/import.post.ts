@@ -1,6 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3';
 import { DatabaseBackupPayloadSchema } from '~/domain/schemas';
-import { importDatabaseFromJson } from '../../repositories/backup.repo';
+import { importDatabaseFromJson } from '~~/server/repositories/backup.repo';
 
 export default defineEventHandler(async (event) => {
 	const body = await readBody(event);

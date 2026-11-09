@@ -320,9 +320,15 @@ export type UpsertNoteInput = z.infer<typeof UpsertNoteInputSchema>;
 
 export const SetupPasswordInputSchema = z
 	.object({
-		password: z.string().min(4, 'رمز عبور باید حداقل ۴ کاراکتر باشد'),
-		confirmPassword: z.string().min(4, 'تکرار رمز عبور الزامی است'),
-		website: z.string().optional()
+		password: z
+			.string()
+			.min(4, 'رمز عبور باید حداقل ۴ کاراکتر باشد')
+			.max(256, 'رمز عبور بیش از حد طولانی است'),
+		confirmPassword: z
+			.string()
+			.min(4, 'تکرار رمز عبور الزامی است')
+			.max(256, 'تکرار رمز عبور بیش از حد طولانی است'),
+		website: z.string().max(256).optional()
 	})
 	.refine((data) => data.password === data.confirmPassword, {
 		message: 'رمز عبور و تکرار آن یکسان نیستند',
@@ -330,15 +336,27 @@ export const SetupPasswordInputSchema = z
 	});
 
 export const LoginInputSchema = z.object({
-	password: z.string().min(1, 'لطفاً رمز عبور را وارد کنید'),
-	website: z.string().optional()
+	password: z
+		.string()
+		.min(1, 'لطفاً رمز عبور را وارد کنید')
+		.max(256, 'رمز عبور بیش از حد طولانی است'),
+	website: z.string().max(256).optional()
 });
 
 export const ChangePasswordInputSchema = z
 	.object({
-		currentPassword: z.string().min(1, 'وارد کردن رمز عبور فعلی الزامی است'),
-		newPassword: z.string().min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد'),
-		confirmNewPassword: z.string().min(4, 'تکرار رمز عبور جدید الزامی است')
+		currentPassword: z
+			.string()
+			.min(1, 'وارد کردن رمز عبور فعلی الزامی است')
+			.max(256, 'رمز عبور فعلی بیش از حد طولانی است'),
+		newPassword: z
+			.string()
+			.min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد')
+			.max(256, 'رمز عبور جدید بیش از حد طولانی است'),
+		confirmNewPassword: z
+			.string()
+			.min(4, 'تکرار رمز عبور جدید الزامی است')
+			.max(256, 'تکرار رمز عبور جدید بیش از حد طولانی است')
 	})
 	.refine((data) => data.newPassword === data.confirmNewPassword, {
 		message: 'رمز عبور جدید و تکرار آن یکسان نیستند',
@@ -423,6 +441,18 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('ADD_LIFECYCLE_EVENT'),
 		queuedAtIso: z.string(),
 		payload: LifecycleEventEntitySchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('UPSERT_REFLECTION_TAGS'),
+		queuedAtIso: z.string(),
+		payload: z.array(
+			z.object({
+				id: z.string(),
+				label: z.string(),
+				sortOrder: z.number().int()
+			})
+		)
 	})
 ]);
 export type SyncOutboxMutation = z.infer<typeof SyncOutboxMutationSchema>;
@@ -910,6 +940,10 @@ export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
 
 export const ExistingWorkspaceDataSchema = DatabaseBackupPayloadSchema.shape.data;
 export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;
+
+export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
+export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
+export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
 
 export const MergedBackupResultSchema = z.object({
 	habitsToUpsert: z.array(HabitEntitySchema),

@@ -1,17 +1,17 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { db, ensureDatabaseReady } from '../database/index';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
 	dailyEntries,
 	habitLogs,
 	reflectionTags
-} from '../database/schema';
-import { getAllHabits } from './habits.repo';
-import { bumpServerStructuralVersion } from './sync.repo';
+} from '~~/server/database/schema';
+import { getAllHabits } from '~~/server/repositories/habits.repo';
+import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import {
 	isDailyEntryEmpty,
-	resolveHabitRuleSnapshot,
-	serializeHabitSpecSnapshot
+	resolveDailyHabitLogSnapshot,
+	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
 import type {
@@ -105,17 +105,7 @@ export async function saveDailyEntryAndLogs(
 			const habit = habitMap.get(log.habitId);
 			const prev = previousLogByHabitId.get(log.habitId);
 
-			const isUnloggedTiered =
-				habit?.trackingMode === 'tiered' &&
-				(log.achievedTier === null || log.achievedTier === undefined);
-
-			const isUnscheduledAndUnloggedCadence =
-				habit?.trackingMode === 'interval_cadence' &&
-				(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
-				(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
-				(!log.totalActualMinutes || log.totalActualMinutes <= 0);
-
-			if (isUnloggedTiered || isUnscheduledAndUnloggedCadence) {
+			if (shouldDiscardHabitLogItem(habit, log)) {
 				if (prev) {
 					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
 					await bumpServerStructuralVersion(nowIso, tx);
@@ -131,62 +121,24 @@ export async function saveDailyEntryAndLogs(
 				continue;
 			}
 
-			const logUpdatedAt = log.updatedAtIso || nowIso;
-			const tierUnchanged = prev && prev.achievedTier === log.achievedTier;
-
-			const habitTitleSnapshot =
-				(tierUnchanged && prev?.habitTitleSnapshot) ||
-				log.habitTitleSnapshot ||
-				habit?.title ||
-				prev?.habitTitleSnapshot ||
-				'طرح';
-
-			const achievedRuleSnapshot =
-				(tierUnchanged && prev?.achievedRuleSnapshot) ||
-				(habit ? resolveHabitRuleSnapshot(habit, log.achievedTier) : null) ||
-				log.achievedRuleSnapshot ||
-				prev?.achievedRuleSnapshot ||
-				null;
-
-			const habitSnapshotJson =
-				(tierUnchanged && prev?.habitSnapshotJson) ||
-				(habit
-					? serializeHabitSpecSnapshot(habit)
-					: (prev?.habitSnapshotJson ?? null));
+			const resolvedLogValues = resolveDailyHabitLogSnapshot({
+				habit,
+				log,
+				previousLog: prev,
+				fallbackUpdatedAtIso: nowIso
+			});
 
 			if (prev) {
 				await tx
 					.update(habitLogs)
-					.set({
-						habitTitleSnapshot,
-						achievedTier: log.achievedTier,
-						achievedRuleSnapshot,
-						habitSnapshotJson,
-						completedIntervals: log.completedIntervals,
-						actualMinutesPerInterval: log.actualMinutesPerInterval,
-						totalActualMinutes: log.totalActualMinutes,
-						plannedIntervalsSnapshot:
-							log.plannedIntervalsSnapshot ?? prev.plannedIntervalsSnapshot ?? null,
-						plannedMinutesSnapshot:
-							log.plannedMinutesSnapshot ?? prev.plannedMinutesSnapshot ?? null,
-						updatedAtIso: logUpdatedAt
-					})
+					.set(resolvedLogValues)
 					.where(eq(habitLogs.id, prev.id));
 			} else {
 				await tx.insert(habitLogs).values({
 					id: `log:${input.dateIso}:${log.habitId}`,
 					dateIso: input.dateIso,
 					habitId: log.habitId,
-					habitTitleSnapshot,
-					achievedTier: log.achievedTier,
-					achievedRuleSnapshot,
-					habitSnapshotJson,
-					completedIntervals: log.completedIntervals,
-					actualMinutesPerInterval: log.actualMinutesPerInterval,
-					totalActualMinutes: log.totalActualMinutes,
-					plannedIntervalsSnapshot: log.plannedIntervalsSnapshot ?? null,
-					plannedMinutesSnapshot: log.plannedMinutesSnapshot ?? null,
-					updatedAtIso: logUpdatedAt
+					...resolvedLogValues
 				});
 			}
 		}

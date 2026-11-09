@@ -1,5 +1,5 @@
 import { defineEventHandler, getCookie, deleteCookie } from 'h3';
-import { revokeAuthSession, SESSION_COOKIE_NAME } from '../../repositories/auth.repo';
+import { revokeAuthSession, SESSION_COOKIE_NAME } from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	const token = getCookie(event, SESSION_COOKIE_NAME);

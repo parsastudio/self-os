@@ -10,8 +10,9 @@ import {
 	isPasswordConfigured,
 	validateAndExtendSession,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	setResponseHeaders(event, {
@@ -41,7 +42,7 @@ export default defineEventHandler(async (event) => {
 	const rawToken = getCookie(event, SESSION_COOKIE_NAME) || null;
 	let isAuthenticated = false;
 
-	const isSecure = process.env.NODE_ENV === 'production';
+	const isSecure = resolveIsSecureCookie(event);
 
 	if (passwordConfigured && rawToken) {
 		const sessionStatus = await validateAndExtendSession(rawToken);

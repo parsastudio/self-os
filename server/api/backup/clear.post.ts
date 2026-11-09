@@ -1,5 +1,5 @@
 import { defineEventHandler } from 'h3';
-import { clearAllDatabaseRecords } from '../../repositories/backup.repo';
+import { clearAllDatabaseRecords } from '~~/server/repositories/backup.repo';
 
 export default defineEventHandler(async () => {
 	await clearAllDatabaseRecords();

@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { eq, inArray, lt, notInArray } from 'drizzle-orm';
-import { db, ensureDatabaseReady } from '../database/index';
-import { appAuth, authSessions } from '../database/schema';
+import { getRequestHeader, getRequestProtocol, type H3Event } from 'h3';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
+import { appAuth, authSessions } from '~~/server/database/schema';
 
 const AUTH_SINGLETON_ID = 'singleton';
 const SESSION_DURATION_DAYS = 365;
@@ -17,10 +18,25 @@ const SCRYPT_V2_PARAMS = {
 const SCRYPT_KEYLEN = 64;
 const PASSWORD_SALT_BYTES = 32;
 const SESSION_TOKEN_HEX_REGEX = /^[a-f0-9]{64}$/i;
-const SESSION_HMAC_DOMAIN_KEY = 'newlife-personal-os-session-v2-domain-key';
+const DEFAULT_SESSION_HMAC_DOMAIN_KEY = 'newlife-personal-os-session-v2-domain-key';
+
+function getActiveSessionHmacKey(): string {
+	const envSecret = process.env.SESSION_HMAC_SECRET?.trim();
+	return envSecret && envSecret.length >= 16 ? envSecret : DEFAULT_SESSION_HMAC_DOMAIN_KEY;
+}
 
 export const SESSION_COOKIE_NAME = 'newlife_session';
 export const SESSION_MAX_AGE_SECONDS = SESSION_DURATION_DAYS * 24 * 60 * 60;
+
+export function resolveIsSecureCookie(event: H3Event): boolean {
+	if (process.env.COOKIE_SECURE === 'false') return false;
+	if (process.env.COOKIE_SECURE === 'true') return true;
+	const proto = getRequestProtocol(event, { xForwardedProto: true });
+	if (proto === 'https') return true;
+	const forwardedProto = getRequestHeader(event, 'x-forwarded-proto');
+	if (forwardedProto?.split(',')[0]?.trim().toLowerCase() === 'https') return true;
+	return false;
+}
 
 export function getSessionCookieOptions(isSecureCookie: boolean) {
 	return {
@@ -71,15 +87,27 @@ function isWellFormedSessionToken(rawToken: string): boolean {
 	return SESSION_TOKEN_HEX_REGEX.test(rawToken);
 }
 
-function hashSessionTokenV2(rawToken: string): string {
+function hashSessionTokenV2(rawToken: string, hmacKey = getActiveSessionHmacKey()): string {
 	return crypto
-		.createHmac('sha256', SESSION_HMAC_DOMAIN_KEY)
+		.createHmac('sha256', hmacKey)
 		.update(rawToken.toLowerCase())
 		.digest('hex');
 }
 
 function hashSessionTokenLegacyV1(rawToken: string): string {
 	return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+function getCandidateSessionIds(rawToken: string): {
+	primaryId: string;
+	allCandidateIds: string[];
+} {
+	const activeKey = getActiveSessionHmacKey();
+	const primaryId = hashSessionTokenV2(rawToken, activeKey);
+	const defaultDomainId = hashSessionTokenV2(rawToken, DEFAULT_SESSION_HMAC_DOMAIN_KEY);
+	const legacyV1Id = hashSessionTokenLegacyV1(rawToken);
+	const allCandidateIds = Array.from(new Set([primaryId, defaultDomainId, legacyV1Id]));
+	return { primaryId, allCandidateIds };
 }
 
 export async function isPasswordConfigured(): Promise<boolean> {
@@ -191,11 +219,8 @@ export async function changeMasterPassword(
 			.where(eq(appAuth.id, AUTH_SINGLETON_ID));
 
 		if (keepRawToken && isWellFormedSessionToken(keepRawToken)) {
-			const preserveIds = [
-				hashSessionTokenV2(keepRawToken),
-				hashSessionTokenLegacyV1(keepRawToken)
-			];
-			await tx.delete(authSessions).where(notInArray(authSessions.id, preserveIds));
+			const { allCandidateIds } = getCandidateSessionIds(keepRawToken);
+			await tx.delete(authSessions).where(notInArray(authSessions.id, allCandidateIds));
 		} else {
 			await tx.delete(authSessions);
 		}
@@ -241,13 +266,12 @@ export async function validateAndExtendSession(
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 	const nowIso = now.toISOString();
-	const v2SessionId = hashSessionTokenV2(rawToken);
-	const legacySessionId = hashSessionTokenLegacyV1(rawToken);
+	const { primaryId, allCandidateIds } = getCandidateSessionIds(rawToken);
 
 	const rows = await db
 		.select()
 		.from(authSessions)
-		.where(inArray(authSessions.id, [v2SessionId, legacySessionId]))
+		.where(inArray(authSessions.id, allCandidateIds))
 		.limit(1);
 
 	const session = rows[0];
@@ -256,7 +280,7 @@ export async function validateAndExtendSession(
 	}
 
 	if (session.expiresAtIso <= nowIso) {
-		await db.delete(authSessions).where(eq(authSessions.id, session.id));
+		await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 
@@ -264,16 +288,16 @@ export async function validateAndExtendSession(
 	const lastSeenMs = new Date(session.lastSeenAtIso).getTime();
 	const hoursSinceLastSeen = (now.getTime() - lastSeenMs) / (1000 * 60 * 60);
 
-	const isLegacySessionId = session.id === legacySessionId && session.id !== v2SessionId;
-	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1 || isLegacySessionId;
+	const needsKeyUpgrade = session.id !== primaryId;
+	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1 || needsKeyUpgrade;
 
-	if (isLegacySessionId) {
+	if (needsKeyUpgrade) {
 		await db.transaction(async (tx) => {
-			await tx.delete(authSessions).where(eq(authSessions.id, legacySessionId));
+			await tx.delete(authSessions).where(eq(authSessions.id, session.id));
 			await tx
 				.insert(authSessions)
 				.values({
-					id: v2SessionId,
+					id: primaryId,
 					createdAtIso: session.createdAtIso,
 					expiresAtIso: newExpiresAt.toISOString(),
 					lastSeenAtIso: nowIso
@@ -288,6 +312,7 @@ export async function validateAndExtendSession(
 				lastSeenAtIso: nowIso
 			})
 			.where(eq(authSessions.id, session.id));
+		await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 	}
 
 	return {
@@ -300,6 +325,6 @@ export async function validateAndExtendSession(
 export async function revokeAuthSession(rawToken: string): Promise<void> {
 	if (!isWellFormedSessionToken(rawToken)) return;
 	await ensureDatabaseReady();
-	const candidateIds = [hashSessionTokenV2(rawToken), hashSessionTokenLegacyV1(rawToken)];
-	await db.delete(authSessions).where(inArray(authSessions.id, candidateIds));
+	const { allCandidateIds } = getCandidateSessionIds(rawToken);
+	await db.delete(authSessions).where(inArray(authSessions.id, allCandidateIds));
 }

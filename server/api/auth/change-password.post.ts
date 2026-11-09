@@ -4,8 +4,9 @@ import {
 	verifyPassword,
 	changeMasterPassword,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	const body = await readBody(event);
@@ -29,7 +30,7 @@ export default defineEventHandler(async (event) => {
 	await changeMasterPassword(parsed.data.newPassword, currentToken);
 
 	if (currentToken) {
-		const isSecure = process.env.NODE_ENV === 'production';
+		const isSecure = resolveIsSecureCookie(event);
 		setCookie(event, SESSION_COOKIE_NAME, currentToken, getSessionCookieOptions(isSecure));
 	}
 

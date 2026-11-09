@@ -1,4 +1,7 @@
 import type {
+	BackupDailyEntryRow,
+	BackupHabitLogRow,
+	BackupReflectionTagRow,
 	BookEntity,
 	CadencePlanEntity,
 	CalendarEventEntity,
@@ -11,10 +14,13 @@ import type {
 	NoteEntity
 } from '~/domain/schemas';
 
-export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
-export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
-export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
-export type { ExistingWorkspaceData, MergedBackupResult };
+export type {
+	BackupDailyEntryRow,
+	BackupHabitLogRow,
+	BackupReflectionTagRow,
+	ExistingWorkspaceData,
+	MergedBackupResult
+};
 
 function normText(str: string | null | undefined): string {
 	return (str ?? '').trim().toLowerCase().replace(/\s+/g, ' ');

@@ -1,5 +1,5 @@
 import { asc, desc, eq, sql } from 'drizzle-orm';
-import { db, ensureDatabaseReady } from '../database/index';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	books,
 	cadencePlans,
@@ -10,15 +10,16 @@ import {
 	habits,
 	mediaLogs,
 	notes,
+	reflectionTags,
 	syncState
-} from '../database/schema';
-import { getAllHabits } from './habits.repo';
+} from '~~/server/database/schema';
+import { getAllHabits } from '~~/server/repositories/habits.repo';
 import {
 	type DbExecutor,
 	getReflectionTags,
 	saveCadencePlansForDate,
 	saveDailyEntryAndLogs
-} from './daily-tracker.repo';
+} from '~~/server/repositories/daily-tracker.repo';
 import { parseTagsJson } from '~/domain/tags';
 import type {
 	LocalWorkspaceSnapshot,
@@ -192,6 +193,19 @@ export async function processClientSyncRequest(
 							target: habitLifecycleEvents.id,
 							set: mutation.payload
 						});
+				} else if (mutation.kind === 'UPSERT_REFLECTION_TAGS') {
+					for (const tagItem of mutation.payload) {
+						await tx
+							.insert(reflectionTags)
+							.values(tagItem)
+							.onConflictDoUpdate({
+								target: reflectionTags.label,
+								set: {
+									sortOrder: tagItem.sortOrder
+								}
+							});
+					}
+					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
 				}
 				appliedMutationIds.push(mutation.id);
 			}
