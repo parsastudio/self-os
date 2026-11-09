@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { CADENCE_DEFAULTS } from '~/domain/constants';
 import type { CreateHabitInput, HabitEntity, HabitStatus, HabitTimeSlot, MutateHabitStructureInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
@@ -57,6 +57,12 @@ const bronzeDesc = ref(props.editingHabit?.bronzeDesc ?? '');
 const silverDesc = ref(props.editingHabit?.silverDesc ?? '');
 const goldDesc = ref(props.editingHabit?.goldDesc ?? '');
 const emergencyMinDesc = ref(props.editingHabit?.emergencyMinDesc ?? '');
+const defaultMinutesPerInterval = ref<number>(
+	props.editingHabit?.defaultMinutesPerInterval ?? CADENCE_DEFAULTS.MINUTES_PER_INTERVAL
+);
+const cadenceWindowMinutes = ref<number>(
+	props.editingHabit?.cadenceWindowMinutes ?? CADENCE_DEFAULTS.WINDOW_MINUTES
+);
 const notes = ref(props.editingHabit?.notes ?? '');
 const reason = ref('');
 
@@ -129,26 +135,44 @@ function handleSubmit() {
 				structureKind.value === 'interval_cadence'
 					? (emergencyMinDesc.value.trim() || null)
 					: null,
-			defaultMinutesPerInterval: props.editingHabit.defaultMinutesPerInterval,
+			defaultMinutesPerInterval:
+				structureKind.value === 'interval_cadence'
+					? Math.max(0, Number(defaultMinutesPerInterval.value) || 0)
+					: props.editingHabit.defaultMinutesPerInterval,
+			cadenceWindowMinutes:
+				structureKind.value === 'interval_cadence'
+					? Math.max(
+							CADENCE_DEFAULTS.MIN_WINDOW_MINUTES,
+							Math.round(Number(cadenceWindowMinutes.value) || CADENCE_DEFAULTS.WINDOW_MINUTES)
+						)
+					: props.editingHabit.cadenceWindowMinutes,
 			reason: reason.value.trim() || 'ویرایش قوانین طرح'
 		});
 	} else {
+		const isCadence = structureKind.value === 'interval_cadence';
 		emit('create', {
 			title: title.value.trim(),
 			parentId: selectedParentId.value || null,
 			category: 'عمومی',
-			trackingMode: structureKind.value === 'interval_cadence' ? 'interval_cadence' : 'tiered',
+			trackingMode: isCadence ? 'interval_cadence' : 'tiered',
 			timeSlot: selectedTimeSlot.value,
 			isSituational: isSituational.value,
 			scheduleLabel: scheduleLabel.value.trim() || undefined,
 			notes: notes.value.trim() || undefined,
-			bronzeDesc: bronzeDesc.value.trim() || undefined,
-			silverDesc: silverDesc.value.trim() || undefined,
-			goldDesc: goldDesc.value.trim() || undefined,
-			emergencyMinDesc: emergencyMinDesc.value.trim() || undefined,
-			defaultIntervals: 1,
-			defaultMinutesPerInterval: 0,
-			cadenceWindowMinutes: 60,
+			bronzeDesc: isCadence ? undefined : (bronzeDesc.value.trim() || undefined),
+			silverDesc: isCadence ? undefined : (silverDesc.value.trim() || undefined),
+			goldDesc: isCadence ? undefined : (goldDesc.value.trim() || undefined),
+			emergencyMinDesc: isCadence ? (emergencyMinDesc.value.trim() || undefined) : undefined,
+			defaultIntervals: CADENCE_DEFAULTS.INTERVALS,
+			defaultMinutesPerInterval: isCadence
+				? Math.max(0, Number(defaultMinutesPerInterval.value) || CADENCE_DEFAULTS.MINUTES_PER_INTERVAL)
+				: 0,
+			cadenceWindowMinutes: isCadence
+				? Math.max(
+						CADENCE_DEFAULTS.MIN_WINDOW_MINUTES,
+						Math.round(Number(cadenceWindowMinutes.value) || CADENCE_DEFAULTS.WINDOW_MINUTES)
+					)
+				: CADENCE_DEFAULTS.WINDOW_MINUTES,
 			reason: reason.value.trim() || undefined
 		});
 	}
@@ -269,11 +293,35 @@ function handleSubmit() {
 				</label>
 			</div>
 
-			<!-- تنظیمات حداقل اضطراری طرح ریتمی -->
-			<div v-else-if="structureKind === 'interval_cadence'" class="space-y-2 rounded-2xl border border-border bg-elevated p-4">
+			<!-- تنظیمات طرح ریتمی -->
+			<div v-else-if="structureKind === 'interval_cadence'" class="space-y-3 rounded-2xl border border-border bg-elevated p-4">
 				<p class="text-xs font-bold text-fg-secondary">
-					این طرح فقط در روزهایی که از شب قبل در بخش «تنظیم ریتم فردا» برایش زمان تعیین کنید در صفحه ثبت روزانه و آمار ظاهر می‌شود.
+					این طرح در روزهایی که از بخش «تنظیم ریتم فردا» برایش زمان تعیین کنید در صفحه ثبت روزانه و آمار ظاهر می‌شود.
 				</p>
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+					<div>
+						<label for="h-cadence-mins" class="mb-1.5 block text-xs font-bold text-fg">هدف پیش‌فرض هر بازه (دقیقه)</label>
+						<input
+							id="h-cadence-mins"
+							v-model.number="defaultMinutesPerInterval"
+							type="number"
+							min="0"
+							step="1"
+							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
+						/>
+					</div>
+					<div>
+						<label for="h-cadence-win" class="mb-1.5 block text-xs font-bold text-fg">پنجره زمانی تکرار (دقیقه)</label>
+						<input
+							id="h-cadence-win"
+							v-model.number="cadenceWindowMinutes"
+							type="number"
+							:min="CADENCE_DEFAULTS.MIN_WINDOW_MINUTES"
+							step="5"
+							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
+						/>
+					</div>
+				</div>
 				<div>
 					<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>
 					<input

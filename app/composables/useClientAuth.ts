@@ -1,4 +1,3 @@
-import { ref } from 'vue';
 import { getAppDatabase, type LocalAuthRecord } from '~/composables/useAppDatabase';
 
 const PBKDF2_V2_PREFIX = 'pbkdf2_v2:';

@@ -53,6 +53,7 @@ self-os
         ├── 📄 useClientAuth.ts
         ├── 📄 useDailyTracker.ts
         ├── 📄 useDexieLiveQuery.ts
+        ├── 📄 useLocalBackupOperations.ts
         ├── 📄 useLocalRepository.ts
         ├── 📄 useSyncEngine.ts
         ├── 📄 useTheme.ts
@@ -97,6 +98,8 @@ self-os
             ├── 📄 index.vue
     ├── 📁 plugins
         ├── 📄 persian-digits.client.ts
+    ├── 📁 utils
+        ├── 📄 ui-tokens.ts
 ├── 📁 data
 ├── 📄 docker-compose.yml
 ├── 📄 drizzle.config.ts
@@ -212,8 +215,9 @@ PATH: server/repositories/auth.repo.ts
 
 import crypto from 'node:crypto';
 import { eq, inArray, lt, notInArray } from 'drizzle-orm';
-import { db, ensureDatabaseReady } from '../database/index';
-import { appAuth, authSessions } from '../database/schema';
+import { getRequestHeader, getRequestProtocol, type H3Event } from 'h3';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
+import { appAuth, authSessions } from '~~/server/database/schema';
 
 const AUTH_SINGLETON_ID = 'singleton';
 const SESSION_DURATION_DAYS = 365;
@@ -229,10 +233,25 @@ const SCRYPT_V2_PARAMS = {
 const SCRYPT_KEYLEN = 64;
 const PASSWORD_SALT_BYTES = 32;
 const SESSION_TOKEN_HEX_REGEX = /^[a-f0-9]{64}$/i;
-const SESSION_HMAC_DOMAIN_KEY = 'newlife-personal-os-session-v2-domain-key';
+const DEFAULT_SESSION_HMAC_DOMAIN_KEY = 'newlife-personal-os-session-v2-domain-key';
+
+function getActiveSessionHmacKey(): string {
+	const envSecret = process.env.SESSION_HMAC_SECRET?.trim();
+	return envSecret && envSecret.length >= 16 ? envSecret : DEFAULT_SESSION_HMAC_DOMAIN_KEY;
+}
 
 export const SESSION_COOKIE_NAME = 'newlife_session';
 export const SESSION_MAX_AGE_SECONDS = SESSION_DURATION_DAYS * 24 * 60 * 60;
+
+export function resolveIsSecureCookie(event: H3Event): boolean {
+	if (process.env.COOKIE_SECURE === 'false') return false;
+	if (process.env.COOKIE_SECURE === 'true') return true;
+	const proto = getRequestProtocol(event, { xForwardedProto: true });
+	if (proto === 'https') return true;
+	const forwardedProto = getRequestHeader(event, 'x-forwarded-proto');
+	if (forwardedProto?.split(',')[0]?.trim().toLowerCase() === 'https') return true;
+	return false;
+}
 
 export function getSessionCookieOptions(isSecureCookie: boolean) {
 	return {
@@ -283,15 +302,27 @@ function isWellFormedSessionToken(rawToken: string): boolean {
 	return SESSION_TOKEN_HEX_REGEX.test(rawToken);
 }
 
-function hashSessionTokenV2(rawToken: string): string {
+function hashSessionTokenV2(rawToken: string, hmacKey = getActiveSessionHmacKey()): string {
 	return crypto
-		.createHmac('sha256', SESSION_HMAC_DOMAIN_KEY)
+		.createHmac('sha256', hmacKey)
 		.update(rawToken.toLowerCase())
 		.digest('hex');
 }
 
 function hashSessionTokenLegacyV1(rawToken: string): string {
 	return crypto.createHash('sha256').update(rawToken).digest('hex');
+}
+
+function getCandidateSessionIds(rawToken: string): {
+	primaryId: string;
+	allCandidateIds: string[];
+} {
+	const activeKey = getActiveSessionHmacKey();
+	const primaryId = hashSessionTokenV2(rawToken, activeKey);
+	const defaultDomainId = hashSessionTokenV2(rawToken, DEFAULT_SESSION_HMAC_DOMAIN_KEY);
+	const legacyV1Id = hashSessionTokenLegacyV1(rawToken);
+	const allCandidateIds = Array.from(new Set([primaryId, defaultDomainId, legacyV1Id]));
+	return { primaryId, allCandidateIds };
 }
 
 export async function isPasswordConfigured(): Promise<boolean> {
@@ -403,11 +434,8 @@ export async function changeMasterPassword(
 			.where(eq(appAuth.id, AUTH_SINGLETON_ID));
 
 		if (keepRawToken && isWellFormedSessionToken(keepRawToken)) {
-			const preserveIds = [
-				hashSessionTokenV2(keepRawToken),
-				hashSessionTokenLegacyV1(keepRawToken)
-			];
-			await tx.delete(authSessions).where(notInArray(authSessions.id, preserveIds));
+			const { allCandidateIds } = getCandidateSessionIds(keepRawToken);
+			await tx.delete(authSessions).where(notInArray(authSessions.id, allCandidateIds));
 		} else {
 			await tx.delete(authSessions);
 		}
@@ -453,13 +481,12 @@ export async function validateAndExtendSession(
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 	const nowIso = now.toISOString();
-	const v2SessionId = hashSessionTokenV2(rawToken);
-	const legacySessionId = hashSessionTokenLegacyV1(rawToken);
+	const { primaryId, allCandidateIds } = getCandidateSessionIds(rawToken);
 
 	const rows = await db
 		.select()
 		.from(authSessions)
-		.where(inArray(authSessions.id, [v2SessionId, legacySessionId]))
+		.where(inArray(authSessions.id, allCandidateIds))
 		.limit(1);
 
 	const session = rows[0];
@@ -468,7 +495,7 @@ export async function validateAndExtendSession(
 	}
 
 	if (session.expiresAtIso <= nowIso) {
-		await db.delete(authSessions).where(eq(authSessions.id, session.id));
+		await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 
@@ -476,16 +503,16 @@ export async function validateAndExtendSession(
 	const lastSeenMs = new Date(session.lastSeenAtIso).getTime();
 	const hoursSinceLastSeen = (now.getTime() - lastSeenMs) / (1000 * 60 * 60);
 
-	const isLegacySessionId = session.id === legacySessionId && session.id !== v2SessionId;
-	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1 || isLegacySessionId;
+	const needsKeyUpgrade = session.id !== primaryId;
+	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1 || needsKeyUpgrade;
 
-	if (isLegacySessionId) {
+	if (needsKeyUpgrade) {
 		await db.transaction(async (tx) => {
-			await tx.delete(authSessions).where(eq(authSessions.id, legacySessionId));
+			await tx.delete(authSessions).where(eq(authSessions.id, session.id));
 			await tx
 				.insert(authSessions)
 				.values({
-					id: v2SessionId,
+					id: primaryId,
 					createdAtIso: session.createdAtIso,
 					expiresAtIso: newExpiresAt.toISOString(),
 					lastSeenAtIso: nowIso
@@ -500,6 +527,7 @@ export async function validateAndExtendSession(
 				lastSeenAtIso: nowIso
 			})
 			.where(eq(authSessions.id, session.id));
+		await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 	}
 
 	return {
@@ -512,8 +540,8 @@ export async function validateAndExtendSession(
 export async function revokeAuthSession(rawToken: string): Promise<void> {
 	if (!isWellFormedSessionToken(rawToken)) return;
 	await ensureDatabaseReady();
-	const candidateIds = [hashSessionTokenV2(rawToken), hashSessionTokenLegacyV1(rawToken)];
-	await db.delete(authSessions).where(inArray(authSessions.id, candidateIds));
+	const { allCandidateIds } = getCandidateSessionIds(rawToken);
+	await db.delete(authSessions).where(inArray(authSessions.id, allCandidateIds));
 }
 
 
@@ -524,19 +552,19 @@ PATH: server/repositories/daily-tracker.repo.ts
 ================================================================
 
 import { and, asc, eq } from 'drizzle-orm';
-import { db, ensureDatabaseReady } from '../database/index';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
 	dailyEntries,
 	habitLogs,
 	reflectionTags
-} from '../database/schema';
-import { getAllHabits } from './habits.repo';
-import { bumpServerStructuralVersion } from './sync.repo';
+} from '~~/server/database/schema';
+import { getAllHabits } from '~~/server/repositories/habits.repo';
+import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import {
 	isDailyEntryEmpty,
-	resolveHabitRuleSnapshot,
-	serializeHabitSpecSnapshot
+	resolveDailyHabitLogSnapshot,
+	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
 import type {
@@ -630,17 +658,7 @@ export async function saveDailyEntryAndLogs(
 			const habit = habitMap.get(log.habitId);
 			const prev = previousLogByHabitId.get(log.habitId);
 
-			const isUnloggedTiered =
-				habit?.trackingMode === 'tiered' &&
-				(log.achievedTier === null || log.achievedTier === undefined);
-
-			const isUnscheduledAndUnloggedCadence =
-				habit?.trackingMode === 'interval_cadence' &&
-				(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
-				(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
-				(!log.totalActualMinutes || log.totalActualMinutes <= 0);
-
-			if (isUnloggedTiered || isUnscheduledAndUnloggedCadence) {
+			if (shouldDiscardHabitLogItem(habit, log)) {
 				if (prev) {
 					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
 					await bumpServerStructuralVersion(nowIso, tx);
@@ -656,62 +674,24 @@ export async function saveDailyEntryAndLogs(
 				continue;
 			}
 
-			const logUpdatedAt = log.updatedAtIso || nowIso;
-			const tierUnchanged = prev && prev.achievedTier === log.achievedTier;
-
-			const habitTitleSnapshot =
-				(tierUnchanged && prev?.habitTitleSnapshot) ||
-				log.habitTitleSnapshot ||
-				habit?.title ||
-				prev?.habitTitleSnapshot ||
-				'طرح';
-
-			const achievedRuleSnapshot =
-				(tierUnchanged && prev?.achievedRuleSnapshot) ||
-				(habit ? resolveHabitRuleSnapshot(habit, log.achievedTier) : null) ||
-				log.achievedRuleSnapshot ||
-				prev?.achievedRuleSnapshot ||
-				null;
-
-			const habitSnapshotJson =
-				(tierUnchanged && prev?.habitSnapshotJson) ||
-				(habit
-					? serializeHabitSpecSnapshot(habit)
-					: (prev?.habitSnapshotJson ?? null));
+			const resolvedLogValues = resolveDailyHabitLogSnapshot({
+				habit,
+				log,
+				previousLog: prev,
+				fallbackUpdatedAtIso: nowIso
+			});
 
 			if (prev) {
 				await tx
 					.update(habitLogs)
-					.set({
-						habitTitleSnapshot,
-						achievedTier: log.achievedTier,
-						achievedRuleSnapshot,
-						habitSnapshotJson,
-						completedIntervals: log.completedIntervals,
-						actualMinutesPerInterval: log.actualMinutesPerInterval,
-						totalActualMinutes: log.totalActualMinutes,
-						plannedIntervalsSnapshot:
-							log.plannedIntervalsSnapshot ?? prev.plannedIntervalsSnapshot ?? null,
-						plannedMinutesSnapshot:
-							log.plannedMinutesSnapshot ?? prev.plannedMinutesSnapshot ?? null,
-						updatedAtIso: logUpdatedAt
-					})
+					.set(resolvedLogValues)
 					.where(eq(habitLogs.id, prev.id));
 			} else {
 				await tx.insert(habitLogs).values({
 					id: `log:${input.dateIso}:${log.habitId}`,
 					dateIso: input.dateIso,
 					habitId: log.habitId,
-					habitTitleSnapshot,
-					achievedTier: log.achievedTier,
-					achievedRuleSnapshot,
-					habitSnapshotJson,
-					completedIntervals: log.completedIntervals,
-					actualMinutesPerInterval: log.actualMinutesPerInterval,
-					totalActualMinutes: log.totalActualMinutes,
-					plannedIntervalsSnapshot: log.plannedIntervalsSnapshot ?? null,
-					plannedMinutesSnapshot: log.plannedMinutesSnapshot ?? null,
-					updatedAtIso: logUpdatedAt
+					...resolvedLogValues
 				});
 			}
 		}
@@ -800,8 +780,8 @@ PATH: server/repositories/backup.repo.ts
 
 import { getTableColumns, like, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
-import { db, ensureDatabaseReady } from '../database/index';
-import type { DbExecutor } from './daily-tracker.repo';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
+import type { DbExecutor } from '~~/server/repositories/daily-tracker.repo';
 import {
 	books,
 	cadencePlans,
@@ -813,8 +793,8 @@ import {
 	mediaLogs,
 	notes,
 	reflectionTags
-} from '../database/schema';
-import { bumpServerStructuralVersion } from './sync.repo';
+} from '~~/server/database/schema';
+import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
@@ -1032,7 +1012,7 @@ PATH: server/repositories/sync.repo.ts
 ================================================================
 
 import { asc, desc, eq, sql } from 'drizzle-orm';
-import { db, ensureDatabaseReady } from '../database/index';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	books,
 	cadencePlans,
@@ -1043,15 +1023,16 @@ import {
 	habits,
 	mediaLogs,
 	notes,
+	reflectionTags,
 	syncState
-} from '../database/schema';
-import { getAllHabits } from './habits.repo';
+} from '~~/server/database/schema';
+import { getAllHabits } from '~~/server/repositories/habits.repo';
 import {
 	type DbExecutor,
 	getReflectionTags,
 	saveCadencePlansForDate,
 	saveDailyEntryAndLogs
-} from './daily-tracker.repo';
+} from '~~/server/repositories/daily-tracker.repo';
 import { parseTagsJson } from '~/domain/tags';
 import type {
 	LocalWorkspaceSnapshot,
@@ -1225,6 +1206,19 @@ export async function processClientSyncRequest(
 							target: habitLifecycleEvents.id,
 							set: mutation.payload
 						});
+				} else if (mutation.kind === 'UPSERT_REFLECTION_TAGS') {
+					for (const tagItem of mutation.payload) {
+						await tx
+							.insert(reflectionTags)
+							.values(tagItem)
+							.onConflictDoUpdate({
+								target: reflectionTags.label,
+								set: {
+									sortOrder: tagItem.sortOrder
+								}
+							});
+					}
+					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
 				}
 				appliedMutationIds.push(mutation.id);
 			}
@@ -1337,8 +1331,8 @@ PATH: server/repositories/habits.repo.ts
 ================================================================
 
 import { asc } from 'drizzle-orm';
-import { db, ensureDatabaseReady } from '../database/index';
-import { habits } from '../database/schema';
+import { db, ensureDatabaseReady } from '~~/server/database/index';
+import { habits } from '~~/server/database/schema';
 import type { HabitEntity } from '~/domain/schemas';
 
 export async function getAllHabits(): Promise<HabitEntity[]> {
@@ -1365,8 +1359,9 @@ import {
 	isPasswordConfigured,
 	validateAndExtendSession,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	setResponseHeaders(event, {
@@ -1396,7 +1391,7 @@ export default defineEventHandler(async (event) => {
 	const rawToken = getCookie(event, SESSION_COOKIE_NAME) || null;
 	let isAuthenticated = false;
 
-	const isSecure = process.env.NODE_ENV === 'production';
+	const isSecure = resolveIsSecureCookie(event);
 
 	if (passwordConfigured && rawToken) {
 		const sessionStatus = await validateAndExtendSession(rawToken);
@@ -1903,7 +1898,7 @@ PATH: server/api/backup/clear.post.ts
 ================================================================
 
 import { defineEventHandler } from 'h3';
-import { clearAllDatabaseRecords } from '../../repositories/backup.repo';
+import { clearAllDatabaseRecords } from '~~/server/repositories/backup.repo';
 
 export default defineEventHandler(async () => {
 	await clearAllDatabaseRecords();
@@ -1919,7 +1914,7 @@ PATH: server/api/backup/import.post.ts
 
 import { defineEventHandler, readBody, createError } from 'h3';
 import { DatabaseBackupPayloadSchema } from '~/domain/schemas';
-import { importDatabaseFromJson } from '../../repositories/backup.repo';
+import { importDatabaseFromJson } from '~~/server/repositories/backup.repo';
 
 export default defineEventHandler(async (event) => {
 	const body = await readBody(event);
@@ -1947,7 +1942,7 @@ PATH: server/api/backup/demo-seed.post.ts
 ================================================================
 
 import { defineEventHandler, readBody, createError } from 'h3';
-import { importDatabaseFromJson, removeDemoSeedFromServer } from '../../repositories/backup.repo';
+import { importDatabaseFromJson, removeDemoSeedFromServer } from '~~/server/repositories/backup.repo';
 import { buildDemoSeedDataset } from '~/domain/demo-seed';
 import { DemoSeedActionSchema } from '~/domain/schemas';
 
@@ -1977,7 +1972,7 @@ PATH: server/api/sync.post.ts
 
 import { defineEventHandler, readBody, createError } from 'h3';
 import { extractApiErrorInfo, SyncRequestPayloadSchema } from '~/domain/schemas';
-import { processClientSyncRequest } from '../repositories/sync.repo';
+import { processClientSyncRequest } from '~~/server/repositories/sync.repo';
 
 export default defineEventHandler(async (event) => {
 	try {
@@ -2012,7 +2007,7 @@ PATH: server/api/auth/logout.post.ts
 ================================================================
 
 import { defineEventHandler, getCookie, deleteCookie } from 'h3';
-import { revokeAuthSession, SESSION_COOKIE_NAME } from '../../repositories/auth.repo';
+import { revokeAuthSession, SESSION_COOKIE_NAME } from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	const token = getCookie(event, SESSION_COOKIE_NAME);
@@ -2036,8 +2031,9 @@ import {
 	verifyPassword,
 	createAuthSession,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 const failedLoginAttemptsByIp = new Map<
 	string,
@@ -2064,7 +2060,7 @@ const MAX_TRACKED_IPS = 1000;
 function pruneExpiredLoginAttempts(now: number): void {
 	if (failedLoginAttemptsByIp.size < 100) return;
 	for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
-		if (now - entry.lastAttemptMs >= RESET_WINDOW_MS) {
+		if (entry.lockedUntilMs <= now && now - entry.lastAttemptMs >= RESET_WINDOW_MS) {
 			failedLoginAttemptsByIp.delete(key);
 		}
 	}
@@ -2072,7 +2068,7 @@ function pruneExpiredLoginAttempts(now: number): void {
 		let oldestKey: string | null = null;
 		let oldestTimestamp = Infinity;
 		for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
-			if (entry.lastAttemptMs < oldestTimestamp) {
+			if (entry.lockedUntilMs <= now && entry.lastAttemptMs < oldestTimestamp) {
 				oldestTimestamp = entry.lastAttemptMs;
 				oldestKey = key;
 			}
@@ -2086,10 +2082,13 @@ function pruneExpiredLoginAttempts(now: number): void {
 function resolveClientRateLimitKey(event: H3Event): string {
 	const socketIp = (event.node.req.socket?.remoteAddress || 'local').slice(0, 45);
 	const realIpHeader = getRequestHeader(event, 'x-real-ip')?.trim().slice(0, 45);
-	const forwardedHeader = getRequestHeader(event, 'x-forwarded-for')
-		?.split(',')[0]
-		?.trim()
-		.slice(0, 45);
+	const forwardedParts = getRequestHeader(event, 'x-forwarded-for')
+		?.split(',')
+		.map((part) => part.trim())
+		.filter(Boolean);
+	const lastForwardedIp = forwardedParts?.length
+		? forwardedParts[forwardedParts.length - 1]?.slice(0, 45)
+		: undefined;
 
 	const isLocalReverseProxy =
 		socketIp === '127.0.0.1' ||
@@ -2098,8 +2097,8 @@ function resolveClientRateLimitKey(event: H3Event): string {
 		socketIp.startsWith('::ffff:172.') ||
 		socketIp.startsWith('172.');
 
-	if (isLocalReverseProxy && (realIpHeader || forwardedHeader)) {
-		return `${socketIp}:${realIpHeader || forwardedHeader}`;
+	if (isLocalReverseProxy && (realIpHeader || lastForwardedIp)) {
+		return `${socketIp}:${realIpHeader || lastForwardedIp}`;
 	}
 	return socketIp;
 }
@@ -2177,7 +2176,7 @@ export default defineEventHandler(async (event) => {
 
 	failedLoginAttemptsByIp.delete(ip);
 	const session = await createAuthSession();
-	const isSecure = process.env.NODE_ENV === 'production';
+	const isSecure = resolveIsSecureCookie(event);
 
 	setCookie(event, SESSION_COOKIE_NAME, session.token, getSessionCookieOptions(isSecure));
 
@@ -2198,8 +2197,9 @@ import {
 	setupInitialPassword,
 	createAuthSession,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	if (await isPasswordConfigured()) {
@@ -2222,7 +2222,7 @@ export default defineEventHandler(async (event) => {
 
 	await setupInitialPassword(parsed.data.password);
 	const session = await createAuthSession();
-	const isSecure = process.env.NODE_ENV === 'production';
+	const isSecure = resolveIsSecureCookie(event);
 
 	setCookie(event, SESSION_COOKIE_NAME, session.token, getSessionCookieOptions(isSecure));
 
@@ -2242,8 +2242,9 @@ import {
 	verifyPassword,
 	changeMasterPassword,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	const body = await readBody(event);
@@ -2267,7 +2268,7 @@ export default defineEventHandler(async (event) => {
 	await changeMasterPassword(parsed.data.newPassword, currentToken);
 
 	if (currentToken) {
-		const isSecure = process.env.NODE_ENV === 'production';
+		const isSecure = resolveIsSecureCookie(event);
 		setCookie(event, SESSION_COOKIE_NAME, currentToken, getSessionCookieOptions(isSecure));
 	}
 
@@ -2286,14 +2287,15 @@ import {
 	isPasswordConfigured,
 	validateAndExtendSession,
 	getSessionCookieOptions,
+	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
-} from '../../repositories/auth.repo';
+} from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
 	const configured = await isPasswordConfigured();
 	const token = getCookie(event, SESSION_COOKIE_NAME);
 	let isAuthenticated = false;
-	const isSecure = process.env.NODE_ENV === 'production';
+	const isSecure = resolveIsSecureCookie(event);
 
 	if (configured && token) {
 		const status = await validateAndExtendSession(token, true);
@@ -2792,6 +2794,83 @@ export function resolveHabitRuleSnapshot(
 	return null;
 }
 
+export function shouldDiscardHabitLogItem(
+	habit: HabitEntity | undefined,
+	log: Pick<
+		HabitLogItemInput,
+		| 'achievedTier'
+		| 'plannedMinutesSnapshot'
+		| 'actualMinutesPerInterval'
+		| 'totalActualMinutes'
+	>
+): boolean {
+	const isUnloggedTiered =
+		habit?.trackingMode === 'tiered' &&
+		(log.achievedTier === null || log.achievedTier === undefined);
+
+	const isUnscheduledAndUnloggedCadence =
+		habit?.trackingMode === 'interval_cadence' &&
+		(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
+		(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
+		(!log.totalActualMinutes || log.totalActualMinutes <= 0);
+
+	return isUnloggedTiered || isUnscheduledAndUnloggedCadence;
+}
+
+export function resolveDailyHabitLogSnapshot(params: {
+	habit: HabitEntity | undefined;
+	log: HabitLogItemInput;
+	previousLog?: {
+		achievedTier: number | null;
+		habitTitleSnapshot: string | null;
+		achievedRuleSnapshot: string | null;
+		habitSnapshotJson: string | null;
+		plannedIntervalsSnapshot: number | null;
+		plannedMinutesSnapshot: number | null;
+	} | null;
+	fallbackUpdatedAtIso: string;
+}) {
+	const { habit, log, previousLog, fallbackUpdatedAtIso } = params;
+	const tierUnchanged = Boolean(
+		previousLog && previousLog.achievedTier === log.achievedTier
+	);
+
+	const habitTitleSnapshot =
+		(tierUnchanged && previousLog?.habitTitleSnapshot) ||
+		log.habitTitleSnapshot ||
+		habit?.title ||
+		previousLog?.habitTitleSnapshot ||
+		'طرح';
+
+	const achievedRuleSnapshot =
+		(tierUnchanged && previousLog?.achievedRuleSnapshot) ||
+		(habit ? resolveHabitRuleSnapshot(habit, log.achievedTier) : null) ||
+		log.achievedRuleSnapshot ||
+		previousLog?.achievedRuleSnapshot ||
+		null;
+
+	const habitSnapshotJson =
+		(tierUnchanged && previousLog?.habitSnapshotJson) ||
+		(habit
+			? serializeHabitSpecSnapshot(habit)
+			: (log.habitSnapshotJson ?? previousLog?.habitSnapshotJson ?? null));
+
+	return {
+		habitTitleSnapshot,
+		achievedTier: log.achievedTier,
+		achievedRuleSnapshot,
+		habitSnapshotJson,
+		completedIntervals: log.completedIntervals ?? null,
+		actualMinutesPerInterval: log.actualMinutesPerInterval ?? null,
+		totalActualMinutes: log.totalActualMinutes ?? null,
+		plannedIntervalsSnapshot:
+			log.plannedIntervalsSnapshot ?? previousLog?.plannedIntervalsSnapshot ?? null,
+		plannedMinutesSnapshot:
+			log.plannedMinutesSnapshot ?? previousLog?.plannedMinutesSnapshot ?? null,
+		updatedAtIso: log.updatedAtIso || fallbackUpdatedAtIso
+	};
+}
+
 export function getApplicableHabitsForDate(
 	habits: HabitEntity[],
 	options?: {
@@ -3007,31 +3086,31 @@ export function buildTierButtonDescriptors(
 		items.push({
 			tier: TIER_SCORES.SKIPPED,
 			label: 'پیش نیامد',
-			minWidthClass: 'sm:px-3'
+			sizeVariant: 'compact'
 		});
 	}
 	items.push({
 		tier: TIER_SCORES.FAILED,
 		label: 'نشد',
-		minWidthClass: 'sm:min-w-14 sm:px-3.5'
+		sizeVariant: 'narrow'
 	});
 	items.push({
 		tier: TIER_SCORES.BRONZE,
 		label: useBinaryBronzeLabel && supportedMaxTier === TIER_SCORES.BRONZE ? 'انجام شد' : 'برنز',
-		minWidthClass: 'sm:min-w-16 sm:px-3.5'
+		sizeVariant: 'standard'
 	});
 	if (supportedMaxTier >= TIER_SCORES.SILVER) {
 		items.push({
 			tier: TIER_SCORES.SILVER,
 			label: 'نقره',
-			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+			sizeVariant: 'standard'
 		});
 	}
 	if (supportedMaxTier === TIER_SCORES.GOLD) {
 		items.push({
 			tier: TIER_SCORES.GOLD,
 			label: 'طلا',
-			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+			sizeVariant: 'standard'
 		});
 	}
 	return items;
@@ -3350,6 +3429,16 @@ export function buildUpdatedHabitWithLifecycle(params: {
 	lifecycleEvent: LifecycleEventEntity;
 } {
 	const { current, input, parentTitle, todayIso, nowIso } = params;
+	const isCadence = current.trackingMode === 'interval_cadence';
+
+	const nextMinutesPerInterval =
+		isCadence && input.defaultMinutesPerInterval !== undefined
+			? input.defaultMinutesPerInterval
+			: current.defaultMinutesPerInterval;
+	const nextCadenceWindow =
+		isCadence && input.cadenceWindowMinutes !== undefined
+			? input.cadenceWindowMinutes
+			: current.cadenceWindowMinutes;
 
 	let eventType: LifecycleEventEntity['eventType'] = 'UPDATED_RULES';
 	let summary = `ویرایش شرایط طرح «${input.title}»`;
@@ -3366,9 +3455,14 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		eventType = input.status === 'archived' ? 'DELETED' : 'STATUS_CHANGED';
 		const statusLabel = STATUS_LABELS_FA[input.status] ?? input.status;
 		summary = `تغییر وضعیت «${input.title}» به ${statusLabel}`;
+	} else if (
+		isCadence &&
+		(nextMinutesPerInterval !== current.defaultMinutesPerInterval ||
+			nextCadenceWindow !== current.cadenceWindowMinutes)
+	) {
+		eventType = 'CADENCE_UPDATED';
+		summary = `تغییر بازه تکرارشونده «${input.title}»`;
 	}
-
-	const isCadence = current.trackingMode === 'interval_cadence';
 
 	const updatedHabit: HabitEntity = {
 		...current,
@@ -3384,10 +3478,8 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		silverDesc: isCadence ? null : (input.silverDesc?.trim() || null),
 		goldDesc: isCadence ? null : (input.goldDesc?.trim() || null),
 		emergencyMinDesc: isCadence ? (input.emergencyMinDesc?.trim() || null) : null,
-		defaultMinutesPerInterval:
-			isCadence && input.defaultMinutesPerInterval !== undefined
-				? input.defaultMinutesPerInterval
-				: current.defaultMinutesPerInterval,
+		defaultMinutesPerInterval: nextMinutesPerInterval,
+		cadenceWindowMinutes: nextCadenceWindow,
 		updatedAtIso: nowIso
 	};
 
@@ -3415,6 +3507,9 @@ PATH: app/core/backup-merger.ts
 ================================================================
 
 import type {
+	BackupDailyEntryRow,
+	BackupHabitLogRow,
+	BackupReflectionTagRow,
 	BookEntity,
 	CadencePlanEntity,
 	CalendarEventEntity,
@@ -3427,10 +3522,13 @@ import type {
 	NoteEntity
 } from '~/domain/schemas';
 
-export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
-export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
-export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
-export type { ExistingWorkspaceData, MergedBackupResult };
+export type {
+	BackupDailyEntryRow,
+	BackupHabitLogRow,
+	BackupReflectionTagRow,
+	ExistingWorkspaceData,
+	MergedBackupResult
+};
 
 function normText(str: string | null | undefined): string {
 	return (str ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -3938,9 +4036,14 @@ function resolveDateRangeWindow(
 	}
 	for (const h of habits) {
 		const createdDateIso = h.createdAtIso ? h.createdAtIso.slice(0, 10) : '';
-		if (createdDateIso && createdDateIso < minIso) {
-			minIso = createdDateIso;
+		if (createdDateIso) {
+			if (createdDateIso < minIso) minIso = createdDateIso;
+			if (createdDateIso > maxIso) maxIso = createdDateIso;
 		}
+	}
+
+	if (minIso > maxIso) {
+		minIso = maxIso;
 	}
 
 	const endIso = maxIso;
@@ -4322,7 +4425,12 @@ function computeStreaksFromSeries(
 		const out = pt.outcome;
 		if (out === 'gold' || out === 'silver' || out === 'bronze') {
 			currentStreak++;
-		} else if (out === 'failed') {
+		} else if (out === 'skipped') {
+			continue;
+		} else if (out === 'unlogged' && i === series.length - 1) {
+			// Allow the final day in window to be unlogged if the user hasn't logged it yet
+			continue;
+		} else {
 			break;
 		}
 	}
@@ -5455,24 +5563,21 @@ export function useClientAuth() {
 PATH: app/composables/useLocalRepository.ts
 ================================================================
 
-import { getAppDatabase, type LocalDailyEntryRecord, type LocalHabitLogRecord, type SyncMetaRecord } from '~/composables/useAppDatabase';
-import { computeSmartBackupMerge } from '~/core/backup-merger';
+import { type LocalDailyEntryRecord, type LocalHabitLogRecord, type SyncMetaRecord, useAppDatabase } from '~/composables/useAppDatabase';
+import { createLocalBackupOperations } from '~/composables/useLocalBackupOperations';
 import {
 	buildCreatedHabitWithLifecycle,
 	buildUpdatedHabitWithLifecycle,
 	isDailyEntryEmpty,
-	resolveHabitRuleSnapshot,
-	serializeHabitSpecSnapshot
+	resolveDailyHabitLogSnapshot,
+	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import {
 	generateId,
 	getTodayIso,
 	isoToJalaliParts,
-	isoToJalaliSlash,
 	resolveCompletedRangeDates
 } from '~/domain/calendar';
-import { buildDemoSeedDataset, DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/demo-seed';
-import { parseTagsJson } from '~/domain/tags';
 import type {
 	BookEntity,
 	BookStatus,
@@ -5481,7 +5586,6 @@ import type {
 	CreateCalendarEventInput,
 	CreateHabitInput,
 	CreateMediaInput,
-	DatabaseBackupPayload,
 	HabitEntity,
 	LifecycleEventEntity,
 	LocalWorkspaceSnapshot,
@@ -5585,6 +5689,7 @@ export function useLocalRepository() {
 				const allHabits = await db.habits.toArray();
 				const habitMap = new Map(allHabits.map((h) => [h.id, h]));
 				const existingDayLogs = await db.habitLogs.where('dateIso').equals(input.dateIso).toArray();
+				const existingLogByHabitId = new Map(existingDayLogs.map((l) => [l.habitId, l]));
 				const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
 
 				for (const existingLog of existingDayLogs) {
@@ -5595,43 +5700,35 @@ export function useLocalRepository() {
 
 				for (const log of input.logs) {
 					const habit = habitMap.get(log.habitId);
-					const logId = `log:${input.dateIso}:${log.habitId}`;
+					const prev = existingLogByHabitId.get(log.habitId);
+					const logId = prev?.id || `log:${input.dateIso}:${log.habitId}`;
 
-					if (
-						habit?.trackingMode === 'tiered' &&
-						(log.achievedTier === null || log.achievedTier === undefined)
-					) {
+					if (shouldDiscardHabitLogItem(habit, log)) {
 						await db.habitLogs.delete(logId);
 						continue;
 					}
 
-					const isUnscheduledAndUnloggedCadence =
-						habit?.trackingMode === 'interval_cadence' &&
-						(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
-						(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
-						(!log.totalActualMinutes || log.totalActualMinutes <= 0);
-
-					if (isUnscheduledAndUnloggedCadence) {
-						await db.habitLogs.delete(logId);
-						continue;
-					}
+					const resolvedSnapshot = resolveDailyHabitLogSnapshot({
+						habit,
+						log,
+						previousLog: prev
+							? {
+									achievedTier: prev.achievedTier,
+									habitTitleSnapshot: prev.habitTitleSnapshot ?? null,
+									achievedRuleSnapshot: prev.achievedRuleSnapshot ?? null,
+									habitSnapshotJson: prev.habitSnapshotJson ?? null,
+									plannedIntervalsSnapshot: prev.plannedIntervalsSnapshot ?? null,
+									plannedMinutesSnapshot: prev.plannedMinutesSnapshot ?? null
+								}
+							: null,
+						fallbackUpdatedAtIso: nowIso
+					});
 
 					const logRecord: LocalHabitLogRecord = {
 						id: logId,
 						dateIso: input.dateIso,
 						habitId: log.habitId,
-						habitTitleSnapshot: log.habitTitleSnapshot || habit?.title || null,
-						achievedTier: log.achievedTier,
-						achievedRuleSnapshot:
-							log.achievedRuleSnapshot ||
-							(habit && log.achievedTier !== null ? resolveHabitRuleSnapshot(habit, log.achievedTier) : null),
-						habitSnapshotJson: habit ? serializeHabitSpecSnapshot(habit) : null,
-						completedIntervals: log.completedIntervals ?? null,
-						actualMinutesPerInterval: log.actualMinutesPerInterval ?? null,
-						totalActualMinutes: log.totalActualMinutes ?? null,
-						plannedIntervalsSnapshot: log.plannedIntervalsSnapshot ?? null,
-						plannedMinutesSnapshot: log.plannedMinutesSnapshot ?? null,
-						updatedAtIso: log.updatedAtIso || nowIso
+						...resolvedSnapshot
 					};
 					await db.habitLogs.put(logRecord);
 				}
@@ -5723,6 +5820,7 @@ export function useLocalRepository() {
 			});
 
 			const cascadedChildren: HabitEntity[] = [];
+			const cascadedLifecycleEvents: LifecycleEventEntity[] = [];
 			if (current.status !== updatedHabit.status && !updatedHabit.parentId) {
 				const children = await db.habits
 					.where('parentId')
@@ -5730,11 +5828,32 @@ export function useLocalRepository() {
 					.toArray();
 				for (const child of children) {
 					if (child.status !== updatedHabit.status && child.status !== 'archived') {
-						cascadedChildren.push({
-							...child,
-							status: updatedHabit.status,
-							updatedAtIso: nowIso
-						});
+						const { updatedHabit: nextChild, lifecycleEvent: childLc } =
+							buildUpdatedHabitWithLifecycle({
+								current: child,
+								input: {
+									habitId: child.id,
+									title: child.title,
+									category: child.category,
+									parentId: child.parentId,
+									timeSlot: child.timeSlot,
+									isSituational: child.isSituational,
+									status: updatedHabit.status,
+									scheduleLabel: child.scheduleLabel,
+									notes: child.notes,
+									bronzeDesc: child.bronzeDesc,
+									silverDesc: child.silverDesc,
+									goldDesc: child.goldDesc,
+									emergencyMinDesc: child.emergencyMinDesc,
+									defaultMinutesPerInterval: child.defaultMinutesPerInterval,
+									reason: input.reason
+								},
+								parentTitle: updatedHabit.title,
+								todayIso,
+								nowIso
+							});
+						cascadedChildren.push(nextChild);
+						cascadedLifecycleEvents.push(childLc);
 					}
 				}
 			}
@@ -5760,6 +5879,14 @@ export function useLocalRepository() {
 							queuedAtIso: nowIso,
 							payload: cascadedChild
 						})
+					),
+					...cascadedLifecycleEvents.map(
+						(childLc): SyncOutboxMutation => ({
+							id: `lifecycle:${childLc.id}`,
+							kind: 'ADD_LIFECYCLE_EVENT',
+							queuedAtIso: nowIso,
+							payload: childLc
+						})
 					)
 				],
 				async () => {
@@ -5767,6 +5894,9 @@ export function useLocalRepository() {
 					await db.lifecycleEvents.put(lifecycleEvent);
 					if (cascadedChildren.length > 0) {
 						await db.habits.bulkPut(cascadedChildren);
+					}
+					if (cascadedLifecycleEvents.length > 0) {
+						await db.lifecycleEvents.bulkPut(cascadedLifecycleEvents);
 					}
 				}
 			);
@@ -6243,7 +6373,21 @@ export function useLocalRepository() {
 					.map((m) => m.payload.targetDateIso)
 			);
 
-			// Reconcile remote deletions for collections where items can be hard-deleted
+			// Reconcile remote deletions for all collections (respecting staged local mutations)
+			const serverHabitIds = new Set(ws.habits.map((h) => h.id));
+			const localHabitIds = await db.habits.toCollection().primaryKeys();
+			const habitsToDelete = localHabitIds.filter(
+				(id) => !serverHabitIds.has(id) && !pendingIds.has(`habit:${id}`)
+			);
+			if (habitsToDelete.length > 0) await db.habits.bulkDelete(habitsToDelete);
+
+			const serverLifecycleIds = new Set(ws.lifecycleEvents.map((lc) => lc.id));
+			const localLifecycleIds = await db.lifecycleEvents.toCollection().primaryKeys();
+			const lifecyclesToDelete = localLifecycleIds.filter(
+				(id) => !serverLifecycleIds.has(id) && !pendingIds.has(`lifecycle:${id}`)
+			);
+			if (lifecyclesToDelete.length > 0) await db.lifecycleEvents.bulkDelete(lifecyclesToDelete);
+
 			const serverBookIds = new Set(ws.books.map((b) => b.id));
 			const localBookIds = await db.books.toCollection().primaryKeys();
 			const booksToDelete = localBookIds.filter(
@@ -6400,356 +6544,11 @@ export function useLocalRepository() {
 		});
 	}
 
-	async function exportBackupPayload(): Promise<DatabaseBackupPayload> {
-		const todayIso = getTodayIso();
-		const nowIso = new Date().toISOString();
-
-		const [
-			allHabits,
-			allEntries,
-			allLogs,
-			allCadence,
-			allBooks,
-			allMedia,
-			allNotes,
-			allEvents,
-			allLifecycle,
-			allTags
-		] = await Promise.all([
-			db.habits.toArray(),
-			db.dailyEntries.toArray(),
-			db.habitLogs.toArray(),
-			db.cadencePlans.toArray(),
-			db.books.toArray(),
-			db.media.toArray(),
-			db.notes.toArray(),
-			db.calendarEvents.toArray(),
-			db.lifecycleEvents.toArray(),
-			db.reflectionTags.toArray()
-		]);
-
-		return {
-			version: 1,
-			appName: 'new-life',
-			exportedAtIso: nowIso,
-			jalaliDate: isoToJalaliSlash(todayIso),
-			data: {
-				habits: allHabits,
-				dailyEntries: allEntries.map((e) => ({
-					...e,
-					id: `entry:${e.dateIso}`,
-					tagsJson: JSON.stringify(e.tags)
-				})),
-				habitLogs: allLogs.map((l) => ({
-					...l,
-					habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-					achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-					habitSnapshotJson: l.habitSnapshotJson ?? null,
-					totalActualMinutes: l.totalActualMinutes ?? null,
-					completedIntervals: l.completedIntervals ?? null,
-					actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-					plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
-					plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
-					updatedAtIso: l.updatedAtIso || nowIso
-				})),
-				cadencePlans: allCadence,
-				books: allBooks,
-				media: allMedia,
-				notes: allNotes,
-				calendarEvents: allEvents,
-				lifecycleEvents: allLifecycle,
-				reflectionTags: allTags.map((t) => ({
-					id: t.id,
-					label: t.label,
-					sortOrder: t.sortOrder
-				}))
-			}
-		};
-	}
-
-	async function restoreBackupPayload(
-		payload: DatabaseBackupPayload
-	): Promise<{ addedOrUpdatedCount: number; skippedDuplicatesCount: number }> {
-		const nowIso = new Date().toISOString();
-		const currentSnapshot = await exportBackupPayload();
-		const merged = computeSmartBackupMerge(currentSnapshot.data, payload.data);
-
-		await db.transaction('rw', [
-			db.habits,
-			db.dailyEntries,
-			db.habitLogs,
-			db.cadencePlans,
-			db.books,
-			db.media,
-			db.notes,
-			db.calendarEvents,
-			db.lifecycleEvents,
-			db.reflectionTags,
-			db.syncOutbox
-		], async () => {
-			const stagedMutations: SyncOutboxMutation[] = [];
-
-			if (merged.habitsToUpsert.length > 0) {
-				await db.habits.bulkPut(merged.habitsToUpsert);
-				for (const h of merged.habitsToUpsert) {
-					stagedMutations.push({
-						id: `habit:${h.id}`,
-						kind: 'UPSERT_HABIT',
-						queuedAtIso: nowIso,
-						payload: clonePlain(h)
-					});
-				}
-			}
-			if (merged.dailyEntriesToUpsert.length > 0) {
-				await db.dailyEntries.bulkPut(
-					merged.dailyEntriesToUpsert.map((e) => ({
-						dateIso: e.dateIso,
-						dayStatus: e.dayStatus,
-						reflectionNote: e.reflectionNote,
-						journalText: e.journalText ?? null,
-						tags: parseTagsJson(e.tagsJson),
-						updatedAtIso: e.updatedAtIso
-					}))
-				);
-			}
-			if (merged.habitLogsToUpsert.length > 0) {
-				await db.habitLogs.bulkPut(
-					merged.habitLogsToUpsert.map((l) => ({
-						...l,
-						updatedAtIso: l.updatedAtIso || nowIso
-					}))
-				);
-			}
-			if (merged.dailyEntriesToUpsert.length > 0 || merged.habitLogsToUpsert.length > 0) {
-				const affectedDates = new Set<string>([
-					...merged.dailyEntriesToUpsert.map((e) => e.dateIso),
-					...merged.habitLogsToUpsert.map((l) => l.dateIso)
-				]);
-				for (const dateIso of affectedDates) {
-					const entryRec = await db.dailyEntries.get(dateIso);
-					const dayLogs = await db.habitLogs.where('dateIso').equals(dateIso).toArray();
-					if (entryRec) {
-						stagedMutations.push({
-							id: `daily:${dateIso}`,
-							kind: 'SAVE_DAILY_ENTRY',
-							queuedAtIso: nowIso,
-							payload: clonePlain({
-								dateIso,
-								dayStatus: entryRec.dayStatus,
-								reflectionNote: entryRec.reflectionNote,
-								journalText: entryRec.journalText,
-								tags: entryRec.tags,
-								updatedAtIso: entryRec.updatedAtIso,
-								logs: dayLogs
-							})
-						});
-					}
-				}
-			}
-			if (merged.cadencePlansToUpsert.length > 0) {
-				await db.cadencePlans.bulkPut(merged.cadencePlansToUpsert);
-				const affectedPlanDates = new Set(merged.cadencePlansToUpsert.map((p) => p.dateIso));
-				for (const targetDateIso of affectedPlanDates) {
-					const plansOnDate = await db.cadencePlans.where('dateIso').equals(targetDateIso).toArray();
-					stagedMutations.push({
-						id: `cadence:${targetDateIso}`,
-						kind: 'SAVE_CADENCE_PLAN',
-						queuedAtIso: nowIso,
-						payload: clonePlain({
-							targetDateIso,
-							items: plansOnDate.map((p) => ({
-								habitId: p.habitId,
-								plannedIntervals: p.plannedIntervals,
-								plannedMinutesPerInterval: p.plannedMinutesPerInterval,
-								cadenceWindowMinutes: p.cadenceWindowMinutes
-							}))
-						})
-					});
-				}
-			}
-			if (merged.booksToUpsert.length > 0) {
-				await db.books.bulkPut(merged.booksToUpsert);
-				for (const b of merged.booksToUpsert) {
-					stagedMutations.push({
-						id: `book:${b.id}`,
-						kind: 'UPSERT_BOOK',
-						queuedAtIso: nowIso,
-						payload: clonePlain(b)
-					});
-				}
-			}
-			if (merged.mediaToUpsert.length > 0) {
-				await db.media.bulkPut(merged.mediaToUpsert);
-				for (const m of merged.mediaToUpsert) {
-					stagedMutations.push({
-						id: `media:${m.id}`,
-						kind: 'UPSERT_MEDIA',
-						queuedAtIso: nowIso,
-						payload: clonePlain(m)
-					});
-				}
-			}
-			if (merged.notesToUpsert.length > 0) {
-				await db.notes.bulkPut(merged.notesToUpsert);
-				for (const n of merged.notesToUpsert) {
-					stagedMutations.push({
-						id: `note:${n.id}`,
-						kind: 'UPSERT_NOTE',
-						queuedAtIso: nowIso,
-						payload: clonePlain(n)
-					});
-				}
-			}
-			if (merged.calendarEventsToUpsert.length > 0) {
-				await db.calendarEvents.bulkPut(merged.calendarEventsToUpsert);
-				for (const ev of merged.calendarEventsToUpsert) {
-					stagedMutations.push({
-						id: `event:${ev.id}`,
-						kind: 'UPSERT_CALENDAR_EVENT',
-						queuedAtIso: nowIso,
-						payload: clonePlain(ev)
-					});
-				}
-			}
-			if (merged.lifecycleEventsToUpsert.length > 0) {
-				await db.lifecycleEvents.bulkPut(merged.lifecycleEventsToUpsert);
-				for (const lc of merged.lifecycleEventsToUpsert) {
-					stagedMutations.push({
-						id: `lifecycle:${lc.id}`,
-						kind: 'ADD_LIFECYCLE_EVENT',
-						queuedAtIso: nowIso,
-						payload: clonePlain(lc)
-					});
-				}
-			}
-			if (merged.reflectionTagsToUpsert.length > 0) {
-				await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
-			}
-			if (stagedMutations.length > 0) {
-				await db.syncOutbox.bulkPut(stagedMutations);
-			}
-		});
-
+	const backupOps = createLocalBackupOperations(db, () => {
 		for (const listener of mutationStagedListeners) {
 			listener();
 		}
-
-		return {
-			addedOrUpdatedCount: merged.addedOrUpdatedCount,
-			skippedDuplicatesCount: merged.skippedDuplicatesCount
-		};
-	}
-
-	async function injectDemoSeed(): Promise<void> {
-		const dataset = buildDemoSeedDataset();
-		const { data } = dataset;
-
-		await db.transaction('rw', [
-			db.habits,
-			db.dailyEntries,
-			db.habitLogs,
-			db.cadencePlans,
-			db.books,
-			db.media,
-			db.notes,
-			db.calendarEvents,
-			db.lifecycleEvents
-		], async () => {
-			await db.habits.bulkPut(data.habits);
-			await db.cadencePlans.bulkPut(data.cadencePlans);
-			await db.books.bulkPut(data.books);
-			await db.media.bulkPut(data.media);
-			await db.notes.bulkPut(data.notes);
-			await db.calendarEvents.bulkPut(data.calendarEvents);
-			await db.lifecycleEvents.bulkPut(data.lifecycleEvents);
-
-			for (const e of data.dailyEntries) {
-				const existing = await db.dailyEntries.get(e.dateIso);
-				if (!existing || existing.tags.includes(DEMO_ENTRY_TAG)) {
-					await db.dailyEntries.put({
-						dateIso: e.dateIso,
-						dayStatus: e.dayStatus,
-						reflectionNote: e.reflectionNote,
-						journalText: e.journalText ?? null,
-						tags: parseTagsJson(e.tagsJson),
-						updatedAtIso: e.updatedAtIso
-					});
-				}
-			}
-
-			await db.habitLogs.bulkPut(
-				data.habitLogs.map((l) => ({
-					...l,
-					updatedAtIso: l.updatedAtIso || dataset.exportedAtIso
-				}))
-			);
-		});
-	}
-
-	async function removeDemoSeed(): Promise<void> {
-		await db.transaction('rw', [
-			db.habits,
-			db.dailyEntries,
-			db.habitLogs,
-			db.cadencePlans,
-			db.books,
-			db.media,
-			db.notes,
-			db.calendarEvents,
-			db.lifecycleEvents,
-			db.syncOutbox
-		], async () => {
-			const demoHabitIds = (await db.habits.toArray())
-				.filter((h) => isDemoRecordId(h.id))
-				.map((h) => h.id);
-			if (demoHabitIds.length > 0) await db.habits.bulkDelete(demoHabitIds);
-
-			const demoLogIds = (await db.habitLogs.toArray())
-				.filter((l) => isDemoRecordId(l.id) || isDemoRecordId(l.habitId))
-				.map((l) => l.id);
-			if (demoLogIds.length > 0) await db.habitLogs.bulkDelete(demoLogIds);
-
-			const demoEntryDates = (await db.dailyEntries.toArray())
-				.filter((e) => e.tags.includes(DEMO_ENTRY_TAG))
-				.map((e) => e.dateIso);
-			if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
-
-			const demoPlanIds = (await db.cadencePlans.toArray())
-				.filter((p) => isDemoRecordId(p.id) || isDemoRecordId(p.habitId))
-				.map((p) => p.id);
-			if (demoPlanIds.length > 0) await db.cadencePlans.bulkDelete(demoPlanIds);
-
-			const demoBookIds = (await db.books.toArray())
-				.filter((b) => isDemoRecordId(b.id))
-				.map((b) => b.id);
-			if (demoBookIds.length > 0) await db.books.bulkDelete(demoBookIds);
-
-			const demoMediaIds = (await db.media.toArray())
-				.filter((m) => isDemoRecordId(m.id))
-				.map((m) => m.id);
-			if (demoMediaIds.length > 0) await db.media.bulkDelete(demoMediaIds);
-
-			const demoNoteIds = (await db.notes.toArray())
-				.filter((n) => isDemoRecordId(n.id))
-				.map((n) => n.id);
-			if (demoNoteIds.length > 0) await db.notes.bulkDelete(demoNoteIds);
-
-			const demoEventIds = (await db.calendarEvents.toArray())
-				.filter((ev) => isDemoRecordId(ev.id))
-				.map((ev) => ev.id);
-			if (demoEventIds.length > 0) await db.calendarEvents.bulkDelete(demoEventIds);
-
-			const demoLifecycleIds = (await db.lifecycleEvents.toArray())
-				.filter((lc) => isDemoRecordId(lc.id) || isDemoRecordId(lc.habitId))
-				.map((lc) => lc.id);
-			if (demoLifecycleIds.length > 0) await db.lifecycleEvents.bulkDelete(demoLifecycleIds);
-
-			const demoOutboxIds = (await db.syncOutbox.toArray())
-				.filter((m) => m.id.includes('demo:'))
-				.map((m) => m.id);
-			if (demoOutboxIds.length > 0) await db.syncOutbox.bulkDelete(demoOutboxIds);
-		});
-	}
+	});
 
 	return {
 		daily,
@@ -6763,10 +6562,10 @@ export function useLocalRepository() {
 		getPendingMutations,
 		removeAppliedMutations,
 		applyServerWorkspace,
-		exportBackupPayload,
-		restoreBackupPayload,
-		injectDemoSeed,
-		removeDemoSeed,
+		exportBackupPayload: backupOps.exportBackupPayload,
+		restoreBackupPayload: backupOps.restoreBackupPayload,
+		injectDemoSeed: backupOps.injectDemoSeed,
+		removeDemoSeed: backupOps.removeDemoSeed,
 		clearLocalData
 	};
 }
@@ -6799,6 +6598,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let periodicPollTimer: ReturnType<typeof setInterval> | null = null;
 let unsubscribeMutationStaged: (() => void) | null = null;
+let boundListenersCleanup: (() => void) | null = null;
 let retryAttempt = 0;
 
 export function useSyncEngine() {
@@ -6966,33 +6766,37 @@ export function useSyncEngine() {
 			void notifyLocalMutationStaged();
 		});
 
-		window.addEventListener('online', () => {
+		if (boundListenersCleanup) {
+			boundListenersCleanup();
+		}
+
+		const handleOnline = () => {
 			isOnline.value = true;
 			retryAttempt = 0;
 			if (retryTimer) clearTimeout(retryTimer);
 			void syncNow({ checkRemoteUpdates: true });
-		});
+		};
 
-		window.addEventListener('offline', () => {
+		const handleOffline = () => {
 			isOnline.value = false;
 			status.value = 'offline';
 			if (retryTimer) clearTimeout(retryTimer);
-		});
+		};
 
-		document.addEventListener('visibilitychange', () => {
+		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible' && isOnline.value) {
 				retryAttempt = 0;
 				void syncNow({ checkRemoteUpdates: true });
 			}
-		});
+		};
 
-		window.addEventListener('focus', () => {
+		const handleFocus = () => {
 			if (isOnline.value) {
 				void syncNow({ checkRemoteUpdates: true });
 			}
-		});
+		};
 
-		window.addEventListener('pagehide', () => {
+		const handlePageHide = () => {
 			if (debounceTimer) {
 				clearTimeout(debounceTimer);
 				debounceTimer = null;
@@ -7000,7 +6804,21 @@ export function useSyncEngine() {
 			if (isOnline.value && pendingCount.value > 0 && !isSyncInFlight) {
 				void syncNow({ checkRemoteUpdates: false });
 			}
-		});
+		};
+
+		window.addEventListener('online', handleOnline);
+		window.addEventListener('offline', handleOffline);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('focus', handleFocus);
+		window.addEventListener('pagehide', handlePageHide);
+
+		boundListenersCleanup = () => {
+			window.removeEventListener('online', handleOnline);
+			window.removeEventListener('offline', handleOffline);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('focus', handleFocus);
+			window.removeEventListener('pagehide', handlePageHide);
+		};
 
 		if (periodicPollTimer) {
 			clearInterval(periodicPollTimer);
@@ -7060,7 +6878,7 @@ PATH: app/composables/useDexieLiveQuery.ts
 ================================================================
 
 import { liveQuery, type Observable, type Subscription } from 'dexie';
-import { ref, shallowRef, watch, onScopeDispose, type Ref, type ShallowRef, type WatchSource } from 'vue';
+import type { Ref, ShallowRef, WatchSource } from 'vue';
 
 export type DexieLiveQueryRef<T> = ShallowRef<T> & {
 	isLoading: Ref<boolean>;
@@ -7202,6 +7020,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingSavePayload: SaveDailyEntryInput | null = null;
 	let activeDraftDateIso = dateIso.value;
+	let inFlightSavePromise: Promise<void> | null = null;
 
 	const isHydratingQueries = computed(
 		() =>
@@ -7222,13 +7041,15 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	watch(
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
-			if (activeDraftDateIso !== dateIso.value && pendingSavePayload) {
-				void flushPendingSave();
+			if (activeDraftDateIso !== dateIso.value) {
+				if (pendingSavePayload) {
+					void flushPendingSave();
+				}
+				activeDraftDateIso = dateIso.value;
 			}
 			if (isHydratingQueries.value) {
 				return;
 			}
-			activeDraftDateIso = dateIso.value;
 			if (pendingSavePayload && pendingSavePayload.dateIso === dateIso.value) {
 				return;
 			}
@@ -7416,26 +7237,51 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		}
 	}
 
-	async function flushPendingSave(): Promise<void> {
+	async function flushPendingSave(forceBuildCurrent = false): Promise<void> {
 		if (autoSaveTimer) {
 			clearTimeout(autoSaveTimer);
 			autoSaveTimer = null;
 		}
-		const payloadToSave = pendingSavePayload ?? (dateIso.value ? buildDailyInputObject() : null);
+		const payloadToSave =
+			pendingSavePayload ??
+			(forceBuildCurrent && dateIso.value ? buildDailyInputObject() : null);
 		pendingSavePayload = null;
-		if (!payloadToSave) return;
+		if (!payloadToSave) {
+			if (inFlightSavePromise) {
+				await inFlightSavePromise;
+			}
+			return;
+		}
 
-		saveState.value = 'saving';
-		try {
-			await localRepo.daily.saveDailyEntry(payloadToSave);
-			if (payloadToSave.dateIso === dateIso.value) {
-				isDirty.value = false;
-				saveState.value = 'saved';
+		if (payloadToSave.dateIso === dateIso.value) {
+			saveState.value = 'saving';
+		}
+
+		const runSave = async () => {
+			if (inFlightSavePromise) {
+				await inFlightSavePromise.catch(() => {});
 			}
-		} catch {
-			if (payloadToSave.dateIso === dateIso.value) {
-				saveState.value = 'error';
+			try {
+				await localRepo.daily.saveDailyEntry(payloadToSave);
+				if (
+					payloadToSave.dateIso === dateIso.value &&
+					(!pendingSavePayload || pendingSavePayload.dateIso !== dateIso.value)
+				) {
+					isDirty.value = false;
+					saveState.value = 'saved';
+				}
+			} catch {
+				if (payloadToSave.dateIso === dateIso.value) {
+					saveState.value = 'error';
+				}
 			}
+		};
+
+		const currentPromise = runSave();
+		inFlightSavePromise = currentPromise;
+		await currentPromise;
+		if (inFlightSavePromise === currentPromise) {
+			inFlightSavePromise = null;
 		}
 	}
 
@@ -7772,6 +7618,408 @@ export function useTheme() {
 		isDark,
 		init,
 		setTheme
+	};
+}
+
+
+----------------------------------------------------------------
+
+================================================================
+PATH: app/composables/useLocalBackupOperations.ts
+================================================================
+
+import type { PersonalOSDatabase } from '~/composables/useAppDatabase';
+import { computeSmartBackupMerge } from '~/core/backup-merger';
+import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
+import { buildDemoSeedDataset, DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/demo-seed';
+import type { DatabaseBackupPayload, SyncOutboxMutation } from '~/domain/schemas';
+import { parseTagsJson } from '~/domain/tags';
+
+function clonePlain<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function createLocalBackupOperations(
+	db: PersonalOSDatabase,
+	notifyMutationsStaged: () => void
+) {
+	async function exportBackupPayload(): Promise<DatabaseBackupPayload> {
+		const todayIso = getTodayIso();
+		const nowIso = new Date().toISOString();
+
+		const [
+			allHabits,
+			allEntries,
+			allLogs,
+			allCadence,
+			allBooks,
+			allMedia,
+			allNotes,
+			allEvents,
+			allLifecycle,
+			allTags
+		] = await Promise.all([
+			db.habits.toArray(),
+			db.dailyEntries.toArray(),
+			db.habitLogs.toArray(),
+			db.cadencePlans.toArray(),
+			db.books.toArray(),
+			db.media.toArray(),
+			db.notes.toArray(),
+			db.calendarEvents.toArray(),
+			db.lifecycleEvents.toArray(),
+			db.reflectionTags.toArray()
+		]);
+
+		return {
+			version: 1,
+			appName: 'new-life',
+			exportedAtIso: nowIso,
+			jalaliDate: isoToJalaliSlash(todayIso),
+			data: {
+				habits: allHabits,
+				dailyEntries: allEntries.map((e) => ({
+					...e,
+					id: `entry:${e.dateIso}`,
+					tagsJson: JSON.stringify(e.tags)
+				})),
+				habitLogs: allLogs.map((l) => ({
+					...l,
+					habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+					achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+					habitSnapshotJson: l.habitSnapshotJson ?? null,
+					totalActualMinutes: l.totalActualMinutes ?? null,
+					completedIntervals: l.completedIntervals ?? null,
+					actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
+					plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
+					plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
+					updatedAtIso: l.updatedAtIso || nowIso
+				})),
+				cadencePlans: allCadence,
+				books: allBooks,
+				media: allMedia,
+				notes: allNotes,
+				calendarEvents: allEvents,
+				lifecycleEvents: allLifecycle,
+				reflectionTags: allTags.map((t) => ({
+					id: t.id,
+					label: t.label,
+					sortOrder: t.sortOrder
+				}))
+			}
+		};
+	}
+
+	async function restoreBackupPayload(
+		payload: DatabaseBackupPayload
+	): Promise<{ addedOrUpdatedCount: number; skippedDuplicatesCount: number }> {
+		const nowIso = new Date().toISOString();
+		const currentSnapshot = await exportBackupPayload();
+		const merged = computeSmartBackupMerge(currentSnapshot.data, payload.data);
+
+		await db.transaction(
+			'rw',
+			[
+				db.habits,
+				db.dailyEntries,
+				db.habitLogs,
+				db.cadencePlans,
+				db.books,
+				db.media,
+				db.notes,
+				db.calendarEvents,
+				db.lifecycleEvents,
+				db.reflectionTags,
+				db.syncOutbox
+			],
+			async () => {
+				const stagedMutations: SyncOutboxMutation[] = [];
+
+				if (merged.habitsToUpsert.length > 0) {
+					await db.habits.bulkPut(merged.habitsToUpsert);
+					for (const h of merged.habitsToUpsert) {
+						stagedMutations.push({
+							id: `habit:${h.id}`,
+							kind: 'UPSERT_HABIT',
+							queuedAtIso: nowIso,
+							payload: clonePlain(h)
+						});
+					}
+				}
+				if (merged.dailyEntriesToUpsert.length > 0) {
+					await db.dailyEntries.bulkPut(
+						merged.dailyEntriesToUpsert.map((e) => ({
+							dateIso: e.dateIso,
+							dayStatus: e.dayStatus,
+							reflectionNote: e.reflectionNote,
+							journalText: e.journalText ?? null,
+							tags: parseTagsJson(e.tagsJson),
+							updatedAtIso: e.updatedAtIso
+						}))
+					);
+				}
+				if (merged.habitLogsToUpsert.length > 0) {
+					await db.habitLogs.bulkPut(
+						merged.habitLogsToUpsert.map((l) => ({
+							...l,
+							updatedAtIso: l.updatedAtIso || nowIso
+						}))
+					);
+				}
+				if (merged.dailyEntriesToUpsert.length > 0 || merged.habitLogsToUpsert.length > 0) {
+					const affectedDates = new Set<string>([
+						...merged.dailyEntriesToUpsert.map((e) => e.dateIso),
+						...merged.habitLogsToUpsert.map((l) => l.dateIso)
+					]);
+					for (const dateIso of affectedDates) {
+						const entryRec = await db.dailyEntries.get(dateIso);
+						const dayLogs = await db.habitLogs.where('dateIso').equals(dateIso).toArray();
+						if (entryRec) {
+							stagedMutations.push({
+								id: `daily:${dateIso}`,
+								kind: 'SAVE_DAILY_ENTRY',
+								queuedAtIso: nowIso,
+								payload: clonePlain({
+									dateIso,
+									dayStatus: entryRec.dayStatus,
+									reflectionNote: entryRec.reflectionNote,
+									journalText: entryRec.journalText,
+									tags: entryRec.tags,
+									updatedAtIso: entryRec.updatedAtIso,
+									logs: dayLogs
+								})
+							});
+						}
+					}
+				}
+				if (merged.cadencePlansToUpsert.length > 0) {
+					await db.cadencePlans.bulkPut(merged.cadencePlansToUpsert);
+					const affectedPlanDates = new Set(
+						merged.cadencePlansToUpsert.map((p) => p.dateIso)
+					);
+					for (const targetDateIso of affectedPlanDates) {
+						const plansOnDate = await db.cadencePlans
+							.where('dateIso')
+							.equals(targetDateIso)
+							.toArray();
+						stagedMutations.push({
+							id: `cadence:${targetDateIso}`,
+							kind: 'SAVE_CADENCE_PLAN',
+							queuedAtIso: nowIso,
+							payload: clonePlain({
+								targetDateIso,
+								items: plansOnDate.map((p) => ({
+									habitId: p.habitId,
+									plannedIntervals: p.plannedIntervals,
+									plannedMinutesPerInterval: p.plannedMinutesPerInterval,
+									cadenceWindowMinutes: p.cadenceWindowMinutes
+								}))
+							})
+						});
+					}
+				}
+				if (merged.booksToUpsert.length > 0) {
+					await db.books.bulkPut(merged.booksToUpsert);
+					for (const b of merged.booksToUpsert) {
+						stagedMutations.push({
+							id: `book:${b.id}`,
+							kind: 'UPSERT_BOOK',
+							queuedAtIso: nowIso,
+							payload: clonePlain(b)
+						});
+					}
+				}
+				if (merged.mediaToUpsert.length > 0) {
+					await db.media.bulkPut(merged.mediaToUpsert);
+					for (const m of merged.mediaToUpsert) {
+						stagedMutations.push({
+							id: `media:${m.id}`,
+							kind: 'UPSERT_MEDIA',
+							queuedAtIso: nowIso,
+							payload: clonePlain(m)
+						});
+					}
+				}
+				if (merged.notesToUpsert.length > 0) {
+					await db.notes.bulkPut(merged.notesToUpsert);
+					for (const n of merged.notesToUpsert) {
+						stagedMutations.push({
+							id: `note:${n.id}`,
+							kind: 'UPSERT_NOTE',
+							queuedAtIso: nowIso,
+							payload: clonePlain(n)
+						});
+					}
+				}
+				if (merged.calendarEventsToUpsert.length > 0) {
+					await db.calendarEvents.bulkPut(merged.calendarEventsToUpsert);
+					for (const ev of merged.calendarEventsToUpsert) {
+						stagedMutations.push({
+							id: `event:${ev.id}`,
+							kind: 'UPSERT_CALENDAR_EVENT',
+							queuedAtIso: nowIso,
+							payload: clonePlain(ev)
+						});
+					}
+				}
+				if (merged.lifecycleEventsToUpsert.length > 0) {
+					await db.lifecycleEvents.bulkPut(merged.lifecycleEventsToUpsert);
+					for (const lc of merged.lifecycleEventsToUpsert) {
+						stagedMutations.push({
+							id: `lifecycle:${lc.id}`,
+							kind: 'ADD_LIFECYCLE_EVENT',
+							queuedAtIso: nowIso,
+							payload: clonePlain(lc)
+						});
+					}
+				}
+				if (merged.reflectionTagsToUpsert.length > 0) {
+					await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
+					stagedMutations.push({
+						id: 'tags:batch',
+						kind: 'UPSERT_REFLECTION_TAGS',
+						queuedAtIso: nowIso,
+						payload: clonePlain(merged.reflectionTagsToUpsert)
+					});
+				}
+				if (stagedMutations.length > 0) {
+					await db.syncOutbox.bulkPut(stagedMutations);
+				}
+			}
+		);
+
+		notifyMutationsStaged();
+
+		return {
+			addedOrUpdatedCount: merged.addedOrUpdatedCount,
+			skippedDuplicatesCount: merged.skippedDuplicatesCount
+		};
+	}
+
+	async function injectDemoSeed(): Promise<void> {
+		const dataset = buildDemoSeedDataset();
+		const { data } = dataset;
+
+		await db.transaction(
+			'rw',
+			[
+				db.habits,
+				db.dailyEntries,
+				db.habitLogs,
+				db.cadencePlans,
+				db.books,
+				db.media,
+				db.notes,
+				db.calendarEvents,
+				db.lifecycleEvents
+			],
+			async () => {
+				await db.habits.bulkPut(data.habits);
+				await db.cadencePlans.bulkPut(data.cadencePlans);
+				await db.books.bulkPut(data.books);
+				await db.media.bulkPut(data.media);
+				await db.notes.bulkPut(data.notes);
+				await db.calendarEvents.bulkPut(data.calendarEvents);
+				await db.lifecycleEvents.bulkPut(data.lifecycleEvents);
+
+				for (const e of data.dailyEntries) {
+					const existing = await db.dailyEntries.get(e.dateIso);
+					if (!existing || existing.tags.includes(DEMO_ENTRY_TAG)) {
+						await db.dailyEntries.put({
+							dateIso: e.dateIso,
+							dayStatus: e.dayStatus,
+							reflectionNote: e.reflectionNote,
+							journalText: e.journalText ?? null,
+							tags: parseTagsJson(e.tagsJson),
+							updatedAtIso: e.updatedAtIso
+						});
+					}
+				}
+
+				await db.habitLogs.bulkPut(
+					data.habitLogs.map((l) => ({
+						...l,
+						updatedAtIso: l.updatedAtIso || dataset.exportedAtIso
+					}))
+				);
+			}
+		);
+	}
+
+	async function removeDemoSeed(): Promise<void> {
+		await db.transaction(
+			'rw',
+			[
+				db.habits,
+				db.dailyEntries,
+				db.habitLogs,
+				db.cadencePlans,
+				db.books,
+				db.media,
+				db.notes,
+				db.calendarEvents,
+				db.lifecycleEvents,
+				db.syncOutbox
+			],
+			async () => {
+				const demoHabitIds = (await db.habits.toArray())
+					.filter((h) => isDemoRecordId(h.id))
+					.map((h) => h.id);
+				if (demoHabitIds.length > 0) await db.habits.bulkDelete(demoHabitIds);
+
+				const demoLogIds = (await db.habitLogs.toArray())
+					.filter((l) => isDemoRecordId(l.id) || isDemoRecordId(l.habitId))
+					.map((l) => l.id);
+				if (demoLogIds.length > 0) await db.habitLogs.bulkDelete(demoLogIds);
+
+				const demoEntryDates = (await db.dailyEntries.toArray())
+					.filter((e) => e.tags.includes(DEMO_ENTRY_TAG))
+					.map((e) => e.dateIso);
+				if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
+
+				const demoPlanIds = (await db.cadencePlans.toArray())
+					.filter((p) => isDemoRecordId(p.id) || isDemoRecordId(p.habitId))
+					.map((p) => p.id);
+				if (demoPlanIds.length > 0) await db.cadencePlans.bulkDelete(demoPlanIds);
+
+				const demoBookIds = (await db.books.toArray())
+					.filter((b) => isDemoRecordId(b.id))
+					.map((b) => b.id);
+				if (demoBookIds.length > 0) await db.books.bulkDelete(demoBookIds);
+
+				const demoMediaIds = (await db.media.toArray())
+					.filter((m) => isDemoRecordId(m.id))
+					.map((m) => m.id);
+				if (demoMediaIds.length > 0) await db.media.bulkDelete(demoMediaIds);
+
+				const demoNoteIds = (await db.notes.toArray())
+					.filter((n) => isDemoRecordId(n.id))
+					.map((n) => n.id);
+				if (demoNoteIds.length > 0) await db.notes.bulkDelete(demoNoteIds);
+
+				const demoEventIds = (await db.calendarEvents.toArray())
+					.filter((ev) => isDemoRecordId(ev.id))
+					.map((ev) => ev.id);
+				if (demoEventIds.length > 0) await db.calendarEvents.bulkDelete(demoEventIds);
+
+				const demoLifecycleIds = (await db.lifecycleEvents.toArray())
+					.filter((lc) => isDemoRecordId(lc.id) || isDemoRecordId(lc.habitId))
+					.map((lc) => lc.id);
+				if (demoLifecycleIds.length > 0) await db.lifecycleEvents.bulkDelete(demoLifecycleIds);
+
+				const demoOutboxIds = (await db.syncOutbox.toArray())
+					.filter((m) => m.id.includes('demo:'))
+					.map((m) => m.id);
+				if (demoOutboxIds.length > 0) await db.syncOutbox.bulkDelete(demoOutboxIds);
+			}
+		);
+	}
+
+	return {
+		exportBackupPayload,
+		restoreBackupPayload,
+		injectDemoSeed,
+		removeDemoSeed
 	};
 }
 
@@ -10164,6 +10412,7 @@ import {
 } from '~/core/habit-engine';
 import { COMPOSITE_FULL_LABEL, TIER_SCORES } from '~/domain/constants';
 import type { HabitLogItemInput, HabitTreeNode } from '~/domain/schemas';
+import { resolveTierButtonWidthClass } from '~/utils/ui-tokens';
 import { Check, ChevronDown, ChevronUp, Minus, X } from 'lucide-vue-next';
 
 interface Props {
@@ -10303,7 +10552,7 @@ const getTierButtons = buildTierButtonDescriptors;
 						:key="btn.tier"
 						type="button"
 						class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11"
-						:class="[btn.minWidthClass, getOptionStyle(uniformChildrenTier, btn.tier)]"
+						:class="[resolveTierButtonWidthClass(btn.sizeVariant), getOptionStyle(uniformChildrenTier, btn.tier)]"
 						@click.stop="emit('selectGroupTier', node.id, btn.tier)"
 					>
 						{{ btn.label }}
@@ -10328,7 +10577,7 @@ const getTierButtons = buildTierButtonDescriptors;
 					:key="btn.tier"
 					type="button"
 					class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11"
-					:class="[btn.minWidthClass, getOptionStyle(currentTier, btn.tier)]"
+					:class="[resolveTierButtonWidthClass(btn.sizeVariant), getOptionStyle(currentTier, btn.tier)]"
 					@click.stop="emit('selectTier', node.id, btn.tier)"
 				>
 					{{ btn.label }}
@@ -16125,10 +16374,13 @@ export const HabitTreeNodeSchema = HabitEntitySchema.extend({
 });
 export type HabitTreeNode = z.infer<typeof HabitTreeNodeSchema>;
 
+export const TierButtonSizeVariantSchema = z.enum(['compact', 'narrow', 'standard']);
+export type TierButtonSizeVariant = z.infer<typeof TierButtonSizeVariantSchema>;
+
 export const TierButtonDescriptorSchema = z.object({
 	tier: z.number().int(),
 	label: z.string(),
-	minWidthClass: z.string()
+	sizeVariant: TierButtonSizeVariantSchema
 });
 export type TierButtonDescriptor = z.infer<typeof TierButtonDescriptorSchema>;
 
@@ -16235,6 +16487,7 @@ export const MutateHabitStructureSchema = z.object({
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
 	defaultMinutesPerInterval: z.number().min(0).optional(),
+	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).optional(),
 	reason: z.string().min(2, 'نوشتن دلیل تغییر برای ثبت در تاریخچه الزامی است')
 });
 export type MutateHabitStructureInput = z.infer<typeof MutateHabitStructureSchema>;
@@ -16358,9 +16611,15 @@ export type UpsertNoteInput = z.infer<typeof UpsertNoteInputSchema>;
 
 export const SetupPasswordInputSchema = z
 	.object({
-		password: z.string().min(4, 'رمز عبور باید حداقل ۴ کاراکتر باشد'),
-		confirmPassword: z.string().min(4, 'تکرار رمز عبور الزامی است'),
-		website: z.string().optional()
+		password: z
+			.string()
+			.min(4, 'رمز عبور باید حداقل ۴ کاراکتر باشد')
+			.max(256, 'رمز عبور بیش از حد طولانی است'),
+		confirmPassword: z
+			.string()
+			.min(4, 'تکرار رمز عبور الزامی است')
+			.max(256, 'تکرار رمز عبور بیش از حد طولانی است'),
+		website: z.string().max(256).optional()
 	})
 	.refine((data) => data.password === data.confirmPassword, {
 		message: 'رمز عبور و تکرار آن یکسان نیستند',
@@ -16368,15 +16627,27 @@ export const SetupPasswordInputSchema = z
 	});
 
 export const LoginInputSchema = z.object({
-	password: z.string().min(1, 'لطفاً رمز عبور را وارد کنید'),
-	website: z.string().optional()
+	password: z
+		.string()
+		.min(1, 'لطفاً رمز عبور را وارد کنید')
+		.max(256, 'رمز عبور بیش از حد طولانی است'),
+	website: z.string().max(256).optional()
 });
 
 export const ChangePasswordInputSchema = z
 	.object({
-		currentPassword: z.string().min(1, 'وارد کردن رمز عبور فعلی الزامی است'),
-		newPassword: z.string().min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد'),
-		confirmNewPassword: z.string().min(4, 'تکرار رمز عبور جدید الزامی است')
+		currentPassword: z
+			.string()
+			.min(1, 'وارد کردن رمز عبور فعلی الزامی است')
+			.max(256, 'رمز عبور فعلی بیش از حد طولانی است'),
+		newPassword: z
+			.string()
+			.min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد')
+			.max(256, 'رمز عبور جدید بیش از حد طولانی است'),
+		confirmNewPassword: z
+			.string()
+			.min(4, 'تکرار رمز عبور جدید الزامی است')
+			.max(256, 'تکرار رمز عبور جدید بیش از حد طولانی است')
 	})
 	.refine((data) => data.newPassword === data.confirmNewPassword, {
 		message: 'رمز عبور جدید و تکرار آن یکسان نیستند',
@@ -16461,6 +16732,18 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('ADD_LIFECYCLE_EVENT'),
 		queuedAtIso: z.string(),
 		payload: LifecycleEventEntitySchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('UPSERT_REFLECTION_TAGS'),
+		queuedAtIso: z.string(),
+		payload: z.array(
+			z.object({
+				id: z.string(),
+				label: z.string(),
+				sortOrder: z.number().int()
+			})
+		)
 	})
 ]);
 export type SyncOutboxMutation = z.infer<typeof SyncOutboxMutationSchema>;
@@ -16948,6 +17231,10 @@ export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
 
 export const ExistingWorkspaceDataSchema = DatabaseBackupPayloadSchema.shape.data;
 export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;
+
+export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
+export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
+export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
 
 export const MergedBackupResultSchema = z.object({
 	habitsToUpsert: z.array(HabitEntitySchema),
@@ -17468,6 +17755,27 @@ export default defineNuxtRouteMiddleware(async (to) => {
 		return navigateTo('/');
 	}
 });
+
+
+----------------------------------------------------------------
+
+================================================================
+PATH: app/utils/ui-tokens.ts
+================================================================
+
+import type { TierButtonDescriptor } from '~/domain/schemas';
+
+const TIER_BUTTON_SIZE_CLASSES: Record<TierButtonDescriptor['sizeVariant'], string> = {
+	compact: 'sm:px-3',
+	narrow: 'sm:min-w-14 sm:px-3.5',
+	standard: 'sm:min-w-16 sm:px-3.5'
+};
+
+export function resolveTierButtonWidthClass(
+	variant: TierButtonDescriptor['sizeVariant']
+): string {
+	return TIER_BUTTON_SIZE_CLASSES[variant] ?? TIER_BUTTON_SIZE_CLASSES.standard;
+}
 
 
 ----------------------------------------------------------------

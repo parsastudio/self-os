@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
 import { BOOK_STATUS_OPTIONS } from '~/domain/constants';
 import type { BookEntity } from '~/domain/schemas';

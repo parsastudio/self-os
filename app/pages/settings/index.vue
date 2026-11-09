@@ -37,6 +37,7 @@ const clientAuth = useClientAuth();
 const habits = useDexieLiveQuery(() => db.habits.toArray(), []);
 const entries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
 const isStatsLoading = computed(() => habits.isLoading.value || entries.isLoading.value);
+const statsError = computed(() => habits.error.value || entries.error.value);
 
 const selectedFile = ref<File | null>(null);
 const currentPassword = ref('');
@@ -71,6 +72,7 @@ async function handleInjectDemoSeed() {
 					method: 'POST',
 					body: { action: 'inject' }
 				});
+				void syncEngine.syncNow({ checkRemoteUpdates: true });
 			} catch {
 				// در حالت آفلاین یا عدم دسترسی، در Dexie محلی تزریق شده است
 			}
@@ -102,6 +104,7 @@ async function handleRemoveDemoSeed() {
 					method: 'POST',
 					body: { action: 'remove' }
 				});
+				void syncEngine.syncNow({ checkRemoteUpdates: true });
 			} catch {
 				// در حالت آفلاین یا عدم دسترسی، از Dexie محلی حذف شده است
 			}
@@ -207,6 +210,7 @@ async function handleClearAllData() {
 		if (navigator.onLine) {
 			try {
 				await $fetch('/api/backup/clear', { method: 'POST' });
+				void syncEngine.syncNow({ checkRemoteUpdates: true });
 			} catch {
 				// ignore if offline
 			}
@@ -312,6 +316,15 @@ async function handleLogout(forceOfflineLogout = false) {
 			</div>
 		</div>
 
+		<div
+			v-if="statsError"
+			class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ statsError }}</p>
+		</div>
+
+		<NuxtErrorBoundary>
+		<div class="space-y-8">
 		<!-- بخش ظاهر و پوسته -->
 		<section class="space-y-4 rounded-3xl border border-border bg-surface p-6 shadow-(--shadow-soft) sm:p-7">
 			<div class="flex items-center gap-2.5 border-b border-border pb-3.5">
@@ -618,5 +631,22 @@ async function handleLogout(forceOfflineLogout = false) {
 				</div>
 			</div>
 		</details>
+		</div>
+
+		<template #error="{ error, clearError }">
+			<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+				<p class="text-sm font-extrabold text-failed">
+					{{ error?.message || 'خطا در بارگذاری بخش تنظیمات' }}
+				</p>
+				<button
+					type="button"
+					class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+					@click="clearError()"
+				>
+					تلاش مجدد
+				</button>
+			</div>
+		</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>

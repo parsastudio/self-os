@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { resolveEffectiveCadenceMinutes } from '~/core/habit-engine';
 import { CADENCE_DEFAULTS } from '~/domain/constants';
 import { toPersianDigits } from '~/domain/calendar';

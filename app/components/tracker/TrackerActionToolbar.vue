@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
 import { formatJalaliHuman, toPersianDigits } from '~/domain/calendar';
 import type { HabitEntity } from '~/domain/schemas';
 import { CalendarClock, Copy, Eraser, MessageSquarePlus, Sparkles } from 'lucide-vue-next';
@@ -11,9 +10,14 @@ interface Props {
 	selectedTags: string[];
 	reflectionNote: string;
 	tomorrowPlans: Record<string, { plannedMinutesPerInterval: number }>;
+	isSavingTomorrow?: boolean;
+	isTomorrowSaved?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+	isSavingTomorrow: false,
+	isTomorrowSaved: false
+});
 
 const emit = defineEmits<{
 	(e: 'markAllOptimal'): void;
@@ -27,26 +31,15 @@ const emit = defineEmits<{
 
 const showReflectionDrawer = ref(false);
 const showTomorrowDrawer = ref(false);
-const isSavedTomorrowToast = ref(false);
-let tomorrowToastTimer: ReturnType<typeof setTimeout> | null = null;
 
-function handleSaveTomorrow() {
-	emit('saveTomorrowPlans');
-	isSavedTomorrowToast.value = true;
-	if (tomorrowToastTimer) clearTimeout(tomorrowToastTimer);
-	tomorrowToastTimer = setTimeout(() => {
-		isSavedTomorrowToast.value = false;
-		showTomorrowDrawer.value = false;
-		tomorrowToastTimer = null;
-	}, 900);
-}
-
-onUnmounted(() => {
-	if (tomorrowToastTimer) {
-		clearTimeout(tomorrowToastTimer);
-		tomorrowToastTimer = null;
+watch(
+	() => props.isTomorrowSaved,
+	(saved, prevSaved) => {
+		if (prevSaved && !saved && showTomorrowDrawer.value) {
+			showTomorrowDrawer.value = false;
+		}
 	}
-});
+);
 
 const tomorrowHuman = computed(() => formatJalaliHuman(props.tomorrowIso));
 const activeNotesBadgeCount = computed(
@@ -188,15 +181,16 @@ const activeNotesBadgeCount = computed(
 			<div class="flex justify-end">
 				<button
 					type="button"
-					class="h-10 rounded-xl px-5 text-xs font-black transition active:scale-98"
+					:disabled="isSavingTomorrow"
+					class="h-10 rounded-xl px-5 text-xs font-black transition active:scale-98 disabled:opacity-60"
 					:class="
-						isSavedTomorrowToast
+						isTomorrowSaved
 							? 'bg-optimal text-on-solid'
 							: 'bg-accent text-accent-fg'
 					"
-					@click="handleSaveTomorrow"
+					@click="emit('saveTomorrowPlans')"
 				>
-					{{ isSavedTomorrowToast ? 'ذخیره شد ✓' : 'ذخیره برنامه فردا' }}
+					{{ isTomorrowSaved ? 'ذخیره شد ✓' : isSavingTomorrow ? 'در حال ذخیره...' : 'ذخیره برنامه فردا' }}
 				</button>
 			</div>
 		</div>

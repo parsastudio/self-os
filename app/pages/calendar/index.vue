@@ -98,10 +98,33 @@ const allBooks = useDexieLiveQuery(() => db.books.toArray(), []);
 const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
 
 const isCalendarLoading = computed(
-	() => allHabits.isLoading.value && monthEntries.isLoading.value && allHabits.value.length === 0
+	() =>
+		(allHabits.isLoading.value || monthEntries.isLoading.value || monthLogs.isLoading.value) &&
+		allHabits.value.length === 0 &&
+		monthEntries.value.length === 0
+);
+
+const calendarError = computed(
+	() =>
+		allHabits.error.value ||
+		monthEntries.error.value ||
+		monthLogs.error.value ||
+		allEvents.error.value
 );
 
 const userSelectedIso = ref<string | null>(null);
+const isPerformanceModalOpen = ref(false);
+const expandedPerformanceHabitId = ref<string | null>(null);
+
+function openPerformanceModal(habitId?: string) {
+	expandedPerformanceHabitId.value = habitId ?? null;
+	isPerformanceModalOpen.value = true;
+}
+
+function closePerformanceModal() {
+	isPerformanceModalOpen.value = false;
+	expandedPerformanceHabitId.value = null;
+}
 
 const archiveData = computed(() =>
 	assembleJalaliMonthArchive({
@@ -234,6 +257,13 @@ function goToToday() {
 			<div class="h-80 animate-pulse rounded-3xl border border-border bg-surface lg:col-span-5"></div>
 		</div>
 
+		<div
+			v-else-if="calendarError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ calendarError }}</p>
+		</div>
+
 		<NuxtErrorBoundary v-else>
 		<div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
 			<!-- گرید ماه جلالی -->
@@ -291,9 +321,18 @@ function goToToday() {
 					@toggle-event-complete="handleToggleEventComplete"
 					@delete-event="handleDeleteEvent"
 					@open-tracker-date="(iso) => router.push({ path: '/', query: { date: iso } })"
+					@inspect-performances="openPerformanceModal"
 				/>
 			</div>
 		</div>
+
+		<LazyCalendarDayPerformanceModal
+			v-if="isPerformanceModalOpen && selectedDay"
+			:full-human-label="selectedDay.fullHumanLabel"
+			:performances="selectedDay.habitPerformances"
+			:initial-expanded-habit-id="expandedPerformanceHabitId"
+			@close="closePerformanceModal"
+		/>
 
 		<template #error="{ error, clearError }">
 			<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">

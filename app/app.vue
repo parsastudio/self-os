@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
-
 let handleVisibilityChange: (() => void) | null = null;
 
 onMounted(() => {

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import type { HabitComparisonRow } from '~/domain/schemas';
 import { BarChart3, Flame, TrendingDown, TrendingUp } from 'lucide-vue-next';

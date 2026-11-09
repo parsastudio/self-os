@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import type { CalendarEventEntity, UpcomingEventBannerItem } from '~/domain/schemas';
 import { BellRing, CalendarDays, Check } from 'lucide-vue-next';

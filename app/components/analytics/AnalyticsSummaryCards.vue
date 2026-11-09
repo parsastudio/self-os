@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import type { SelectedHabitAnalytics } from '~/domain/schemas';
 import { Award, Flame, TrendingDown, TrendingUp, Zap } from 'lucide-vue-next';

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import type { HabitDailyPoint, SelectedHabitAnalytics } from '~/domain/schemas';
 import { Calendar, Hash, Layers, TrendingDown, TrendingUp } from 'lucide-vue-next';

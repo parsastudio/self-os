@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import type { NoteEntity, UpsertNoteInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
 import { Tag } from 'lucide-vue-next';

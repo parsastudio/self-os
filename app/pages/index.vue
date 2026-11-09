@@ -30,6 +30,29 @@ const currentDateIso = computed(() => {
 
 const tracker = useDailyTracker(currentDateIso);
 const isHabitsLoading = tracker.habits.isLoading;
+const trackerError = computed(
+	() => tracker.habits.error.value || tracker.entry.error.value
+);
+
+const isSavingTomorrow = ref(false);
+const isTomorrowSaved = ref(false);
+let tomorrowSavedTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function handleSaveTomorrowPlans() {
+	if (isSavingTomorrow.value) return;
+	isSavingTomorrow.value = true;
+	try {
+		await tracker.saveTomorrowCadencePlans();
+		isTomorrowSaved.value = true;
+		if (tomorrowSavedTimer) clearTimeout(tomorrowSavedTimer);
+		tomorrowSavedTimer = setTimeout(() => {
+			isTomorrowSaved.value = false;
+			tomorrowSavedTimer = null;
+		}, 900);
+	} finally {
+		isSavingTomorrow.value = false;
+	}
+}
 
 function navigateToDate(iso: string) {
 	router.push({ query: { ...route.query, date: iso } });
@@ -53,6 +76,10 @@ onMounted(() => {
 
 onUnmounted(() => {
 	window.removeEventListener('keydown', handleScrubberShortcut);
+	if (tomorrowSavedTimer) {
+		clearTimeout(tomorrowSavedTimer);
+		tomorrowSavedTimer = null;
+	}
 });
 
 const bannerCalculation = computed(() =>
@@ -111,7 +138,7 @@ const groupedTieredSections = computed(() => {
 			:save-state="tracker.saveState.value"
 			:completion-stats="tracker.completionStats.value"
 			@select-date="navigateToDate"
-			@retry-save="tracker.flushPendingSave"
+			@retry-save="() => tracker.flushPendingSave(true)"
 		/>
 
 		<UpcomingEventsBanner
@@ -125,6 +152,13 @@ const groupedTieredSections = computed(() => {
 		<div v-if="isHabitsLoading" class="space-y-4" aria-busy="true">
 			<div class="h-18 animate-pulse rounded-3xl border border-border bg-surface"></div>
 			<div v-for="idx in 3" :key="idx" class="h-24 animate-pulse rounded-3xl border border-border bg-surface"></div>
+		</div>
+
+		<div
+			v-else-if="trackerError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ trackerError }}</p>
 		</div>
 
 		<div v-else-if="tracker.habits.value.length === 0" class="rounded-3xl border border-border bg-surface p-10 text-center">
@@ -149,13 +183,15 @@ const groupedTieredSections = computed(() => {
 				:selected-tags="tracker.selectedTags.value"
 				:reflection-note="tracker.reflectionNote.value"
 				:tomorrow-plans="tracker.tomorrowPlansByHabitId.value"
+				:is-saving-tomorrow="isSavingTomorrow"
+				:is-tomorrow-saved="isTomorrowSaved"
 				@mark-all-optimal="tracker.markAllOptimalFiveSecond"
 				@clear-day="tracker.clearDay"
 				@toggle-tag="tracker.toggleTag"
 				@update-reflection-note="(val) => { tracker.reflectionNote.value = val; tracker.scheduleAutoSave(750); }"
 				@update-tomorrow-plan="(id, mins) => tracker.setTomorrowPlanMinutes(id, mins)"
 				@copy-today-to-tomorrow="tracker.copyTodayActualsToTomorrowPlan"
-				@save-tomorrow-plans="tracker.saveTomorrowCadencePlans"
+				@save-tomorrow-plans="handleSaveTomorrowPlans"
 			/>
 
 			<!-- بخش عادات ریتمی تکرارشونده -->

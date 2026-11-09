@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import { getDayStatusMeta, getTierBadgeMeta } from '~/domain/constants';
 import type { CalendarDayAggregate, CreateCalendarEventInput } from '~/domain/schemas';
@@ -28,14 +27,13 @@ const emit = defineEmits<{
 	(e: 'toggleEventComplete', eventId: string, isCompleted: boolean): void;
 	(e: 'deleteEvent', eventId: string): void;
 	(e: 'openTrackerDate', dateIso: string): void;
+	(e: 'inspectPerformances', habitId?: string): void;
 }>();
 
 const isAnnualChecked = ref(false);
 const showAddEventForm = ref(false);
 const eventTitleInput = ref('');
 const eventNotesInput = ref('');
-const isModalOpen = ref(false);
-const expandedHabitId = ref<string | null>(null);
 
 function handleAddEvent() {
 	if (!eventTitleInput.value.trim() || props.isSubmittingEvent) return;
@@ -52,16 +50,6 @@ function handleAddEvent() {
 	eventNotesInput.value = '';
 	isAnnualChecked.value = false;
 	showAddEventForm.value = false;
-}
-
-function openModalWithHabit(habitId?: string) {
-	expandedHabitId.value = habitId ?? null;
-	isModalOpen.value = true;
-}
-
-function closeModal() {
-	isModalOpen.value = false;
-	expandedHabitId.value = null;
 }
 </script>
 
@@ -251,7 +239,7 @@ function closeModal() {
 					v-if="day.habitPerformances.length > 0"
 					type="button"
 					class="flex items-center gap-1 rounded-xl border border-border bg-elevated px-2.5 py-1 text-[11px] font-extrabold text-fg-secondary transition hover:border-accent-border hover:text-accent-text"
-					@click="openModalWithHabit()"
+					@click="emit('inspectPerformances')"
 				>
 					<Eye class="h-3 w-3" />
 					<span>دیدن جزئیات</span>
@@ -271,7 +259,7 @@ function closeModal() {
 					type="button"
 					class="flex items-center justify-between gap-2 rounded-2xl border border-border bg-elevated px-3 py-2 text-right text-xs transition hover:border-border-strong hover:bg-muted/60 active:scale-98"
 					title="کلیک برای مشاهده جزئیات این طرح"
-					@click="openModalWithHabit(perf.habitId)"
+					@click="emit('inspectPerformances', perf.habitId)"
 				>
 					<span class="truncate font-bold text-fg">{{ perf.title }}</span>
 
@@ -293,12 +281,4 @@ function closeModal() {
 		</div>
 	</aside>
 
-	<!-- مودال نمایش جزئیات قوانین تاریخی و عملکرد طرح‌ها -->
-	<LazyCalendarDayPerformanceModal
-		v-if="isModalOpen"
-		:full-human-label="day.fullHumanLabel"
-		:performances="day.habitPerformances"
-		:initial-expanded-habit-id="expandedHabitId"
-		@close="closeModal"
-	/>
 </template>

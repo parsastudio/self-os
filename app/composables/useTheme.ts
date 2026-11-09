@@ -1,4 +1,3 @@
-import { ref } from 'vue';
 import { getAppDatabase } from '~/composables/useAppDatabase';
 
 const isDark = ref(true);

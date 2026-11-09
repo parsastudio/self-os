@@ -66,11 +66,14 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 	if (isOpen.value && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
 		e.preventDefault();
-		const currentIndex = props.options.findIndex((o) => String(o.value) === String(props.modelValue));
+		const len = props.options.length;
+		if (len === 0) return;
+		const foundIndex = props.options.findIndex((o) => String(o.value) === String(props.modelValue));
+		const currentIndex = foundIndex >= 0 ? foundIndex : 0;
 		const targetIndex =
 			e.key === 'ArrowDown'
-				? (currentIndex + 1) % props.options.length
-				: (currentIndex - 1 + props.options.length) % props.options.length;
+				? (currentIndex + 1) % len
+				: (currentIndex - 1 + len) % len;
 		const targetOpt = props.options[targetIndex];
 		if (targetOpt) {
 			const nextVal = targetOpt.value;

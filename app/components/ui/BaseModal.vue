@@ -1,3 +1,8 @@
+<script lang="ts">
+let activeModalCount = 0;
+let savedBodyOverflow = '';
+</script>
+
 <script setup lang="ts">
 import { X } from 'lucide-vue-next';
 
@@ -24,16 +29,20 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 }
 
-let previousBodyOverflow = '';
-
 onMounted(() => {
-	previousBodyOverflow = document.body.style.overflow;
-	document.body.style.overflow = 'hidden';
+	if (activeModalCount === 0) {
+		savedBodyOverflow = document.body.style.overflow;
+		document.body.style.overflow = 'hidden';
+	}
+	activeModalCount++;
 	window.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
-	document.body.style.overflow = previousBodyOverflow;
+	activeModalCount = Math.max(0, activeModalCount - 1);
+	if (activeModalCount === 0) {
+		document.body.style.overflow = savedBodyOverflow;
+	}
 	window.removeEventListener('keydown', handleKeydown);
 });
 </script>

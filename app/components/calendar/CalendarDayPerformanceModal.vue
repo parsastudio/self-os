@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import { toPersianDigits } from '~/domain/calendar';
 import { getTierBadgeMeta, TIER_SCORES } from '~/domain/constants';
 import type { DayHabitPerformanceItem } from '~/domain/schemas';

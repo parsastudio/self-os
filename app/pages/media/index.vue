@@ -176,7 +176,7 @@ async function handleDeleteMedia(mediaId: string) {
 			</template>
 		</NuxtErrorBoundary>
 
-		<LazyMediaUpsertModal
+		<LazyMediaMediaUpsertModal
 			v-if="isModalOpen"
 			:key="editingMedia?.id ?? 'new'"
 			:editing-media="editingMedia"

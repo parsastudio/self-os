@@ -49,6 +49,14 @@ const rawLogs = useDexieLiveQuery(
 );
 const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
+const analyticsError = computed(
+	() =>
+		habits.error.value ||
+		rawEntries.error.value ||
+		rawLogs.error.value ||
+		lifecycleEvents.error.value
+);
+
 const selectedHabitId = computed(() => {
 	const h = route.query.habit as string | undefined;
 	if (h && habits.value.some((item) => item.id === h)) return h;
@@ -136,6 +144,13 @@ function selectHabitAndScroll(habitId: string) {
 				<div v-for="idx in 3" :key="idx" class="h-28 animate-pulse rounded-3xl border border-border bg-surface"></div>
 			</div>
 			<div class="h-80 animate-pulse rounded-3xl border border-border bg-surface"></div>
+		</div>
+
+		<div
+			v-else-if="analyticsError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ analyticsError }}</p>
 		</div>
 
 		<div v-else-if="habits.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center">
