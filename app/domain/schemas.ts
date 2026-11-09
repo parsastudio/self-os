@@ -3,7 +3,7 @@ import {
 	CADENCE_DEFAULTS,
 	DEFAULT_HABIT_CATEGORY,
 	TIER_SCORES
-} from './constants';
+} from '~/domain/constants';
 
 export const TrackingModeSchema = z.enum(['tiered', 'interval_cadence']);
 export type TrackingMode = z.infer<typeof TrackingModeSchema>;
@@ -607,6 +607,65 @@ export const LocalReflectionTagRecordSchema = z.object({
 });
 export type LocalReflectionTagRecord = z.infer<typeof LocalReflectionTagRecordSchema>;
 
+export const SelectOptionSchema = z.object({
+	value: z.union([z.string(), z.number()]),
+	label: z.string()
+});
+export type SelectOption = z.infer<typeof SelectOptionSchema>;
+
+export const JalaliPartsSchema = z.object({
+	jy: z.number().int(),
+	jm: z.number().int().min(1).max(12),
+	jd: z.number().int().min(1).max(31)
+});
+export type JalaliParts = z.infer<typeof JalaliPartsSchema>;
+
+export const CalendarScrubberDaySchema = z.object({
+	iso: z.string(),
+	jd: z.number().int(),
+	weekdayShort: z.string(),
+	monthName: z.string(),
+	isSelected: z.boolean(),
+	visualState: DayStatusColorSchema
+});
+export type CalendarScrubberDay = z.infer<typeof CalendarScrubberDaySchema>;
+
+export const JalaliMonthGridCellSchema = z.object({
+	iso: z.string(),
+	jy: z.number().int(),
+	jm: z.number().int(),
+	jd: z.number().int(),
+	weekdayLabel: z.string(),
+	isToday: z.boolean()
+});
+export type JalaliMonthGridCell = z.infer<typeof JalaliMonthGridCellSchema>;
+
+export const DayStatusMetaItemSchema = z.object({
+	value: DayStatusColorSchema,
+	label: z.string(),
+	shortBadgeLabel: z.string(),
+	dotClass: z.string(),
+	softBadgeClasses: z.string()
+});
+export type DayStatusMetaItem = z.infer<typeof DayStatusMetaItemSchema>;
+
+export const SyncStatusVisualSchema = z.enum([
+	'synced',
+	'local_pending',
+	'syncing',
+	'offline',
+	'error'
+]);
+export type SyncStatusVisual = z.infer<typeof SyncStatusVisualSchema>;
+
+export const CadenceDraftItemSchema = z.object({
+	habitId: z.string(),
+	plannedIntervals: z.number().int().min(0),
+	plannedMinutesPerInterval: z.number().min(0),
+	cadenceWindowMinutes: z.number().int().min(15)
+});
+export type CadenceDraftItem = z.infer<typeof CadenceDraftItemSchema>;
+
 export const SyncMetaRecordSchema = z.object({
 	key: z.enum(['meta:sync', 'meta:theme']),
 	clientId: z.string(),
@@ -652,6 +711,29 @@ export const HabitEvolutionItemSchema = z.object({
 	impactDelta: z.number().nullable()
 });
 export type HabitEvolutionItem = z.infer<typeof HabitEvolutionItemSchema>;
+
+export const RenderedChartBarSchema = z.object({
+	pt: z.lazy(() => HabitDailyPointSchema),
+	idx: z.number().int(),
+	cx: z.number(),
+	hasVisibleBar: z.boolean(),
+	barX: z.number(),
+	barY: z.number(),
+	barHeight: z.number(),
+	barRx: z.number(),
+	showAxisLabel: z.boolean()
+});
+export type RenderedChartBar = {
+	pt: HabitDailyPoint;
+	idx: number;
+	cx: number;
+	hasVisibleBar: boolean;
+	barX: number;
+	barY: number;
+	barHeight: number;
+	barRx: number;
+	showAxisLabel: boolean;
+};
 
 export const HabitDailyPointSchema = z.object({
 	dateIso: z.string(),
@@ -814,4 +896,67 @@ export const DatabaseBackupPayloadSchema = z.object({
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
 
-export { parseTagsJson } from './tags';
+export const ExistingWorkspaceDataSchema = DatabaseBackupPayloadSchema.shape.data;
+export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;
+
+export const MergedBackupResultSchema = z.object({
+	habitsToUpsert: z.array(HabitEntitySchema),
+	dailyEntriesToUpsert: ExistingWorkspaceDataSchema.shape.dailyEntries,
+	habitLogsToUpsert: ExistingWorkspaceDataSchema.shape.habitLogs,
+	cadencePlansToUpsert: z.array(CadencePlanEntitySchema),
+	booksToUpsert: z.array(BookEntitySchema),
+	mediaToUpsert: z.array(MediaEntitySchema),
+	notesToUpsert: z.array(NoteEntitySchema),
+	calendarEventsToUpsert: z.array(CalendarEventEntitySchema),
+	lifecycleEventsToUpsert: z.array(LifecycleEventEntitySchema),
+	reflectionTagsToUpsert: ExistingWorkspaceDataSchema.shape.reflectionTags,
+	addedOrUpdatedCount: z.number().int(),
+	skippedDuplicatesCount: z.number().int()
+});
+export type MergedBackupResult = z.infer<typeof MergedBackupResultSchema>;
+
+export const ApiErrorEnvelopeSchema = z
+	.object({
+		statusCode: z.number().optional(),
+		statusMessage: z.string().optional(),
+		message: z.string().optional(),
+		data: z
+			.object({
+				statusMessage: z.string().optional(),
+				data: z
+					.object({
+						failedAttempts: z.number().optional(),
+						nextDelaySeconds: z.number().optional()
+					})
+					.optional()
+			})
+			.optional()
+	})
+	.passthrough();
+
+export function extractApiErrorInfo(
+	err: unknown,
+	fallbackMessage: string
+): {
+	statusCode: number;
+	message: string;
+	failedAttempts?: number;
+} {
+	const parsed = ApiErrorEnvelopeSchema.safeParse(err);
+	if (parsed.success) {
+		const d = parsed.data;
+		const message =
+			d.data?.statusMessage || d.statusMessage || d.message || fallbackMessage;
+		return {
+			statusCode: d.statusCode || 500,
+			message,
+			failedAttempts: d.data?.data?.failedAttempts
+		};
+	}
+	if (err instanceof Error) {
+		return { statusCode: 500, message: err.message || fallbackMessage };
+	}
+	return { statusCode: 500, message: fallbackMessage };
+}
+
+export { parseTagsJson } from '~/domain/tags';

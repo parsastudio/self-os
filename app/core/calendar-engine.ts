@@ -22,7 +22,7 @@ import {
 	parseHabitSpecSnapshot,
 	resolveEffectiveCadenceMinutes,
 	resolveHabitRuleSnapshot
-} from './habit-engine';
+} from '~/core/habit-engine';
 
 export function computeUpcomingEventsBanner(params: {
 	allEvents: CalendarEventEntity[];

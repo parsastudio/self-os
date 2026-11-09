@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { useSyncEngine } from '~/composables/useSyncEngine';
 import { toPersianDigits } from '~/domain/calendar';
+import { extractApiErrorInfo } from '~/domain/schemas';
 import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, Timer, WifiOff } from 'lucide-vue-next';
 
 definePageMeta({
@@ -88,19 +87,11 @@ function startCountdownTimer(durationMs: number): Promise<void> {
 }
 
 function extractErrorText(err: unknown, fallback: string): string {
-	if (err && typeof err === 'object' && 'data' in err) {
-		const data = (err as {
-			data?: {
-				statusMessage?: string;
-				data?: { failedAttempts?: number };
-			};
-		}).data;
-		if (typeof data?.data?.failedAttempts === 'number') {
-			failedAttempts.value = Math.max(failedAttempts.value, data.data.failedAttempts);
-		}
-		if (data?.statusMessage) return data.statusMessage;
+	const info = extractApiErrorInfo(err, fallback);
+	if (typeof info.failedAttempts === 'number') {
+		failedAttempts.value = Math.max(failedAttempts.value, info.failedAttempts);
 	}
-	return err instanceof Error ? err.message : fallback;
+	return info.message;
 }
 
 onMounted(async () => {

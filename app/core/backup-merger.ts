@@ -3,43 +3,18 @@ import type {
 	CadencePlanEntity,
 	CalendarEventEntity,
 	DatabaseBackupPayload,
+	ExistingWorkspaceData,
 	HabitEntity,
 	LifecycleEventEntity,
 	MediaEntity,
+	MergedBackupResult,
 	NoteEntity
 } from '~/domain/schemas';
 
 export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
 export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
 export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
-
-export interface ExistingWorkspaceData {
-	habits: HabitEntity[];
-	dailyEntries: BackupDailyEntryRow[];
-	habitLogs: BackupHabitLogRow[];
-	cadencePlans: CadencePlanEntity[];
-	books: BookEntity[];
-	media: MediaEntity[];
-	notes: NoteEntity[];
-	calendarEvents: CalendarEventEntity[];
-	lifecycleEvents: LifecycleEventEntity[];
-	reflectionTags: BackupReflectionTagRow[];
-}
-
-export interface MergedBackupResult {
-	habitsToUpsert: HabitEntity[];
-	dailyEntriesToUpsert: BackupDailyEntryRow[];
-	habitLogsToUpsert: BackupHabitLogRow[];
-	cadencePlansToUpsert: CadencePlanEntity[];
-	booksToUpsert: BookEntity[];
-	mediaToUpsert: MediaEntity[];
-	notesToUpsert: NoteEntity[];
-	calendarEventsToUpsert: CalendarEventEntity[];
-	lifecycleEventsToUpsert: LifecycleEventEntity[];
-	reflectionTagsToUpsert: BackupReflectionTagRow[];
-	addedOrUpdatedCount: number;
-	skippedDuplicatesCount: number;
-}
+export type { ExistingWorkspaceData, MergedBackupResult };
 
 function normText(str: string | null | undefined): string {
 	return (str ?? '').trim().toLowerCase().replace(/\s+/g, ' ');

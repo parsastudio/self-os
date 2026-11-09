@@ -2,10 +2,11 @@ import type {
 	BookStatus,
 	DayHabitOutcome,
 	DayStatusColor,
+	DayStatusMetaItem,
 	LifecycleEventType,
 	MediaCategory,
 	MediaStatus
-} from './schemas';
+} from '~/domain/schemas';
 
 export const DEFAULT_HABIT_CATEGORY = 'عمومی';
 
@@ -40,14 +41,6 @@ export const CADENCE_SUCCESS_RATIOS = {
 	GOLD_THRESHOLD: 1.0,
 	SILVER_THRESHOLD: 0.6
 } as const;
-
-export interface DayStatusMetaItem {
-	value: DayStatusColor;
-	label: string;
-	shortBadgeLabel: string;
-	dotClass: string;
-	softBadgeClasses: string;
-}
 
 export const DAY_STATUS_META: Record<DayStatusColor, DayStatusMetaItem> = {
 	optimal: {

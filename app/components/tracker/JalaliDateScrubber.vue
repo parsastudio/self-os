@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue';
 import {
 	buildRecentCalendarDays,
 	formatJalaliHuman,
@@ -49,7 +48,7 @@ const nextDayIso = computed(() => shiftIsoDate(props.currentDateIso, 1));
 const savedStatusByIso = computed(() => new Map(props.recentEntries.map((e) => [e.dateIso, e.dayStatus])));
 
 const calendarDays = computed(() =>
-	buildRecentCalendarDays<DayStatusColor>({
+	buildRecentCalendarDays({
 		currentDateIso: props.currentDateIso,
 		todayIso: todayIso.value,
 		savedStatusByIso: savedStatusByIso.value,
@@ -60,19 +59,7 @@ const calendarDays = computed(() =>
 	})
 );
 
-function handleKeydown(e: KeyboardEvent) {
-	const tag = (e.target as HTMLElement)?.tagName;
-	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-	if (e.key === '[') {
-		e.preventDefault();
-		emit('selectDate', prevDayIso.value);
-	} else if (e.key === ']') {
-		e.preventDefault();
-		emit('selectDate', nextDayIso.value);
-	}
-}
-
-function getDayCellClasses(day: CalendarScrubberDay<DayStatusColor>): string {
+function getDayCellClasses(day: CalendarScrubberDay): string {
 	const selectedGlow = day.isSelected
 		? 'border-2 -translate-y-0.5 shadow-(--shadow-card)'
 		: 'border hover:border-border-strong';
@@ -86,13 +73,6 @@ function getDayCellClasses(day: CalendarScrubberDay<DayStatusColor>): string {
 	return `${selectedGlow} ${day.isSelected ? 'border-failed bg-failed-soft' : 'border-failed-border bg-failed-soft'}`;
 }
 
-onMounted(() => {
-	window.addEventListener('keydown', handleKeydown);
-});
-
-onUnmounted(() => {
-	window.removeEventListener('keydown', handleKeydown);
-});
 </script>
 
 <template>

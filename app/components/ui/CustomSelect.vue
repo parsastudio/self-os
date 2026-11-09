@@ -1,11 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Check, ChevronDown } from 'lucide-vue-next';
+import type { SelectOption } from '~/domain/schemas';
 
-export interface SelectOption {
-	value: string | number;
-	label: string;
-}
+export type { SelectOption };
 
 interface Props {
 	id?: string;

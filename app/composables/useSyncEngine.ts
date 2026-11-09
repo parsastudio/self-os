@@ -1,8 +1,7 @@
-import { ref } from 'vue';
 import { onLocalMutationStaged, useLocalRepository } from '~/composables/useLocalRepository';
-import type { ServerSyncResponse } from '~/domain/schemas';
+import type { ServerSyncResponse, SyncStatusVisual } from '~/domain/schemas';
 
-export type SyncStatusVisual = 'synced' | 'local_pending' | 'syncing' | 'offline' | 'error';
+export type { SyncStatusVisual };
 
 const status = ref<SyncStatusVisual>('synced');
 const pendingCount = ref(0);

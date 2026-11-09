@@ -1,4 +1,6 @@
-import type { HabitDailyPoint } from '~/domain/schemas';
+import type { HabitDailyPoint, RenderedChartBar } from '~/domain/schemas';
+
+export type { RenderedChartBar };
 
 export const CHART_DIMENSIONS = {
 	SVG_WIDTH: 860,
@@ -93,18 +95,6 @@ export function buildRollingAreaPath(
 	if (!first || !last) return '';
 	const lineSegments = coords.map((c) => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
 	return `M ${first.x.toFixed(1)} ${baselineY} ${lineSegments} L ${last.x.toFixed(1)} ${baselineY} Z`;
-}
-
-export interface RenderedChartBar {
-	pt: HabitDailyPoint;
-	idx: number;
-	cx: number;
-	hasVisibleBar: boolean;
-	barX: number;
-	barY: number;
-	barHeight: number;
-	barRx: number;
-	showAxisLabel: boolean;
 }
 
 export function buildRenderedChartBars(

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
 import { X } from 'lucide-vue-next';
 
 interface Props {

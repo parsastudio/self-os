@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -26,6 +25,29 @@ const selectedCategory = ref<string>('ALL');
 const isModalOpen = ref(false);
 const isSubmittingNote = ref(false);
 const editingNote = ref<NoteEntity | null>(null);
+const copiedNoteId = ref<string | null>(null);
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function handleCopyNote(note: NoteEntity) {
+	if (!import.meta.client || !navigator.clipboard) return;
+	try {
+		await navigator.clipboard.writeText(
+			note.title ? `${note.title}\n${note.content}` : note.content
+		);
+		copiedNoteId.value = note.id;
+		if (copyResetTimer) clearTimeout(copyResetTimer);
+		copyResetTimer = setTimeout(() => {
+			copiedNoteId.value = null;
+			copyResetTimer = null;
+		}, 1600);
+	} catch {
+		// ignore clipboard permission errors
+	}
+}
+
+onUnmounted(() => {
+	if (copyResetTimer) clearTimeout(copyResetTimer);
+});
 
 const categories = computed(() => {
 	const set = new Set<string>(['عمومی']);
@@ -247,6 +269,8 @@ async function handleDeleteNote(noteId: string) {
 				v-for="note in filteredNotes"
 				:key="note.id"
 				:note="note"
+				:is-copied="copiedNoteId === note.id"
+				@copy="handleCopyNote"
 				@edit="openEditModal"
 				@toggle-pin="handleTogglePin"
 				@delete="handleDeleteNote"

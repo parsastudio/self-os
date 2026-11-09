@@ -1,5 +1,5 @@
 import { defineEventHandler, readBody, createError } from 'h3';
-import { SyncRequestPayloadSchema } from '~/domain/schemas';
+import { extractApiErrorInfo, SyncRequestPayloadSchema } from '~/domain/schemas';
 import { processClientSyncRequest } from '../repositories/sync.repo';
 
 export default defineEventHandler(async (event) => {
@@ -19,10 +19,10 @@ export default defineEventHandler(async (event) => {
 
 		return await processClientSyncRequest(parsed.data, appVersion);
 	} catch (err: unknown) {
-		const error = err as { statusCode?: number; statusMessage?: string; message?: string };
+		const info = extractApiErrorInfo(err, 'خطا در پردازش همگام‌سازی با سرور');
 		throw createError({
-			statusCode: error.statusCode || 500,
-			statusMessage: error.statusMessage || error.message || 'خطا در پردازش همگام‌سازی با سرور'
+			statusCode: info.statusCode,
+			statusMessage: info.message
 		});
 	}
 });

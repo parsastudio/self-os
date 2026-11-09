@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useDailyTracker } from '~/composables/useDailyTracker';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { computeUpcomingEventsBanner } from '~/core/calendar-engine';
-import { getTodayIso, getYesterdayIso, toPersianDigits } from '~/domain/calendar';
+import { getTodayIso, getYesterdayIso, shiftIsoDate, toPersianDigits } from '~/domain/calendar';
 import type { HabitTimeSlot, HabitTreeNode } from '~/domain/schemas';
 import JalaliDateScrubber from '~/components/tracker/JalaliDateScrubber.vue';
 import UpcomingEventsBanner from '~/components/tracker/UpcomingEventsBanner.vue';
@@ -36,6 +34,26 @@ const isHabitsLoading = tracker.habits.isLoading;
 function navigateToDate(iso: string) {
 	router.push({ query: { ...route.query, date: iso } });
 }
+
+function handleScrubberShortcut(e: KeyboardEvent) {
+	const tag = (e.target as HTMLElement | null)?.tagName;
+	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+	if (e.key === '[') {
+		e.preventDefault();
+		navigateToDate(shiftIsoDate(currentDateIso.value, -1));
+	} else if (e.key === ']') {
+		e.preventDefault();
+		navigateToDate(shiftIsoDate(currentDateIso.value, 1));
+	}
+}
+
+onMounted(() => {
+	window.addEventListener('keydown', handleScrubberShortcut);
+});
+
+onUnmounted(() => {
+	window.removeEventListener('keydown', handleScrubberShortcut);
+});
 
 const bannerCalculation = computed(() =>
 	computeUpcomingEventsBanner({

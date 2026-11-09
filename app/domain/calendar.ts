@@ -1,10 +1,12 @@
 import * as jalaali from 'jalaali-js';
+import type {
+	CalendarScrubberDay,
+	DayStatusColor,
+	JalaliMonthGridCell,
+	JalaliParts
+} from '~/domain/schemas';
 
-export interface JalaliParts {
-	jy: number;
-	jm: number;
-	jd: number;
-}
+export type { CalendarScrubberDay, JalaliMonthGridCell, JalaliParts };
 
 const PERSIAN_MONTHS = [
 	'فروردین',
@@ -216,24 +218,15 @@ export function formatJalaliHuman(
 	};
 }
 
-export interface CalendarScrubberDay<TStatus extends string = string> {
-	iso: string;
-	jd: number;
-	weekdayShort: string;
-	monthName: string;
-	isSelected: boolean;
-	visualState: TStatus;
-}
-
-export function buildRecentCalendarDays<TStatus extends string>(params: {
+export function buildRecentCalendarDays(params: {
 	currentDateIso: string;
 	todayIso: string;
-	savedStatusByIso: Map<string, TStatus>;
-	liveStatus: TStatus;
+	savedStatusByIso: Map<string, DayStatusColor>;
+	liveStatus: DayStatusColor;
 	useLiveStatusForSelected: boolean;
-	defaultStatus: TStatus;
+	defaultStatus: DayStatusColor;
 	daysCount?: number;
-}): CalendarScrubberDay<TStatus>[] {
+}): CalendarScrubberDay[] {
 	const {
 		currentDateIso,
 		todayIso,
@@ -245,7 +238,7 @@ export function buildRecentCalendarDays<TStatus extends string>(params: {
 	} = params;
 
 	const anchorIso = currentDateIso > todayIso ? currentDateIso : todayIso;
-	const list: CalendarScrubberDay<TStatus>[] = [];
+	const list: CalendarScrubberDay[] = [];
 
 	for (let i = daysCount - 1; i >= 0; i--) {
 		const iso = shiftIsoDate(anchorIso, -i);
@@ -282,15 +275,6 @@ export function getDaysUntilIso(fromIso: string, targetIso: string): number {
 	const d1 = isoToDate(fromIso);
 	const d2 = isoToDate(targetIso);
 	return Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-export interface JalaliMonthGridCell {
-	iso: string;
-	jy: number;
-	jm: number;
-	jd: number;
-	weekdayLabel: string;
-	isToday: boolean;
 }
 
 export function buildJalaliMonthGrid(

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
 import { detectNoteSmartSignals } from '~/core/note-signals';
 import { isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity } from '~/domain/schemas';
@@ -7,40 +6,21 @@ import { Check, Copy, ExternalLink, Pencil, Pin, Trash2 } from 'lucide-vue-next'
 
 interface Props {
 	note: NoteEntity;
+	isCopied?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+	isCopied: false
+});
 
 const emit = defineEmits<{
+	(e: 'copy', note: NoteEntity): void;
 	(e: 'edit', note: NoteEntity): void;
 	(e: 'togglePin', noteId: string, isPinned: boolean): void;
 	(e: 'delete', noteId: string): void;
 }>();
 
-const copied = ref(false);
-let copyTimer: ReturnType<typeof setTimeout> | null = null;
-
 const signals = computed(() => detectNoteSmartSignals(`${props.note.title} ${props.note.content}`));
-
-async function copyContent() {
-	try {
-		await navigator.clipboard.writeText(
-			props.note.title ? `${props.note.title}\n${props.note.content}` : props.note.content
-		);
-		copied.value = true;
-		if (copyTimer) clearTimeout(copyTimer);
-		copyTimer = setTimeout(() => {
-			copied.value = false;
-			copyTimer = null;
-		}, 1600);
-	} catch {
-		// ignore
-	}
-}
-
-onUnmounted(() => {
-	if (copyTimer) clearTimeout(copyTimer);
-});
 </script>
 
 <template>
@@ -63,9 +43,9 @@ onUnmounted(() => {
 						type="button"
 						class="flex h-8 w-8 items-center justify-center rounded-xl text-fg-muted transition hover:bg-elevated hover:text-fg active:scale-95"
 						title="کپی متن"
-						@click="copyContent"
+						@click="emit('copy', note)"
 					>
-						<Check v-if="copied" class="h-4 w-4 text-optimal" />
+						<Check v-if="isCopied" class="h-4 w-4 text-optimal" />
 						<Copy v-else class="h-4 w-4" />
 					</button>
 

@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { preloadRouteComponents } from '#app';
-import { computed, onMounted } from 'vue';
-import { useRoute } from 'vue-router';
 import { useSyncEngine } from '~/composables/useSyncEngine';
 import { useTheme } from '~/composables/useTheme';
 import { toPersianDigits } from '~/domain/calendar';

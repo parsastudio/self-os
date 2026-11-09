@@ -1,12 +1,9 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '../database/index';
-import crypto from 'node:crypto';
 import {
 	cadencePlans,
 	dailyEntries,
-	habitLifecycleEvents,
 	habitLogs,
-	habits,
 	reflectionTags
 } from '../database/schema';
 import { getAllHabits } from './habits.repo';

@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useRouter } from 'vue-router';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -9,7 +7,7 @@ import { useTheme } from '~/composables/useTheme';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { toPersianDigits } from '~/domain/calendar';
 import { isDemoRecordId } from '~/domain/demo-seed';
-import { DatabaseBackupPayloadSchema } from '~/domain/schemas';
+import { DatabaseBackupPayloadSchema, extractApiErrorInfo } from '~/domain/schemas';
 import {
 	AlertTriangle,
 	Check,
@@ -256,13 +254,10 @@ async function handleChangePassword() {
 		newPassword.value = '';
 		confirmNewPassword.value = '';
 	} catch (err: unknown) {
-		const statusMessage =
-			err && typeof err === 'object' && 'data' in err
-				? (err as { data?: { statusMessage?: string } }).data?.statusMessage
-				: undefined;
+		const info = extractApiErrorInfo(err, 'خطا در تغییر رمز');
 		passwordMessage.value = {
 			type: 'error',
-			text: statusMessage || (err instanceof Error ? err.message : 'خطا در تغییر رمز')
+			text: info.message
 		};
 	} finally {
 		isChangingPassword.value = false;

@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import type { HabitEntity } from '~/domain/schemas';
-import ArchitectSubHabitGrid from './ArchitectSubHabitGrid.vue';
+import ArchitectSubHabitGrid from '~/components/architect/ArchitectSubHabitGrid.vue';
 import { BarChart3, Clock, Pencil, Plus } from 'lucide-vue-next';
 
 interface Props {

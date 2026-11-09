@@ -34,7 +34,7 @@ import {
 	getMaxSupportedTier,
 	resolveEffectiveCadenceMinutes,
 	resolveHabitRuleSnapshot
-} from './habit-engine';
+} from '~/core/habit-engine';
 
 function resolveDateRangeWindow(
 	range: AnalyticsTimeRange,

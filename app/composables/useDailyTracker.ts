@@ -1,4 +1,4 @@
-import { ref, computed, watch, onScopeDispose, type Ref } from 'vue';
+import { onScopeDispose, type Ref } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -17,18 +17,14 @@ import {
 import { shiftIsoDate } from '~/domain/calendar';
 import { DEFAULT_REFLECTION_TAGS, TIER_SCORES } from '~/domain/constants';
 import type {
+	CadenceDraftItem,
 	DayStatusColor,
 	HabitEntity,
 	HabitLogItemInput,
 	SaveDailyEntryInput
 } from '~/domain/schemas';
 
-export interface CadenceDraftItem {
-	habitId: string;
-	plannedIntervals: number;
-	plannedMinutesPerInterval: number;
-	cadenceWindowMinutes: number;
-}
+export type { CadenceDraftItem };
 
 export function useDailyTracker(dateIso: Ref<string>) {
 	const db = useAppDatabase();
