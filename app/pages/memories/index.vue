@@ -14,6 +14,7 @@ const entries = useDexieLiveQuery(
 	[]
 );
 const isEntriesLoading = entries.isLoading;
+const entriesError = entries.error;
 
 const sortOrder = ref<'desc' | 'asc'>('desc');
 const searchQuery = ref('');
@@ -94,6 +95,13 @@ const displayedMemories = computed(() => {
 		</div>
 
 		<div
+			v-else-if="entriesError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ entriesError }}</p>
+		</div>
+
+		<div
 			v-else-if="entries.length === 0"
 			class="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
 		>
@@ -116,46 +124,63 @@ const displayedMemories = computed(() => {
 			موردی مطابق با عبارت جستجو شده یافت نشد.
 		</div>
 
-		<div v-else class="mx-auto max-w-3xl space-y-5">
-			<article
-				v-for="item in displayedMemories"
-				:key="item.dateIso"
-				class="group rounded-3xl border border-border bg-surface p-6 shadow-(--shadow-soft) transition hover:border-border-strong sm:p-8"
-			>
-				<header class="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-					<div class="flex items-center gap-3">
+		<NuxtErrorBoundary v-else>
+			<div class="mx-auto max-w-3xl space-y-5">
+				<article
+					v-for="item in displayedMemories"
+					:key="item.dateIso"
+					class="group rounded-3xl border border-border bg-surface p-6 shadow-(--shadow-soft) transition hover:border-border-strong sm:p-8"
+				>
+					<header class="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+						<div class="flex items-center gap-3">
+							<span
+								class="h-2.5 w-2.5 rounded-full"
+								:class="getDayStatusMeta(item.dayStatus).dotClass"
+								title="وضعیت روز"
+							></span>
+							<h2 class="text-lg font-black text-fg">{{ formatJalaliHuman(item.dateIso).fullLabel }}</h2>
+						</div>
+
+						<NuxtLink
+							:to="`/?date=${item.dateIso}`"
+							class="flex items-center gap-1.5 rounded-xl border border-border bg-elevated px-3 py-1.5 font-mono text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg"
+							title="مشاهده یا ویرایش این روز"
+						>
+							<Calendar class="h-3.5 w-3.5 text-fg-muted" />
+							<span dir="ltr">{{ toPersianDigits(isoToJalaliSlash(item.dateIso)) }}</span>
+						</NuxtLink>
+					</header>
+
+					<p class="whitespace-pre-line text-base leading-8 font-normal text-fg select-text">
+						{{ item.journalText }}
+					</p>
+
+					<footer v-if="item.tags.length > 0" class="mt-5 flex flex-wrap gap-1.5 pt-2">
 						<span
-							class="h-2.5 w-2.5 rounded-full"
-							:class="getDayStatusMeta(item.dayStatus).dotClass"
-							title="وضعیت روز"
-						></span>
-						<h2 class="text-lg font-black text-fg">{{ formatJalaliHuman(item.dateIso).fullLabel }}</h2>
-					</div>
+							v-for="tag in item.tags"
+							:key="tag"
+							class="rounded-xl bg-elevated px-2.5 py-1 text-[11px] font-bold text-fg-secondary"
+						>
+							#{{ tag }}
+						</span>
+					</footer>
+				</article>
+			</div>
 
-					<NuxtLink
-						:to="`/?date=${item.dateIso}`"
-						class="flex items-center gap-1.5 rounded-xl border border-border bg-elevated px-3 py-1.5 font-mono text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg"
-						title="مشاهده یا ویرایش این روز"
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در نمایش دفتر خاطرات' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
 					>
-						<Calendar class="h-3.5 w-3.5 text-fg-muted" />
-						<span dir="ltr">{{ toPersianDigits(isoToJalaliSlash(item.dateIso)) }}</span>
-					</NuxtLink>
-				</header>
-
-				<p class="whitespace-pre-line text-base leading-8 font-normal text-fg select-text">
-					{{ item.journalText }}
-				</p>
-
-				<footer v-if="item.tags.length > 0" class="mt-5 flex flex-wrap gap-1.5 pt-2">
-					<span
-						v-for="tag in item.tags"
-						:key="tag"
-						class="rounded-xl bg-elevated px-2.5 py-1 text-[11px] font-bold text-fg-secondary"
-					>
-						#{{ tag }}
-					</span>
-				</footer>
-			</article>
-		</div>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>

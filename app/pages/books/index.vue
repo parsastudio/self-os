@@ -20,6 +20,7 @@ const localRepo = useLocalRepository();
 
 const books = useDexieLiveQuery(() => db.books.orderBy('createdAtIso').reverse().toArray(), []);
 const isBooksLoading = books.isLoading;
+const booksError = books.error;
 
 const isModalOpen = ref(false);
 const isSubmittingBook = ref(false);
@@ -90,6 +91,13 @@ async function handleDeleteBook(bookId: string) {
 		</div>
 
 		<div
+			v-else-if="booksError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ booksError }}</p>
+		</div>
+
+		<div
 			v-else-if="books.length === 0"
 			class="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
 		>
@@ -100,7 +108,7 @@ async function handleDeleteBook(bookId: string) {
 			<p class="mt-1.5 text-sm text-fg-muted">اولین کتاب خود را در کتابخانه شخصی ثبت کنید.</p>
 			<button
 				type="button"
-				class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg transition hover:opacity-90 shadow-xs"
+				class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90"
 				@click="openCreateModal"
 			>
 				<Plus class="h-4 w-4" />
@@ -108,16 +116,33 @@ async function handleDeleteBook(bookId: string) {
 			</button>
 		</div>
 
-		<div v-else class="space-y-2.5">
-			<BookItemCard
-				v-for="book in books"
-				:key="book.id"
-				:book="book"
-				@edit="openEditModal"
-				@update-status="handleUpdateStatus"
-				@delete="handleDeleteBook"
-			/>
-		</div>
+		<NuxtErrorBoundary v-else>
+			<div class="space-y-2.5">
+				<BookItemCard
+					v-for="book in books"
+					:key="book.id"
+					:book="book"
+					@edit="openEditModal"
+					@update-status="handleUpdateStatus"
+					@delete="handleDeleteBook"
+				/>
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در نمایش فهرست کتاب‌ها' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 
 		<LazyBooksBookUpsertModal
 			v-if="isModalOpen"

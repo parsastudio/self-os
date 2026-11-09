@@ -1,6 +1,7 @@
 import { generateId } from '~/domain/calendar';
 import { COMPOSITE_FULL_LABEL, DEFAULT_HABIT_CATEGORY, TIER_SCORES } from '~/domain/constants';
 import type {
+	CompositeChildrenStatus,
 	CreateHabitInput,
 	DayStatusColor,
 	HabitEntity,
@@ -10,7 +11,8 @@ import type {
 	HabitTreeNode,
 	LifecycleEventEntity,
 	MutateHabitStructureInput,
-	SaveDailyEntryInput
+	SaveDailyEntryInput,
+	TierButtonDescriptor
 } from '~/domain/schemas';
 
 export function isDailyEntryEmpty(
@@ -307,6 +309,79 @@ export function getMaxSupportedTier(
 		return TIER_SCORES.SILVER;
 	}
 	return TIER_SCORES.BRONZE;
+}
+
+export function resolveCompositeChildrenState(
+	children: ReadonlyArray<HabitEntity>,
+	logsByHabitId: Record<string, HabitLogItemInput>,
+	fallbackMaxTier: 1 | 2 | 3 = 1
+): CompositeChildrenStatus {
+	if (children.length === 0) {
+		return {
+			uniformTier: null,
+			hasMixedTiers: false,
+			maxChildSupportedTier: fallbackMaxTier,
+			allLogged: false
+		};
+	}
+
+	const tiers = children.map((c) => logsByHabitId[c.id]?.achievedTier ?? null);
+	const first = tiers[0];
+	const uniformTier =
+		first !== null && first !== undefined && tiers.every((t) => t === first) ? first : null;
+	const hasAnyLogged = tiers.some((t) => t !== null && t !== undefined);
+	const allLogged = tiers.every((t) => t !== null && t !== undefined);
+	const maxChildSupportedTier = children.reduce<1 | 2 | 3>((acc, child) => {
+		const m = getMaxSupportedTier(child);
+		return m > acc ? m : acc;
+	}, 1);
+
+	return {
+		uniformTier,
+		hasMixedTiers: hasAnyLogged && uniformTier === null,
+		maxChildSupportedTier,
+		allLogged
+	};
+}
+
+export function buildTierButtonDescriptors(
+	supportedMaxTier: 1 | 2 | 3,
+	situational: boolean,
+	useBinaryBronzeLabel = false
+): TierButtonDescriptor[] {
+	const items: TierButtonDescriptor[] = [];
+	if (situational) {
+		items.push({
+			tier: TIER_SCORES.SKIPPED,
+			label: 'پیش نیامد',
+			minWidthClass: 'sm:px-3'
+		});
+	}
+	items.push({
+		tier: TIER_SCORES.FAILED,
+		label: 'نشد',
+		minWidthClass: 'sm:min-w-14 sm:px-3.5'
+	});
+	items.push({
+		tier: TIER_SCORES.BRONZE,
+		label: useBinaryBronzeLabel && supportedMaxTier === TIER_SCORES.BRONZE ? 'انجام شد' : 'برنز',
+		minWidthClass: 'sm:min-w-16 sm:px-3.5'
+	});
+	if (supportedMaxTier >= TIER_SCORES.SILVER) {
+		items.push({
+			tier: TIER_SCORES.SILVER,
+			label: 'نقره',
+			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+		});
+	}
+	if (supportedMaxTier === TIER_SCORES.GOLD) {
+		items.push({
+			tier: TIER_SCORES.GOLD,
+			label: 'طلا',
+			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+		});
+	}
+	return items;
 }
 
 export function computeCompositeParentDisplay(

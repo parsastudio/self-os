@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import { formatJalaliHuman, toPersianDigits } from '~/domain/calendar';
 import type { HabitEntity } from '~/domain/schemas';
 import { CalendarClock, Copy, Eraser, MessageSquarePlus, Sparkles } from 'lucide-vue-next';
@@ -28,15 +28,25 @@ const emit = defineEmits<{
 const showReflectionDrawer = ref(false);
 const showTomorrowDrawer = ref(false);
 const isSavedTomorrowToast = ref(false);
+let tomorrowToastTimer: ReturnType<typeof setTimeout> | null = null;
 
 function handleSaveTomorrow() {
 	emit('saveTomorrowPlans');
 	isSavedTomorrowToast.value = true;
-	setTimeout(() => {
+	if (tomorrowToastTimer) clearTimeout(tomorrowToastTimer);
+	tomorrowToastTimer = setTimeout(() => {
 		isSavedTomorrowToast.value = false;
 		showTomorrowDrawer.value = false;
+		tomorrowToastTimer = null;
 	}, 900);
 }
+
+onUnmounted(() => {
+	if (tomorrowToastTimer) {
+		clearTimeout(tomorrowToastTimer);
+		tomorrowToastTimer = null;
+	}
+});
 
 const tomorrowHuman = computed(() => formatJalaliHuman(props.tomorrowIso));
 const activeNotesBadgeCount = computed(

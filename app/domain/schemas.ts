@@ -87,6 +87,21 @@ export const HabitTreeNodeSchema = HabitEntitySchema.extend({
 });
 export type HabitTreeNode = z.infer<typeof HabitTreeNodeSchema>;
 
+export const TierButtonDescriptorSchema = z.object({
+	tier: z.number().int(),
+	label: z.string(),
+	minWidthClass: z.string()
+});
+export type TierButtonDescriptor = z.infer<typeof TierButtonDescriptorSchema>;
+
+export const CompositeChildrenStatusSchema = z.object({
+	uniformTier: z.number().int().nullable(),
+	hasMixedTiers: z.boolean(),
+	maxChildSupportedTier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+	allLogged: z.boolean()
+});
+export type CompositeChildrenStatus = z.infer<typeof CompositeChildrenStatusSchema>;
+
 export const CadencePlanEntitySchema = z.object({
 	id: z.string(),
 	dateIso: z.string(),

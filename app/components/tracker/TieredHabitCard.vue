@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { getMaxSupportedTier, resolveHabitRuleSnapshot } from '~/core/habit-engine';
+import {
+	buildTierButtonDescriptors,
+	getMaxSupportedTier,
+	resolveCompositeChildrenState,
+	resolveHabitRuleSnapshot
+} from '~/core/habit-engine';
 import { COMPOSITE_FULL_LABEL, TIER_SCORES } from '~/domain/constants';
 import type { HabitLogItemInput, HabitTreeNode } from '~/domain/schemas';
 import { Check, ChevronDown, ChevronUp, Minus, X } from 'lucide-vue-next';
@@ -28,38 +33,19 @@ const hasSituationalGroup = computed(
 	() => Boolean(props.node.isSituational) || props.node.children.some((c) => Boolean(c.isSituational))
 );
 
-const uniformChildrenTier = computed<number | null>(() => {
-	if (!hasChildren.value) return null;
-	const tiers = props.node.children.map((c) => props.logsByHabitId[c.id]?.achievedTier ?? null);
-	const first = tiers[0];
-	if (first === null || first === undefined) return null;
-	return tiers.every((t) => t === first) ? first : null;
-});
+const compositeState = computed(() =>
+	resolveCompositeChildrenState(props.node.children, props.logsByHabitId, maxTier.value)
+);
 
-const hasMixedChildren = computed<boolean>(() => {
-	if (!hasChildren.value) return false;
-	const tiers = props.node.children.map((c) => props.logsByHabitId[c.id]?.achievedTier ?? null);
-	const hasAnyLogged = tiers.some((t) => t !== null && t !== undefined);
-	return hasAnyLogged && uniformChildrenTier.value === null;
-});
+const uniformChildrenTier = computed<number | null>(() => compositeState.value.uniformTier);
+const hasMixedChildren = computed<boolean>(() => compositeState.value.hasMixedTiers);
+const maxChildSupportedTier = computed<1 | 2 | 3>(() => compositeState.value.maxChildSupportedTier);
 
-const maxChildSupportedTier = computed<1 | 2 | 3>(() => {
-	if (!hasChildren.value) return maxTier.value;
-	return props.node.children.reduce<1 | 2 | 3>((acc, child) => {
-		const m = getMaxSupportedTier(child);
-		return m > acc ? m : acc;
-	}, 1);
-});
-
-const isNodeLogged = computed(() => {
-	if (hasChildren.value) {
-		return props.node.children.every((c) => {
-			const t = props.logsByHabitId[c.id]?.achievedTier;
-			return t !== null && t !== undefined;
-		});
-	}
-	return currentTier.value !== null && currentTier.value !== undefined;
-});
+const isNodeLogged = computed(() =>
+	hasChildren.value
+		? compositeState.value.allLogged
+		: currentTier.value !== null && currentTier.value !== undefined
+);
 
 const activeRuleSubtitle = computed(() => {
 	if (hasChildren.value) {
@@ -98,51 +84,7 @@ function getOptionStyle(selected: number | null, target: number): string {
 	return 'bg-gold text-on-solid font-black shadow-xs';
 }
 
-interface TierButtonDescriptor {
-	tier: number;
-	label: string;
-	minWidthClass: string;
-}
-
-function getTierButtons(
-	supportedMaxTier: 1 | 2 | 3,
-	situational: boolean,
-	useBinaryBronzeLabel = false
-): TierButtonDescriptor[] {
-	const items: TierButtonDescriptor[] = [];
-	if (situational) {
-		items.push({
-			tier: TIER_SCORES.SKIPPED,
-			label: 'پیش نیامد',
-			minWidthClass: 'sm:px-3'
-		});
-	}
-	items.push({
-		tier: TIER_SCORES.FAILED,
-		label: 'نشد',
-		minWidthClass: 'sm:min-w-14 sm:px-3.5'
-	});
-	items.push({
-		tier: TIER_SCORES.BRONZE,
-		label: useBinaryBronzeLabel && supportedMaxTier === TIER_SCORES.BRONZE ? 'انجام شد' : 'برنز',
-		minWidthClass: 'sm:min-w-16 sm:px-3.5'
-	});
-	if (supportedMaxTier >= TIER_SCORES.SILVER) {
-		items.push({
-			tier: TIER_SCORES.SILVER,
-			label: 'نقره',
-			minWidthClass: 'sm:min-w-16 sm:px-3.5'
-		});
-	}
-	if (supportedMaxTier === TIER_SCORES.GOLD) {
-		items.push({
-			tier: TIER_SCORES.GOLD,
-			label: 'طلا',
-			minWidthClass: 'sm:min-w-16 sm:px-3.5'
-		});
-	}
-	return items;
-}
+const getTierButtons = buildTierButtonDescriptors;
 </script>
 
 <template>

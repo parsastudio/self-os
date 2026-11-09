@@ -20,6 +20,7 @@ const localRepo = useLocalRepository();
 
 const mediaItems = useDexieLiveQuery(() => db.media.orderBy('createdAtIso').reverse().toArray(), []);
 const isMediaLoading = mediaItems.isLoading;
+const mediaError = mediaItems.error;
 
 const categoryFilter = ref<MediaCategory | 'ALL'>('ALL');
 const statusFilter = ref<MediaStatusFilter>('ALL');
@@ -126,6 +127,13 @@ async function handleDeleteMedia(mediaId: string) {
 		</div>
 
 		<div
+			v-else-if="mediaError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ mediaError }}</p>
+		</div>
+
+		<div
 			v-else-if="mediaItems.length === 0"
 			class="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
 		>
@@ -136,7 +144,7 @@ async function handleDeleteMedia(mediaId: string) {
 			<p class="mt-1.5 text-sm text-fg-muted">برای شروع، اولین اثر را وارد آرشیو خود کنید.</p>
 			<button
 				type="button"
-				class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg transition hover:opacity-90 shadow-xs"
+				class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90"
 				@click="openCreateModal"
 			>
 				<Plus class="h-4 w-4" />
@@ -148,16 +156,33 @@ async function handleDeleteMedia(mediaId: string) {
 			موردی با این فیلتر یافت نشد.
 		</div>
 
-		<div v-else class="space-y-2.5">
-			<MediaItemCard
-				v-for="item in filteredItems"
-				:key="item.id"
-				:item="item"
-				@edit="openEditModal"
-				@update-status="handleUpdateStatus"
-				@delete="handleDeleteMedia"
-			/>
-		</div>
+		<NuxtErrorBoundary v-else>
+			<div class="space-y-2.5">
+				<MediaItemCard
+					v-for="item in filteredItems"
+					:key="item.id"
+					:item="item"
+					@edit="openEditModal"
+					@update-status="handleUpdateStatus"
+					@delete="handleDeleteMedia"
+				/>
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در نمایش آرشیو فیلم و انیمه' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 
 		<LazyMediaUpsertModal
 			v-if="isModalOpen"

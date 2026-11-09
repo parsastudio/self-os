@@ -22,6 +22,7 @@ const db = useAppDatabase();
 const localRepo = useLocalRepository();
 const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
 const isHabitsLoading = habits.isLoading;
+const habitsError = habits.error;
 
 const activeModal = ref<'create' | 'edit' | null>(null);
 const isSubmittingHabit = ref(false);
@@ -112,21 +113,65 @@ async function handleUpdateHabit(payload: MutateHabitStructureInput) {
 			<div v-for="idx in 4" :key="idx" class="h-48 animate-pulse rounded-3xl border border-border bg-surface"></div>
 		</div>
 
-		<!-- گرید کارت‌های طرح‌های اصلی -->
-		<div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2">
-			<ArchitectHabitCard
-				v-for="habit in rootHabits"
-				:key="habit.id"
-				:habit="habit"
-				:children="getChildren(habit.id)"
-				@create-sub-habit="openCreateModal"
-				@edit-habit="openEditModal"
-				@open-stats="(habitId) => router.push({ path: '/analytics', query: { habit: habitId } })"
-			/>
+		<div
+			v-else-if="habitsError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ habitsError }}</p>
 		</div>
 
-		<!-- بخش کشویی طرح‌های بایگانی‌شده -->
-		<ArchivedHabitsSection :archived-habits="archivedHabits" @edit-habit="openEditModal" />
+		<NuxtErrorBoundary v-else>
+			<div class="space-y-8">
+				<div
+					v-if="rootHabits.length === 0"
+					class="flex min-h-72 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
+				>
+					<h2 class="text-base font-extrabold text-fg">هنوز طرح فعالی تعریف نشده است</h2>
+					<p class="mt-1.5 text-sm text-fg-muted">
+						اولین طرح سطح‌بندی‌شده، مجموعه‌طرح یا طرح ریتمی خود را ایجاد کنید.
+					</p>
+					<button
+						type="button"
+						class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90"
+						@click="openCreateModal('')"
+					>
+						<Plus class="h-4 w-4" />
+						<span>ایجاد اولین طرح</span>
+					</button>
+				</div>
+
+				<!-- گرید کارت‌های طرح‌های اصلی -->
+				<div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2">
+					<ArchitectHabitCard
+						v-for="habit in rootHabits"
+						:key="habit.id"
+						:habit="habit"
+						:children="getChildren(habit.id)"
+						@create-sub-habit="openCreateModal"
+						@edit-habit="openEditModal"
+						@open-stats="(habitId) => router.push({ path: '/analytics', query: { habit: habitId } })"
+					/>
+				</div>
+
+				<!-- بخش کشویی طرح‌های بایگانی‌شده -->
+				<ArchivedHabitsSection :archived-habits="archivedHabits" @edit-habit="openEditModal" />
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در نمایش ساختار طرح‌ها' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 
 		<!-- مودال درج و ویرایش طرح -->
 		<LazyArchitectHabitUpsertModal

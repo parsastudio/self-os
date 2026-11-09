@@ -24,11 +24,16 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 }
 
+let previousBodyOverflow = '';
+
 onMounted(() => {
+	previousBodyOverflow = document.body.style.overflow;
+	document.body.style.overflow = 'hidden';
 	window.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
+	document.body.style.overflow = previousBodyOverflow;
 	window.removeEventListener('keydown', handleKeydown);
 });
 </script>

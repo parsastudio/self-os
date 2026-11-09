@@ -21,6 +21,7 @@ const localRepo = useLocalRepository();
 
 const rawNotes = useDexieLiveQuery(() => db.notes.orderBy('updatedAtIso').reverse().toArray(), []);
 const isNotesLoading = rawNotes.isLoading;
+const notesError = rawNotes.error;
 
 const notes = computed(() =>
 	[...rawNotes.value].sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0))
@@ -244,6 +245,13 @@ async function handleDeleteNote(noteId: string) {
 		</div>
 
 		<div
+			v-else-if="notesError"
+			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
+		>
+			<p class="text-sm font-extrabold text-failed">{{ notesError }}</p>
+		</div>
+
+		<div
 			v-else-if="notes.length === 0"
 			class="flex min-h-80 flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-surface p-12 text-center"
 		>
@@ -256,7 +264,7 @@ async function handleDeleteNote(noteId: string) {
 			</p>
 			<button
 				type="button"
-				class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg transition hover:opacity-90 shadow-xs"
+				class="mt-5 inline-flex h-11 items-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90"
 				@click="openCreateModal"
 			>
 				<Plus class="h-4 w-4" />
@@ -271,18 +279,35 @@ async function handleDeleteNote(noteId: string) {
 			موردی با این فیلتر یا عبارت جستجو یافت نشد.
 		</div>
 
-		<div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-			<NoteItemCard
-				v-for="note in filteredNotes"
-				:key="note.id"
-				:note="note"
-				:is-copied="copiedNoteId === note.id"
-				@copy="handleCopyNote"
-				@edit="openEditModal"
-				@toggle-pin="handleTogglePin"
-				@delete="handleDeleteNote"
-			/>
-		</div>
+		<NuxtErrorBoundary v-else>
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+				<NoteItemCard
+					v-for="note in filteredNotes"
+					:key="note.id"
+					:note="note"
+					:is-copied="copiedNoteId === note.id"
+					@copy="handleCopyNote"
+					@edit="openEditModal"
+					@toggle-pin="handleTogglePin"
+					@delete="handleDeleteNote"
+				/>
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در نمایش یادداشت‌ها' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 
 		<LazyNotesNoteUpsertModal
 			v-if="isModalOpen"

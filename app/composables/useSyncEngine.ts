@@ -18,6 +18,7 @@ let hasQueuedSyncDuringFlight = false;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let periodicPollTimer: ReturnType<typeof setInterval> | null = null;
+let unsubscribeMutationStaged: (() => void) | null = null;
 let retryAttempt = 0;
 
 export function useSyncEngine() {
@@ -178,7 +179,10 @@ export function useSyncEngine() {
 		isInitialized = true;
 		isOnline.value = navigator.onLine;
 
-		onLocalMutationStaged(() => {
+		if (unsubscribeMutationStaged) {
+			unsubscribeMutationStaged();
+		}
+		unsubscribeMutationStaged = onLocalMutationStaged(() => {
 			void notifyLocalMutationStaged();
 		});
 
@@ -218,6 +222,9 @@ export function useSyncEngine() {
 			}
 		});
 
+		if (periodicPollTimer) {
+			clearInterval(periodicPollTimer);
+		}
 		periodicPollTimer = setInterval(() => {
 			if (document.visibilityState === 'visible' && isOnline.value && !isSyncInFlight) {
 				void syncNow({ checkRemoteUpdates: true });
