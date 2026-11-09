@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type {
 	BookEntity,
@@ -13,6 +14,7 @@ import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
+const { todayIso } = useLiveTodayIso();
 
 const books = useDexieLiveQuery(() => db.books.orderBy('createdAtIso').reverse().toArray(), []);
 const isBooksLoading = books.isLoading;
@@ -192,6 +194,7 @@ async function handleDeleteBook(bookId: string) {
 		<LazyBooksBookUpsertModal
 			v-if="isModalOpen"
 			:key="editingBook?.id ?? 'new'"
+			:today-iso="todayIso"
 			:editing-book="editingBook"
 			:existing-suggestions="existingSuggestions"
 			:is-submitting="isSubmittingBook"

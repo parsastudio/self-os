@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import {
 	buildRecentCalendarDays,
 	formatJalaliHuman,
@@ -13,6 +12,8 @@ import { Check, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-vue-next';
 
 interface Props {
 	currentDateIso: string;
+	todayIso: string;
+	yesterdayIso: string;
 	recentEntries?: Array<{
 		dateIso: string;
 		dayStatus: DayStatusColor;
@@ -38,8 +39,7 @@ const emit = defineEmits<{
 	(e: 'retrySave'): void;
 }>();
 
-const { todayIso, yesterdayIso } = useLiveTodayIso();
-const human = computed(() => formatJalaliHuman(props.currentDateIso, todayIso.value));
+const human = computed(() => formatJalaliHuman(props.currentDateIso, props.todayIso));
 const prevDayIso = computed(() => shiftIsoDate(props.currentDateIso, -1));
 const nextDayIso = computed(() => shiftIsoDate(props.currentDateIso, 1));
 
@@ -48,7 +48,7 @@ const savedStatusByIso = computed(() => new Map(props.recentEntries.map((e) => [
 const calendarDays = computed(() =>
 	buildRecentCalendarDays({
 		currentDateIso: props.currentDateIso,
-		todayIso: todayIso.value,
+		todayIso: props.todayIso,
 		savedStatusByIso: savedStatusByIso.value,
 		liveStatus: props.liveDayStatus,
 		useLiveStatusForSelected: props.isLiveDirty || props.hasExistingEntry,

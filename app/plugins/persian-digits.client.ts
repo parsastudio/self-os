@@ -1,11 +1,17 @@
 import { toPersianDigits } from '~/domain/calendar';
 
-const handlerMap = new WeakMap<HTMLElement, () => void>();
+const handlerMap = new WeakMap<
+	HTMLElement,
+	{
+		onInput: (e: Event) => void;
+		onCompositionEnd: () => void;
+	}
+>();
 
 export default defineNuxtPlugin((nuxtApp) => {
 	nuxtApp.vueApp.directive('persian-digits', {
 		mounted(el: HTMLInputElement | HTMLTextAreaElement) {
-			const handleInput = () => {
+			const normalizeElementValue = () => {
 				const start = el.selectionStart;
 				const end = el.selectionEnd;
 				const original = el.value;
@@ -16,17 +22,27 @@ export default defineNuxtPlugin((nuxtApp) => {
 					if (start !== null && end !== null) {
 						el.setSelectionRange(start, end);
 					}
-					el.dispatchEvent(new Event('input', { bubbles: true }));
 				}
 			};
 
-			handlerMap.set(el, handleInput);
-			el.addEventListener('input', handleInput);
+			const onInput = (e: Event) => {
+				if ((e as InputEvent).isComposing) return;
+				normalizeElementValue();
+			};
+
+			const onCompositionEnd = () => {
+				normalizeElementValue();
+			};
+
+			handlerMap.set(el, { onInput, onCompositionEnd });
+			el.addEventListener('input', onInput, { capture: true });
+			el.addEventListener('compositionend', onCompositionEnd, { capture: true });
 		},
 		unmounted(el: HTMLInputElement | HTMLTextAreaElement) {
-			const handler = handlerMap.get(el);
-			if (handler) {
-				el.removeEventListener('input', handler);
+			const handlers = handlerMap.get(el);
+			if (handlers) {
+				el.removeEventListener('input', handlers.onInput, { capture: true });
+				el.removeEventListener('compositionend', handlers.onCompositionEnd, { capture: true });
 				handlerMap.delete(el);
 			}
 		}

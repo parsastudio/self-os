@@ -13,16 +13,20 @@ interface Props {
 const props = defineProps<Props>();
 
 const emit = defineEmits<{
-	(e: 'updateActual', habitId: string, minutes: number): void;
+	(e: 'updateActual', habitId: string, minutes: number | null): void;
 }>();
 
 const plannedMinutes = computed(() =>
 	props.log?.plannedMinutesSnapshot && props.log.plannedMinutesSnapshot > 0
 		? props.log.plannedMinutesSnapshot
-		: 0
+		: props.habit.defaultMinutesPerInterval > 0
+			? props.habit.defaultMinutesPerInterval
+			: 0
 );
 
-const actualMinutes = computed(() => props.log?.actualMinutesPerInterval ?? 0);
+const actualMinutes = computed(() =>
+	props.log?.actualMinutesPerInterval !== undefined ? props.log.actualMinutesPerInterval : null
+);
 const effectiveTotalMinutes = computed(() => resolveEffectiveCadenceMinutes(props.log));
 
 const progressPercent = computed(() =>
@@ -91,13 +95,13 @@ const quickPresets = computed(() => {
 								: 'text-fg-secondary hover:bg-surface hover:text-fg'
 					"
 					:title="
-						actualMinutes === preset && preset !== 0
-							? 'کلیک مجدد برای صفر کردن'
+						actualMinutes === preset
+							? 'کلیک مجدد برای لغو ثبت'
 							: preset === plannedMinutes && preset > 0
 								? `هدف تعیین‌شده (${toPersianDigits(preset)} دقیقه)`
 								: ''
 					"
-					@click="emit('updateActual', habit.id, actualMinutes === preset && preset !== 0 ? 0 : preset)"
+					@click="emit('updateActual', habit.id, actualMinutes === preset ? null : preset)"
 				>
 					{{ preset === 0 ? 'صفر' : toPersianDigits(preset) }}
 				</button>
@@ -112,7 +116,15 @@ const quickPresets = computed(() => {
 							: 'text-bronze-text hover:bg-surface'
 					"
 					:title="habit.emergencyMinDesc"
-					@click="emit('updateActual', habit.id, CADENCE_DEFAULTS.EMERGENCY_MINUTES)"
+					@click="
+						emit(
+							'updateActual',
+							habit.id,
+							actualMinutes === CADENCE_DEFAULTS.EMERGENCY_MINUTES
+								? null
+								: CADENCE_DEFAULTS.EMERGENCY_MINUTES
+						)
+					"
 				>
 					<Flame class="h-3.5 w-3.5" />
 					<span>{{ toPersianDigits(CADENCE_DEFAULTS.EMERGENCY_MINUTES) }}</span>

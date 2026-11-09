@@ -9,7 +9,7 @@ import { BarChart3 } from 'lucide-vue-next';
 const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
-const { yesterdayIso } = useLiveTodayIso();
+const { todayIso } = useLiveTodayIso();
 
 const selectedRange = computed<AnalyticsTimeRange>(() => {
 	const r = route.query.range as AnalyticsTimeRange | undefined;
@@ -53,7 +53,7 @@ const report = computed(() =>
 		lifecycleEvents: lifecycleEvents.value,
 		selectedHabitId: selectedHabitId.value,
 		range: selectedRange.value,
-		fallbackEndDateIso: yesterdayIso.value
+		fallbackEndDateIso: todayIso.value
 	})
 );
 

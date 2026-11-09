@@ -422,7 +422,8 @@ function buildEvolutionTimelineForHabit(
 
 function computeStreaksFromSeries(
 	series: ReadonlyArray<{ dateIso?: string; outcome: DayHabitOutcome }>,
-	habitCreatedDateIso?: string
+	habitCreatedDateIso?: string,
+	graceEndDateIso?: string
 ): {
 	currentStreak: number;
 	bestStreak: number;
@@ -464,7 +465,11 @@ function computeStreaksFromSeries(
 			currentStreak++;
 		} else if (out === 'skipped') {
 			continue;
-		} else if (out === 'unlogged' && i === series.length - 1) {
+		} else if (
+			out === 'unlogged' &&
+			i === series.length - 1 &&
+			(!graceEndDateIso || pt.dateIso === graceEndDateIso)
+		) {
 			continue;
 		} else {
 			break;
@@ -621,7 +626,8 @@ export function buildFullAnalyticsReport(params: {
 					}));
 		const { currentStreak, bestStreak } = computeStreaksFromSeries(
 			fullStreakSeries,
-			habitCreatedDateIso
+			habitCreatedDateIso,
+			fallbackEndDateIso
 		);
 
 		const relevantIds = new Set([h.id, ...children.map((c) => c.id)]);
@@ -758,7 +764,8 @@ export function buildFullAnalyticsReport(params: {
 				}
 			: computeStreaksFromSeries(
 					dailySeries,
-					targetHabit.createdAtIso ? targetHabit.createdAtIso.slice(0, 10) : ''
+					targetHabit.createdAtIso ? targetHabit.createdAtIso.slice(0, 10) : '',
+					fallbackEndDateIso
 				);
 
 		const weekdayBuckets = Array.from({ length: 7 }, (_, idx) => ({

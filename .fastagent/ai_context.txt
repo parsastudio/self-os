@@ -53,6 +53,7 @@ self-os
         ├── 📄 useClientAuth.ts
         ├── 📄 useDailyTracker.ts
         ├── 📄 useDexieLiveQuery.ts
+        ├── 📄 useLiveTodayIso.ts
         ├── 📄 useLocalBackupOperations.ts
         ├── 📄 useLocalRepository.ts
         ├── 📄 useSyncEngine.ts
@@ -62,12 +63,12 @@ self-os
         ├── 📄 backup-merger.ts
         ├── 📄 calendar-engine.ts
         ├── 📄 chart-math.ts
+        ├── 📄 demo-seed.ts
         ├── 📄 habit-engine.ts
         ├── 📄 note-signals.ts
     ├── 📁 domain
         ├── 📄 calendar.ts
         ├── 📄 constants.ts
-        ├── 📄 demo-seed.ts
         ├── 📄 schemas.ts
         ├── 📄 tags.ts
     ├── 📁 layouts
@@ -99,6 +100,7 @@ self-os
     ├── 📁 plugins
         ├── 📄 persian-digits.client.ts
     ├── 📁 utils
+        ├── 📄 clone.ts
         ├── 📄 ui-tokens.ts
 ├── 📁 data
 ├── 📄 docker-compose.yml
@@ -237,7 +239,17 @@ const DEFAULT_SESSION_HMAC_DOMAIN_KEY = 'newlife-personal-os-session-v2-domain-k
 
 function getActiveSessionHmacKey(): string {
 	const envSecret = process.env.SESSION_HMAC_SECRET?.trim();
-	return envSecret && envSecret.length >= 16 ? envSecret : DEFAULT_SESSION_HMAC_DOMAIN_KEY;
+	if (envSecret && envSecret.length >= 16) {
+		return envSecret;
+	}
+	const dbUrlFallback = process.env.DATABASE_URL?.trim();
+	if (dbUrlFallback && dbUrlFallback.length >= 16) {
+		return crypto
+			.createHmac('sha256', DEFAULT_SESSION_HMAC_DOMAIN_KEY)
+			.update(dbUrlFallback)
+			.digest('hex');
+	}
+	return DEFAULT_SESSION_HMAC_DOMAIN_KEY;
 }
 
 export const SESSION_COOKIE_NAME = 'newlife_session';
@@ -588,14 +600,31 @@ export async function getReflectionTags(): Promise<string[]> {
 
 export type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
 
+const MAX_CLOCK_SKEW_MS = 60 * 1000;
+
+export function clampClientTimestampIso(
+	candidateIso: string | null | undefined,
+	referenceNowMs = Date.now()
+): string {
+	const fallbackIso = new Date(referenceNowMs).toISOString();
+	if (!candidateIso) return fallbackIso;
+	const parsedMs = Date.parse(candidateIso);
+	if (Number.isNaN(parsedMs)) return fallbackIso;
+	if (parsedMs > referenceNowMs + MAX_CLOCK_SKEW_MS) {
+		return fallbackIso;
+	}
+	return new Date(parsedMs).toISOString();
+}
+
 export async function saveDailyEntryAndLogs(
 	input: SaveDailyEntryInput,
 	preloadedHabitMap?: ReadonlyMap<string, HabitEntity>,
 	txExecutor?: DbExecutor
 ): Promise<void> {
 	await ensureDatabaseReady();
-	const nowIso = new Date().toISOString();
-	const entryUpdatedAtIso = input.updatedAtIso || nowIso;
+	const nowMs = Date.now();
+	const nowIso = new Date(nowMs).toISOString();
+	const entryUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
 	const normalizedJournal = input.journalText?.trim() ? input.journalText.trim() : null;
 	const habitMap =
 		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
@@ -607,6 +636,16 @@ export async function saveDailyEntryAndLogs(
 			.where(eq(dailyEntries.dateIso, input.dateIso))
 			.limit(1);
 		const existing = existingRows[0];
+
+		if (isDailyEntryEmpty(input)) {
+			if (existing && input.updatedAtIso && entryUpdatedAtIso < existing.updatedAtIso) {
+				return;
+			}
+			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
+			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
+			await bumpServerStructuralVersion(nowIso, tx);
+			return;
+		}
 
 		if (existing) {
 			if (!input.updatedAtIso || entryUpdatedAtIso >= existing.updatedAtIso) {
@@ -631,13 +670,6 @@ export async function saveDailyEntryAndLogs(
 				tagsJson: JSON.stringify(input.tags),
 				updatedAtIso: entryUpdatedAtIso
 			});
-		}
-
-		if (isDailyEntryEmpty(input)) {
-			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
-			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
-			await bumpServerStructuralVersion(nowIso, tx);
-			return;
 		}
 
 		const previousLogs = await tx
@@ -666,17 +698,23 @@ export async function saveDailyEntryAndLogs(
 				continue;
 			}
 
+			const sanitizedLogUpdatedAtIso = log.updatedAtIso
+				? clampClientTimestampIso(log.updatedAtIso, nowMs)
+				: entryUpdatedAtIso;
+
 			if (
 				prev?.updatedAtIso &&
-				log.updatedAtIso &&
-				log.updatedAtIso < prev.updatedAtIso
+				sanitizedLogUpdatedAtIso < prev.updatedAtIso
 			) {
 				continue;
 			}
 
 			const resolvedLogValues = resolveDailyHabitLogSnapshot({
 				habit,
-				log,
+				log: {
+					...log,
+					updatedAtIso: sanitizedLogUpdatedAtIso
+				},
 				previousLog: prev,
 				fallbackUpdatedAtIso: nowIso
 			});
@@ -708,16 +746,19 @@ export async function saveDailyEntryAndLogs(
 
 export async function saveCadencePlansForDate(
 	input: SaveCadencePlanBatch,
-	preloadedHabitMap?: Map<string, HabitEntity>,
+	_preloadedHabitMap?: Map<string, HabitEntity>,
 	txExecutor?: DbExecutor
 ): Promise<void> {
 	await ensureDatabaseReady();
-	const nowIso = new Date().toISOString();
-	const habitMap =
-		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
+	const nowMs = Date.now();
+	const nowIso = new Date(nowMs).toISOString();
+	const batchUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
 
 	const applyOperations = async (tx: DbExecutor) => {
 		for (const item of input.items) {
+			const itemUpdatedAtIso = item.updatedAtIso
+				? clampClientTimestampIso(item.updatedAtIso, nowMs)
+				: batchUpdatedAtIso;
 			const existingRows = await tx
 				.select()
 				.from(cadencePlans)
@@ -729,6 +770,13 @@ export async function saveCadencePlansForDate(
 				)
 				.limit(1);
 			const existing = existingRows[0];
+
+			if (
+				existing?.updatedAtIso &&
+				itemUpdatedAtIso < existing.updatedAtIso
+			) {
+				continue;
+			}
 
 			if (item.plannedMinutesPerInterval <= 0) {
 				if (existing) {
@@ -745,7 +793,7 @@ export async function saveCadencePlansForDate(
 						plannedIntervals: item.plannedIntervals,
 						plannedMinutesPerInterval: item.plannedMinutesPerInterval,
 						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: nowIso
+						updatedAtIso: itemUpdatedAtIso
 					})
 					.where(eq(cadencePlans.id, existing.id));
 			} else {
@@ -756,7 +804,7 @@ export async function saveCadencePlansForDate(
 					plannedIntervals: item.plannedIntervals,
 					plannedMinutesPerInterval: item.plannedMinutesPerInterval,
 					cadenceWindowMinutes: item.cadenceWindowMinutes,
-					updatedAtIso: nowIso
+					updatedAtIso: itemUpdatedAtIso
 				});
 			}
 		}
@@ -796,7 +844,7 @@ import {
 } from '~~/server/database/schema';
 import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
-import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/demo-seed';
+import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/constants';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
 async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
@@ -815,7 +863,7 @@ async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
 function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
 	const cols = getTableColumns(table);
 	const excludeSet = new Set(excludeKeys);
-	const updateSet: Record<string, unknown> = {};
+	const updateSet: Record<string, ReturnType<typeof sql.raw>> = {};
 
 	for (const [propKey, col] of Object.entries(cols)) {
 		if (!excludeSet.has(propKey)) {
@@ -943,10 +991,10 @@ export async function importDatabaseFromJson(
 		skippedDuplicatesCount = merged.skippedDuplicatesCount;
 
 		const UPSERT_CHUNK_SIZE = 400;
-		const batchUpsertRows = async <T extends Record<string, unknown>>(
-			table: PgTable,
+		const batchUpsertRows = async <TTable extends PgTable>(
+			table: TTable,
 			targetCols: PgColumn | PgColumn[],
-			rows: ReadonlyArray<T>,
+			rows: ReadonlyArray<TTable['$inferInsert']>,
 			excludeKeys: string[] = ['id']
 		) => {
 			if (rows.length === 0) return;
@@ -955,7 +1003,7 @@ export async function importDatabaseFromJson(
 				const chunk = rows.slice(offset, offset + UPSERT_CHUNK_SIZE);
 				await tx
 					.insert(table)
-					.values(chunk as Record<string, unknown>[])
+					.values(chunk)
 					.onConflictDoUpdate({
 						target: targetCols,
 						set: conflictSet
@@ -1028,6 +1076,7 @@ import {
 } from '~~/server/database/schema';
 import { getAllHabits } from '~~/server/repositories/habits.repo';
 import {
+	clampClientTimestampIso,
 	type DbExecutor,
 	getReflectionTags,
 	saveCadencePlansForDate,
@@ -1130,81 +1179,119 @@ export async function processClientSyncRequest(
 		const allHabitsList = await getAllHabits();
 		const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
 
+		const nowMs = Date.now();
 		await db.transaction(async (tx) => {
 			for (const mutation of sortedMutations) {
+				const safeQueuedIso = clampClientTimestampIso(mutation.queuedAtIso, nowMs);
 				if (mutation.kind === 'SAVE_DAILY_ENTRY') {
 					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
 					await saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'UPSERT_BOOK') {
+					const payload = {
+						...mutation.payload,
+						updatedAtIso: clampClientTimestampIso(
+							mutation.payload.updatedAtIso ?? safeQueuedIso,
+							nowMs
+						)
+					};
 					await tx
 						.insert(books)
-						.values(mutation.payload)
+						.values(payload)
 						.onConflictDoUpdate({
 							target: books.id,
-							set: mutation.payload,
+							set: payload,
 							setWhere: sql`${books.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${books.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_BOOK') {
 					await tx.delete(books).where(eq(books.id, mutation.payload.bookId));
-					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
+					await bumpServerStructuralVersion(safeQueuedIso, tx);
 				} else if (mutation.kind === 'UPSERT_MEDIA') {
+					const payload = {
+						...mutation.payload,
+						updatedAtIso: clampClientTimestampIso(
+							mutation.payload.updatedAtIso ?? safeQueuedIso,
+							nowMs
+						)
+					};
 					await tx
 						.insert(mediaLogs)
-						.values(mutation.payload)
+						.values(payload)
 						.onConflictDoUpdate({
 							target: mediaLogs.id,
-							set: mutation.payload,
+							set: payload,
 							setWhere: sql`${mediaLogs.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${mediaLogs.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_MEDIA') {
 					await tx
 						.delete(mediaLogs)
 						.where(eq(mediaLogs.id, mutation.payload.mediaId));
-					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
+					await bumpServerStructuralVersion(safeQueuedIso, tx);
 				} else if (mutation.kind === 'UPSERT_NOTE') {
+					const payload = {
+						...mutation.payload,
+						updatedAtIso: clampClientTimestampIso(mutation.payload.updatedAtIso, nowMs)
+					};
 					await tx
 						.insert(notes)
-						.values(mutation.payload)
+						.values(payload)
 						.onConflictDoUpdate({
 							target: notes.id,
-							set: mutation.payload,
+							set: payload,
 							setWhere: sql`excluded.updated_at_iso >= ${notes.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_NOTE') {
 					await tx.delete(notes).where(eq(notes.id, mutation.payload.noteId));
-					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
+					await bumpServerStructuralVersion(safeQueuedIso, tx);
 				} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
+					const payload = {
+						...mutation.payload,
+						updatedAtIso: clampClientTimestampIso(
+							mutation.payload.updatedAtIso ?? safeQueuedIso,
+							nowMs
+						)
+					};
 					await tx
 						.insert(calendarEvents)
-						.values(mutation.payload)
+						.values(payload)
 						.onConflictDoUpdate({
 							target: calendarEvents.id,
-							set: mutation.payload,
+							set: payload,
 							setWhere: sql`${calendarEvents.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${calendarEvents.updatedAtIso}`
 						});
 				} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
 					await tx
 						.delete(calendarEvents)
 						.where(eq(calendarEvents.id, mutation.payload.eventId));
-					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
+					await bumpServerStructuralVersion(safeQueuedIso, tx);
 				} else if (mutation.kind === 'UPSERT_HABIT') {
+					const payload = {
+						...mutation.payload,
+						updatedAtIso: clampClientTimestampIso(
+							mutation.payload.updatedAtIso ?? safeQueuedIso,
+							nowMs
+						)
+					};
 					await tx
 						.insert(habits)
-						.values(mutation.payload)
+						.values(payload)
 						.onConflictDoUpdate({
 							target: habits.id,
-							set: mutation.payload,
+							set: payload,
 							setWhere: sql`${habits.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${habits.updatedAtIso}`
 						});
-					preloadedHabitMap.set(mutation.payload.id, mutation.payload);
+					preloadedHabitMap.set(payload.id, payload);
 				} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
+					const payload = {
+						...mutation.payload,
+						createdAtIso: clampClientTimestampIso(mutation.payload.createdAtIso, nowMs)
+					};
 					await tx
 						.insert(habitLifecycleEvents)
-						.values(mutation.payload)
+						.values(payload)
 						.onConflictDoUpdate({
 							target: habitLifecycleEvents.id,
-							set: mutation.payload
+							set: payload
 						});
 				} else if (mutation.kind === 'UPSERT_REFLECTION_TAGS') {
 					for (const tagItem of mutation.payload) {
@@ -1218,7 +1305,7 @@ export async function processClientSyncRequest(
 								}
 							});
 					}
-					await bumpServerStructuralVersion(mutation.queuedAtIso, tx);
+					await bumpServerStructuralVersion(safeQueuedIso, tx);
 				}
 				appliedMutationIds.push(mutation.id);
 			}
@@ -1427,7 +1514,7 @@ PATH: server/database/index.ts
 
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import * as schema from './schema';
+import * as schema from '~~/server/database/schema';
 
 const connectionString =
 	process.env.DATABASE_URL ||
@@ -1943,7 +2030,7 @@ PATH: server/api/backup/demo-seed.post.ts
 
 import { defineEventHandler, readBody, createError } from 'h3';
 import { importDatabaseFromJson, removeDemoSeedFromServer } from '~~/server/repositories/backup.repo';
-import { buildDemoSeedDataset } from '~/domain/demo-seed';
+import { buildDemoSeedDataset } from '~/core/demo-seed';
 import { DemoSeedActionSchema } from '~/domain/schemas';
 
 export default defineEventHandler(async (event) => {
@@ -2079,26 +2166,50 @@ function pruneExpiredLoginAttempts(now: number): void {
 	}
 }
 
+function isPrivateOrLoopbackIp(ip: string): boolean {
+	const normalized = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+	if (
+		normalized === '127.0.0.1' ||
+		normalized === '::1' ||
+		normalized === 'local' ||
+		normalized.startsWith('127.') ||
+		normalized.startsWith('10.') ||
+		normalized.startsWith('192.168.') ||
+		normalized.startsWith('fc') ||
+		normalized.startsWith('fd') ||
+		normalized.startsWith('fe80:')
+	) {
+		return true;
+	}
+	const match172 = normalized.match(/^172\.(\d{1,3})\./);
+	if (match172) {
+		const secondOctet = Number(match172[1]);
+		if (secondOctet >= 16 && secondOctet <= 31) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function resolveClientRateLimitKey(event: H3Event): string {
-	const socketIp = (event.node.req.socket?.remoteAddress || 'local').slice(0, 45);
+	const socketIp = (event.node.req.socket?.remoteAddress || 'local').trim().slice(0, 45);
+	if (!isPrivateOrLoopbackIp(socketIp)) {
+		return socketIp;
+	}
+
+	const cfConnectingIp = getRequestHeader(event, 'cf-connecting-ip')?.trim().slice(0, 45);
 	const realIpHeader = getRequestHeader(event, 'x-real-ip')?.trim().slice(0, 45);
 	const forwardedParts = getRequestHeader(event, 'x-forwarded-for')
 		?.split(',')
 		.map((part) => part.trim())
 		.filter(Boolean);
-	const lastForwardedIp = forwardedParts?.length
-		? forwardedParts[forwardedParts.length - 1]?.slice(0, 45)
-		: undefined;
+	const firstPublicForwardedIp =
+		forwardedParts?.find((ip) => !isPrivateOrLoopbackIp(ip))?.slice(0, 45) ??
+		forwardedParts?.[0]?.slice(0, 45);
 
-	const isLocalReverseProxy =
-		socketIp === '127.0.0.1' ||
-		socketIp === '::1' ||
-		socketIp.startsWith('::ffff:127.') ||
-		socketIp.startsWith('::ffff:172.') ||
-		socketIp.startsWith('172.');
-
-	if (isLocalReverseProxy && (realIpHeader || lastForwardedIp)) {
-		return `${socketIp}:${realIpHeader || lastForwardedIp}`;
+	const resolvedClientIp = cfConnectingIp || realIpHeader || firstPublicForwardedIp;
+	if (resolvedClientIp) {
+		return `proxy:${resolvedClientIp}`;
 	}
 	return socketIp;
 }
@@ -2324,6 +2435,9 @@ PATH: .env.example
 # PostgreSQL Connection String (VPS, Docker, Neon, or Supabase)
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/personal_os"
 
+# Secret key for HMAC session token hashing (min 16 chars)
+SESSION_HMAC_SECRET="replace-with-a-strong-random-32-byte-secret"
+
 # Optional Port Override
 APP_PORT=3000
 
@@ -2467,6 +2581,21 @@ jobs:
             fi
 
             FINAL_DB_URL="postgresql://${PG_USER}:${PG_PASS}@${DB_HOST}:5432/${DB_NAME}"
+            EXISTING_HMAC=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' new-life-app 2>/dev/null | grep '^SESSION_HMAC_SECRET=' | cut -d'=' -f2- || true)
+            if [ -z "$EXISTING_HMAC" ]; then
+              EXISTING_HMAC=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)
+            fi
+
+            ENV_FILE=$(mktemp /tmp/new-life-env.XXXXXX)
+            chmod 600 "$ENV_FILE"
+            cat <<EOF > "$ENV_FILE"
+            NODE_ENV=production
+            NITRO_HOST=0.0.0.0
+            NITRO_PORT=3000
+            TZ=Asia/Tehran
+            DATABASE_URL=${FINAL_DB_URL}
+            SESSION_HMAC_SECRET=${EXISTING_HMAC}
+            EOF
 
             docker pull "$IMAGE_TAG"
             docker stop new-life-app || true
@@ -2477,13 +2606,10 @@ jobs:
               --restart unless-stopped \
               $NETWORK_ARG \
               -p 127.0.0.1:3090:3000 \
-              -e NODE_ENV=production \
-              -e NITRO_HOST=0.0.0.0 \
-              -e NITRO_PORT=3000 \
-              -e TZ=Asia/Tehran \
-              -e DATABASE_URL="$FINAL_DB_URL" \
+              --env-file "$ENV_FILE" \
               "$IMAGE_TAG"
 
+            rm -f "$ENV_FILE"
             docker image prune -f
 
 
@@ -2653,19 +2779,21 @@ PATH: app/core/habit-engine.ts
 
 import { generateId } from '~/domain/calendar';
 import { COMPOSITE_FULL_LABEL, DEFAULT_HABIT_CATEGORY, TIER_SCORES } from '~/domain/constants';
-import type {
-	CompositeChildrenStatus,
-	CreateHabitInput,
-	DayStatusColor,
-	HabitEntity,
-	HabitHistoricalSpec,
-	HabitLogItemInput,
-	HabitRuleDiffItem,
-	HabitTreeNode,
-	LifecycleEventEntity,
-	MutateHabitStructureInput,
-	SaveDailyEntryInput,
-	TierButtonDescriptor
+import {
+	HabitLifecycleStateSnapshotSchema,
+	type CompositeChildrenStatus,
+	type CreateHabitInput,
+	type DayStatusColor,
+	type HabitEntity,
+	type HabitHistoricalSpec,
+	type HabitLifecycleStateSnapshot,
+	type HabitLogItemInput,
+	type HabitRuleDiffItem,
+	type HabitTreeNode,
+	type LifecycleEventEntity,
+	type MutateHabitStructureInput,
+	type SaveDailyEntryInput,
+	type TierButtonDescriptor
 } from '~/domain/schemas';
 
 export function isDailyEntryEmpty(
@@ -3222,7 +3350,11 @@ export function computeDailyCompletionStats(params: {
 
 export function evaluateDayStatusColor(
 	habits: HabitEntity[],
-	logs: HabitLogItemInput[]
+	logs: HabitLogItemInput[],
+	options?: {
+		dateIso?: string;
+		scheduledCadenceHabitIds?: ReadonlySet<string>;
+	}
 ): DayStatusColor {
 	if (logs.length === 0) return 'failed';
 
@@ -3239,14 +3371,25 @@ export function evaluateDayStatusColor(
 			)
 			.map((l) => l.habitId)
 	);
+	const dateIso = options?.dateIso;
+	const scheduledCadenceSet = options?.scheduledCadenceHabitIds;
 	const habitById = new Map(habits.map((h) => [h.id, h]));
 	const trackable = habits.filter((h) => {
 		const isLogged = loggedIds.has(h.id);
-		if (h.trackingMode === 'interval_cadence' && !isLogged) return false;
-		if (h.status !== 'active' && !isLogged) return false;
+		if (isLogged) {
+			const hasChildren = habits.some((child) => child.parentId === h.id);
+			return !hasChildren;
+		}
+		if (dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
+			return false;
+		}
+		if (h.trackingMode === 'interval_cadence') {
+			return Boolean(scheduledCadenceSet?.has(h.id));
+		}
+		if (h.status !== 'active') return false;
 		if (h.parentId) {
 			const parent = habitById.get(h.parentId);
-			if ((!parent || parent.status !== 'active') && !isLogged) return false;
+			if (!parent || parent.status !== 'active') return false;
 		}
 		const hasChildren = habits.some((child) => child.parentId === h.id);
 		return !hasChildren;
@@ -3301,33 +3444,37 @@ export function extractLifecycleRuleDiffs(
 ): HabitRuleDiffItem[] {
 	if (!prevJson || !newJson) return [];
 	try {
-		const prev = JSON.parse(prevJson) as Record<string, unknown>;
-		const next = JSON.parse(newJson) as Record<string, unknown>;
+		const prevParsed = HabitLifecycleStateSnapshotSchema.safeParse(JSON.parse(prevJson));
+		const nextParsed = HabitLifecycleStateSnapshotSchema.safeParse(JSON.parse(newJson));
+		if (!prevParsed.success || !nextParsed.success) return [];
+
+		const prev = prevParsed.data;
+		const next = nextParsed.data;
 		const diffs: HabitRuleDiffItem[] = [];
 
 		const trackingMode = String(next.trackingMode ?? prev.trackingMode ?? 'tiered');
 		const isCadence = trackingMode === 'interval_cadence';
 
-		const baseFields: Array<{ key: string; label: string }> = [
+		const baseFields: Array<{ key: keyof HabitLifecycleStateSnapshot; label: string }> = [
 			{ key: 'title', label: 'عنوان طرح' },
 			{ key: 'scheduleLabel', label: 'زمان انجام' },
 			...(isCadence
-				? [
+				? ([
 						{ key: 'emergencyMinDesc', label: 'حداقل اضطراری' },
 						{ key: 'defaultMinutesPerInterval', label: 'دقیقه هدف در هر بازه' },
 						{ key: 'cadenceWindowMinutes', label: 'پنجره زمانی تکرار (دقیقه)' }
-					]
-				: [
+					] as const)
+				: ([
 						{ key: 'bronzeDesc', label: 'شرط برنز (حداقل)' },
 						{ key: 'silverDesc', label: 'شرط نقره' },
 						{ key: 'goldDesc', label: 'شرط طلا' }
-					]),
+					] as const)),
 			{ key: 'status', label: 'وضعیت طرح' },
 			{ key: 'notes', label: 'تبصره طرح' }
 		];
 
 		for (const f of baseFields) {
-			if (!(f.key in next)) continue;
+			if (next[f.key] === undefined) continue;
 
 			let oldVal = String(prev[f.key] ?? '').trim();
 			let newVal = String(next[f.key] ?? '').trim();
@@ -4399,20 +4546,37 @@ function buildEvolutionTimelineForHabit(
 }
 
 function computeStreaksFromSeries(
-	series: ReadonlyArray<{ outcome: DayHabitOutcome }>
+	series: ReadonlyArray<{ dateIso?: string; outcome: DayHabitOutcome }>,
+	habitCreatedDateIso?: string
 ): {
 	currentStreak: number;
 	bestStreak: number;
 } {
 	let bestStreak = 0;
 	let running = 0;
+	let hasSeenFirstActivity = false;
 
-	for (const pt of series) {
+	for (let i = 0; i < series.length; i++) {
+		const pt = series[i];
+		if (!pt) continue;
+		const isFinalDay = i === series.length - 1;
+
 		if (pt.outcome === 'gold' || pt.outcome === 'silver' || pt.outcome === 'bronze') {
+			hasSeenFirstActivity = true;
 			running++;
 			if (running > bestStreak) bestStreak = running;
+		} else if (pt.outcome === 'skipped') {
+			continue;
 		} else if (pt.outcome === 'failed') {
+			hasSeenFirstActivity = true;
 			running = 0;
+		} else if (pt.outcome === 'unlogged') {
+			if (isFinalDay) continue;
+			const isAfterCreation =
+				!habitCreatedDateIso || !pt.dateIso || pt.dateIso >= habitCreatedDateIso;
+			if (hasSeenFirstActivity && isAfterCreation) {
+				running = 0;
+			}
 		}
 	}
 
@@ -4426,7 +4590,6 @@ function computeStreaksFromSeries(
 		} else if (out === 'skipped') {
 			continue;
 		} else if (out === 'unlogged' && i === series.length - 1) {
-			// Allow the final day in window to be unlogged if the user hasn't logged it yet
 			continue;
 		} else {
 			break;
@@ -4496,6 +4659,11 @@ export function buildFullAnalyticsReport(params: {
 		fallbackEndDateIso
 	);
 
+	const { dateList: allTimeDateList } =
+		range === 'all'
+			? { dateList }
+			: resolveDateRangeWindow('all', entries, logs, habits, fallbackEndDateIso);
+
 	const sortedHabits = [...habits].sort((a, b) => {
 		if (a.status === 'archived' && b.status !== 'archived') return 1;
 		if (a.status !== 'archived' && b.status === 'archived') return -1;
@@ -4563,7 +4731,23 @@ export function buildFullAnalyticsReport(params: {
 				: 0;
 
 		const trendDelta = computeTrendDelta(validScores, avgQualityScore);
-		const { currentStreak, bestStreak } = computeStreaksFromSeries(seriesScores);
+		const habitCreatedDateIso = h.createdAtIso ? h.createdAtIso.slice(0, 10) : '';
+		const fullStreakSeries =
+			range === 'all'
+				? seriesScores.map((s) => ({ dateIso: s.iso, outcome: s.outcome }))
+				: allTimeDateList.map((dIso) => ({
+						dateIso: dIso,
+						outcome: evaluateHabitDay(
+							h,
+							children,
+							logsByDate.get(dIso),
+							entryByDate.has(dIso)
+						).outcome
+					}));
+		const { currentStreak, bestStreak } = computeStreaksFromSeries(
+			fullStreakSeries,
+			habitCreatedDateIso
+		);
 
 		const relevantIds = new Set([h.id, ...children.map((c) => c.id)]);
 		const lifecycleChangesCount = lifecycleEvents.filter(
@@ -4689,7 +4873,18 @@ export function buildFullAnalyticsReport(params: {
 
 		const trendDelta = computeTrendDelta(recentValidScores, avgQualityScore);
 
-		const { currentStreak, bestStreak } = computeStreaksFromSeries(dailySeries);
+		const targetComparisonRow = comparisonRows.find(
+			(r) => r.habit.id === targetHabit.id
+		);
+		const { currentStreak, bestStreak } = targetComparisonRow
+			? {
+					currentStreak: targetComparisonRow.currentStreak,
+					bestStreak: targetComparisonRow.bestStreak
+				}
+			: computeStreaksFromSeries(
+					dailySeries,
+					targetHabit.createdAtIso ? targetHabit.createdAtIso.slice(0, 10) : ''
+				);
 
 		const weekdayBuckets = Array.from({ length: 7 }, (_, idx) => ({
 			weekdayIndex: idx,
@@ -5093,6 +5288,392 @@ export function assembleJalaliMonthArchive(params: {
 		leadingEmptyCells: grid.leadingEmptyCells,
 		selectedIso: defaultSelectedIso,
 		days: daysAggregate
+	};
+}
+
+
+----------------------------------------------------------------
+
+================================================================
+PATH: app/core/demo-seed.ts
+================================================================
+
+import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, shiftIsoDate } from '~/domain/calendar';
+import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX, isDemoRecordId } from '~/domain/constants';
+import { evaluateDayStatusColor, resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
+import type {
+	BookEntity,
+	CadencePlanEntity,
+	CalendarEventEntity,
+	DatabaseBackupPayload,
+	HabitEntity,
+	HabitLogItemInput,
+	LifecycleEventEntity,
+	MediaEntity,
+	NoteEntity
+} from '~/domain/schemas';
+
+export { DEMO_ENTRY_TAG, DEMO_ID_PREFIX, isDemoRecordId };
+
+export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): DatabaseBackupPayload {
+	const nowIso = new Date().toISOString();
+	const startIso = shiftIsoDate(referenceTodayIso, -6);
+
+	const habits: HabitEntity[] = [
+		{
+			id: 'demo:habit-workout',
+			parentId: null,
+			title: 'ورزش و تحرک صبحگاهی (آزمایشی)',
+			category: 'سلامت',
+			trackingMode: 'tiered',
+			timeSlot: 'morning',
+			isSituational: false,
+			status: 'active',
+			scheduleLabel: 'بعد از بیدار شدن',
+			notes: 'حداقل نرمش کششی روزانه برای شروع پرانرژی',
+			bronzeDesc: '۱۰ دقیقه نرمش کششی',
+			silverDesc: '۲۰ دقیقه ورزش هوازی',
+			goldDesc: '۳۵ دقیقه تمرین کامل',
+			emergencyMinDesc: null,
+			defaultIntervals: 1,
+			defaultMinutesPerInterval: 0,
+			cadenceWindowMinutes: 60,
+			sortOrder: 101,
+			createdAtIso: startIso,
+			updatedAtIso: nowIso
+		},
+		{
+			id: 'demo:habit-deep-work',
+			parentId: null,
+			title: 'تمرین تمرکز عمیق (آزمایشی)',
+			category: 'کار',
+			trackingMode: 'interval_cadence',
+			timeSlot: 'day',
+			isSituational: false,
+			status: 'active',
+			scheduleLabel: 'در طول روز بدون گوشی',
+			notes: null,
+			bronzeDesc: null,
+			silverDesc: null,
+			goldDesc: null,
+			emergencyMinDesc: 'حداقل ۵ دقیقه تمرکز پیوسته',
+			defaultIntervals: 1,
+			defaultMinutesPerInterval: 20,
+			cadenceWindowMinutes: 60,
+			sortOrder: 102,
+			createdAtIso: startIso,
+			updatedAtIso: nowIso
+		},
+		{
+			id: 'demo:habit-night-routine',
+			parentId: null,
+			title: 'روتین آرامش شبانه (آزمایشی)',
+			category: 'رشد فردی',
+			trackingMode: 'tiered',
+			timeSlot: 'night',
+			isSituational: false,
+			status: 'active',
+			scheduleLabel: 'یک ساعت قبل از خواب',
+			notes: 'مجموعه‌طرح نمونه برای تست زیرطرح‌ها',
+			bronzeDesc: null,
+			silverDesc: null,
+			goldDesc: null,
+			emergencyMinDesc: null,
+			defaultIntervals: 1,
+			defaultMinutesPerInterval: 0,
+			cadenceWindowMinutes: 60,
+			sortOrder: 103,
+			createdAtIso: startIso,
+			updatedAtIso: nowIso
+		},
+		{
+			id: 'demo:habit-sub-reading',
+			parentId: 'demo:habit-night-routine',
+			title: 'مطالعه آزاد شبانه (آزمایشی)',
+			category: 'یادگیری',
+			trackingMode: 'tiered',
+			timeSlot: 'night',
+			isSituational: false,
+			status: 'active',
+			scheduleLabel: 'قبل از خواب',
+			notes: null,
+			bronzeDesc: '۵ صفحه کتاب',
+			silverDesc: '۱۰ صفحه کتاب',
+			goldDesc: '۲۰ صفحه کتاب',
+			emergencyMinDesc: null,
+			defaultIntervals: 1,
+			defaultMinutesPerInterval: 0,
+			cadenceWindowMinutes: 60,
+			sortOrder: 104,
+			createdAtIso: startIso,
+			updatedAtIso: nowIso
+		},
+		{
+			id: 'demo:habit-sub-review',
+			parentId: 'demo:habit-night-routine',
+			title: 'مرور و برنامه‌ریزی فردا (آزمایشی)',
+			category: 'رشد فردی',
+			trackingMode: 'tiered',
+			timeSlot: 'night',
+			isSituational: false,
+			status: 'active',
+			scheduleLabel: 'پایان شب',
+			notes: null,
+			bronzeDesc: 'ثبت وضعیت روز',
+			silverDesc: 'ثبت وضعیت + اولویت فردا',
+			goldDesc: 'مرور کامل روز و نوشتن خاطره',
+			emergencyMinDesc: null,
+			defaultIntervals: 1,
+			defaultMinutesPerInterval: 0,
+			cadenceWindowMinutes: 60,
+			sortOrder: 105,
+			createdAtIso: startIso,
+			updatedAtIso: nowIso
+		}
+	];
+
+	const habitMap = new Map(habits.map((h) => [h.id, h]));
+
+	const lifecycleEvents: LifecycleEventEntity[] = habits.map((h) => ({
+		id: `demo:lifecycle:${h.id}`,
+		habitId: h.id,
+		habitTitleSnapshot: h.title,
+		eventType: h.parentId ? 'CONVERTED_TO_SUBHABIT' : 'CREATED',
+		effectiveDateIso: h.createdAtIso,
+		summary: h.parentId
+			? `ایجاد زیرطرح آزمایشی «${h.title}»`
+			: `ایجاد طرح آزمایشی «${h.title}»`,
+		reason: 'تزریق داده‌های آزمایشی جهت بررسی عملکرد سیستم',
+		previousStateJson: null,
+		newStateJson: JSON.stringify(h),
+		createdAtIso: nowIso
+	}));
+
+	const dailyPatterns: ReadonlyArray<{
+		offset: number;
+		workoutTier: number;
+		deepMinutes: number;
+		readingTier: number;
+		reviewTier: number;
+		journal: string | null;
+	}> = [
+		{ offset: -6, workoutTier: 2, deepMinutes: 15, readingTier: 2, reviewTier: 3, journal: 'روز اول تست سیستم؛ ساختار سطح‌بندی طرح‌ها حس خوبی دارد.' },
+		{ offset: -5, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: null },
+		{ offset: -4, workoutTier: 1, deepMinutes: 10, readingTier: 1, reviewTier: 2, journal: 'امروز کمی خسته بودم اما حداقل‌های برنزی را حفظ کردم.' },
+		{ offset: -3, workoutTier: 3, deepMinutes: 25, readingTier: 3, reviewTier: 3, journal: null },
+		{ offset: -2, workoutTier: 0, deepMinutes: 0, readingTier: 1, reviewTier: 1, journal: null },
+		{ offset: -1, workoutTier: 3, deepMinutes: 20, readingTier: 2, reviewTier: 3, journal: 'بازگشت به ریتم مطلوب و تکمیل تمرکز عمیق.' },
+		{ offset: 0, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: 'ثبت آزمایشی امروز برای بررسی نمودارها و تقویم.' }
+	];
+
+	const dailyEntries: DatabaseBackupPayload['data']['dailyEntries'] = [];
+	const habitLogs: DatabaseBackupPayload['data']['habitLogs'] = [];
+	const cadencePlans: CadencePlanEntity[] = [];
+
+	for (const pat of dailyPatterns) {
+		const dateIso = shiftIsoDate(referenceTodayIso, pat.offset);
+		const dayUpdatedIso = `${dateIso}T20:00:00.000Z`;
+
+		cadencePlans.push({
+			id: `demo:plan:${dateIso}:demo:habit-deep-work`,
+			dateIso,
+			habitId: 'demo:habit-deep-work',
+			plannedIntervals: 1,
+			plannedMinutesPerInterval: 20,
+			cadenceWindowMinutes: 60,
+			updatedAtIso: dayUpdatedIso
+		});
+
+		const rawDayLogs: HabitLogItemInput[] = [
+			{
+				habitId: 'demo:habit-workout',
+				habitTitleSnapshot: habitMap.get('demo:habit-workout')!.title,
+				achievedTier: pat.workoutTier,
+				achievedRuleSnapshot: resolveHabitRuleSnapshot(habitMap.get('demo:habit-workout')!, pat.workoutTier),
+				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-workout')!),
+				completedIntervals: null,
+				actualMinutesPerInterval: null,
+				totalActualMinutes: null,
+				plannedIntervalsSnapshot: null,
+				plannedMinutesSnapshot: null,
+				updatedAtIso: dayUpdatedIso
+			},
+			{
+				habitId: 'demo:habit-deep-work',
+				habitTitleSnapshot: habitMap.get('demo:habit-deep-work')!.title,
+				achievedTier: pat.deepMinutes >= 20 ? 3 : pat.deepMinutes > 0 ? 1 : 0,
+				achievedRuleSnapshot: `${pat.deepMinutes} دقیقه از هدف ۲۰ دقیقه`,
+				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-deep-work')!),
+				completedIntervals: 1,
+				actualMinutesPerInterval: pat.deepMinutes,
+				totalActualMinutes: pat.deepMinutes,
+				plannedIntervalsSnapshot: 1,
+				plannedMinutesSnapshot: 20,
+				updatedAtIso: dayUpdatedIso
+			},
+			{
+				habitId: 'demo:habit-sub-reading',
+				habitTitleSnapshot: habitMap.get('demo:habit-sub-reading')!.title,
+				achievedTier: pat.readingTier,
+				achievedRuleSnapshot: resolveHabitRuleSnapshot(habitMap.get('demo:habit-sub-reading')!, pat.readingTier),
+				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-sub-reading')!),
+				completedIntervals: null,
+				actualMinutesPerInterval: null,
+				totalActualMinutes: null,
+				plannedIntervalsSnapshot: null,
+				plannedMinutesSnapshot: null,
+				updatedAtIso: dayUpdatedIso
+			},
+			{
+				habitId: 'demo:habit-sub-review',
+				habitTitleSnapshot: habitMap.get('demo:habit-sub-review')!.title,
+				achievedTier: pat.reviewTier,
+				achievedRuleSnapshot: resolveHabitRuleSnapshot(habitMap.get('demo:habit-sub-review')!, pat.reviewTier),
+				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-sub-review')!),
+				completedIntervals: null,
+				actualMinutesPerInterval: null,
+				totalActualMinutes: null,
+				plannedIntervalsSnapshot: null,
+				plannedMinutesSnapshot: null,
+				updatedAtIso: dayUpdatedIso
+			}
+		];
+
+		for (const l of rawDayLogs) {
+			habitLogs.push({
+				id: `demo:log:${dateIso}:${l.habitId}`,
+				dateIso,
+				habitId: l.habitId,
+				habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+				achievedTier: l.achievedTier,
+				achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+				habitSnapshotJson: l.habitSnapshotJson ?? null,
+				completedIntervals: l.completedIntervals,
+				actualMinutesPerInterval: l.actualMinutesPerInterval,
+				totalActualMinutes: l.totalActualMinutes,
+				plannedIntervalsSnapshot: l.plannedIntervalsSnapshot,
+				plannedMinutesSnapshot: l.plannedMinutesSnapshot,
+				updatedAtIso: l.updatedAtIso ?? dayUpdatedIso
+			});
+		}
+
+		const status = evaluateDayStatusColor(habits, rawDayLogs, {
+			dateIso,
+			scheduledCadenceHabitIds: new Set(['demo:habit-deep-work'])
+		});
+		dailyEntries.push({
+			id: `demo:entry:${dateIso}`,
+			dateIso,
+			dayStatus: status,
+			reflectionNote: 'ثبت آزمایشی جهت بررسی نمودارها',
+			journalText: pat.journal,
+			tagsJson: JSON.stringify([DEMO_ENTRY_TAG, status === 'optimal' ? 'انگیزه بالا' : 'خستگی']),
+			updatedAtIso: dayUpdatedIso
+		});
+	}
+
+	const books: BookEntity[] = [
+		{
+			id: 'demo:book-1',
+			title: 'کار عمیق (Deep Work) - آزمایشی',
+			author: 'کال نیوپورت',
+			status: 'completed',
+			startedAtIso: startIso,
+			finishedAtIso: referenceTodayIso,
+			rating: 5,
+			notes: 'نمونه کتاب آزمایشی برای بررسی کتابخانه و تقویم',
+			createdAtIso: nowIso,
+			updatedAtIso: nowIso
+		},
+		{
+			id: 'demo:book-2',
+			title: 'هنر شفاف اندیشیدن - آزمایشی',
+			author: 'رولف دوبلی',
+			status: 'reading',
+			startedAtIso: shiftIsoDate(referenceTodayIso, -2),
+			finishedAtIso: null,
+			rating: 4,
+			notes: 'در حال مطالعه (آزمایشی)',
+			createdAtIso: nowIso,
+			updatedAtIso: nowIso
+		}
+	];
+
+	const media: MediaEntity[] = [
+		{
+			id: 'demo:media-1',
+			title: 'Interstellar (آزمایشی)',
+			category: 'movie',
+			status: 'completed',
+			startedAtIso: shiftIsoDate(referenceTodayIso, -3),
+			finishedAtIso: shiftIsoDate(referenceTodayIso, -3),
+			rating: 5,
+			notes: 'نمونه فیلم ثبت‌شده در آرشیو آزمایشی',
+			createdAtIso: nowIso,
+			updatedAtIso: nowIso
+		},
+		{
+			id: 'demo:media-2',
+			title: 'Attack on Titan (آزمایشی)',
+			category: 'anime',
+			status: 'on_hold',
+			startedAtIso: null,
+			finishedAtIso: null,
+			rating: 5,
+			notes: 'نمونه اثر در نوبت تماشا',
+			createdAtIso: nowIso,
+			updatedAtIso: nowIso
+		}
+	];
+
+	const notes: NoteEntity[] = [
+		{
+			id: 'demo:note-1',
+			title: 'مستندات رسمی Nuxt (یادداشت آزمایشی)',
+			content: 'لینک مستقیم بررسی مستندات:\nhttps://nuxt.com/docs\nشماره پیگیری نمونه: 9876543210',
+			category: 'ابزارها',
+			isPinned: true,
+			createdAtIso: nowIso,
+			updatedAtIso: nowIso
+		}
+	];
+
+	const tomorrowIso = shiftIsoDate(referenceTodayIso, 1);
+	const tomorrowParts = isoToJalaliParts(tomorrowIso);
+
+	const calendarEvents: CalendarEventEntity[] = [
+		{
+			id: 'demo:event-1',
+			title: 'ارزیابی هفتگی سیستم (رویداد آزمایشی)',
+			eventType: 'reminder',
+			isAnnual: false,
+			dateIso: tomorrowIso,
+			jalaliMonth: tomorrowParts.jm,
+			jalaliDay: tomorrowParts.jd,
+			isCompleted: false,
+			notes: 'نمونه رویداد برای تست بنر یادآور صفحه اصلی و تقویم',
+			createdAtIso: nowIso,
+			updatedAtIso: nowIso
+		}
+	];
+
+	return {
+		version: 1,
+		appName: 'new-life',
+		exportedAtIso: nowIso,
+		jalaliDate: isoToJalaliSlash(referenceTodayIso),
+		data: {
+			habits,
+			dailyEntries,
+			habitLogs,
+			cadencePlans,
+			books,
+			media,
+			notes,
+			calendarEvents,
+			lifecycleEvents,
+			reflectionTags: []
+		}
 	};
 }
 
@@ -5557,11 +6138,73 @@ export function useClientAuth() {
 ----------------------------------------------------------------
 
 ================================================================
+PATH: app/composables/useLiveTodayIso.ts
+================================================================
+
+import { getTodayIso, shiftIsoDate } from '~/domain/calendar';
+
+const liveTodayIso = ref(getTodayIso());
+let activeSubscribers = 0;
+let checkIntervalId: ReturnType<typeof setInterval> | null = null;
+
+function refreshTodayIso() {
+	const current = getTodayIso();
+	if (liveTodayIso.value !== current) {
+		liveTodayIso.value = current;
+	}
+}
+
+function handleVisibilityOrFocus() {
+	if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+		refreshTodayIso();
+	}
+}
+
+export function useLiveTodayIso() {
+	if (import.meta.client) {
+		refreshTodayIso();
+
+		onMounted(() => {
+			activeSubscribers++;
+			if (activeSubscribers === 1) {
+				window.addEventListener('focus', handleVisibilityOrFocus);
+				document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+				checkIntervalId = setInterval(refreshTodayIso, 30 * 1000);
+			}
+		});
+
+		onScopeDispose(() => {
+			activeSubscribers = Math.max(0, activeSubscribers - 1);
+			if (activeSubscribers === 0) {
+				window.removeEventListener('focus', handleVisibilityOrFocus);
+				document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+				if (checkIntervalId) {
+					clearInterval(checkIntervalId);
+					checkIntervalId = null;
+				}
+			}
+		});
+	}
+
+	const yesterdayIso = computed(() => shiftIsoDate(liveTodayIso.value, -1));
+
+	return {
+		todayIso: readonly(liveTodayIso),
+		yesterdayIso,
+		refreshTodayIso
+	};
+}
+
+
+----------------------------------------------------------------
+
+================================================================
 PATH: app/composables/useLocalRepository.ts
 ================================================================
 
 import { type LocalDailyEntryRecord, type LocalHabitLogRecord, type SyncMetaRecord, useAppDatabase } from '~/composables/useAppDatabase';
 import { createLocalBackupOperations } from '~/composables/useLocalBackupOperations';
+import { clonePlain } from '~/utils/clone';
 import {
 	buildCreatedHabitWithLifecycle,
 	buildUpdatedHabitWithLifecycle,
@@ -5612,10 +6255,6 @@ export function onLocalMutationStaged(listener: () => void): () => void {
  * Every write operation writes instantly to indexed Dexie tables
  * and stages an atomic mutation record into `syncOutbox`.
  */
-function clonePlain<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
-
 export function useLocalRepository() {
 	const db = useAppDatabase();
 
@@ -5733,12 +6372,20 @@ export function useLocalRepository() {
 		},
 
 		async saveCadencePlans(input: SaveCadencePlanBatch): Promise<void> {
-			const nowIso = new Date().toISOString();
+			const nowIso = input.updatedAtIso || new Date().toISOString();
+			const payloadWithTimestamp: SaveCadencePlanBatch = {
+				...input,
+				updatedAtIso: nowIso,
+				items: input.items.map((item) => ({
+					...item,
+					updatedAtIso: item.updatedAtIso || nowIso
+				}))
+			};
 			const mutation: SyncOutboxMutation = {
 				id: `cadence:${input.targetDateIso}`,
 				kind: 'SAVE_CADENCE_PLAN',
 				queuedAtIso: nowIso,
-				payload: input
+				payload: payloadWithTimestamp
 			};
 
 			await stageMutation(mutation, async () => {
@@ -6420,18 +7067,72 @@ export function useLocalRepository() {
 				.map((p) => p.id);
 			if (plansToDelete.length > 0) await db.cadencePlans.bulkDelete(plansToDelete);
 
-			// Upsert non-pending server entities
-			await db.habits.bulkPut(ws.habits.filter((h) => !pendingIds.has(`habit:${h.id}`)));
+			const isServerRecordNewerOrEqual = (
+				serverIso: string | null | undefined,
+				localIso: string | null | undefined
+			): boolean => {
+				if (!localIso) return true;
+				if (!serverIso) return false;
+				return serverIso >= localIso;
+			};
+
+			const localHabitMap = new Map((await db.habits.toArray()).map((h) => [h.id, h]));
+			await db.habits.bulkPut(
+				ws.habits.filter(
+					(h) =>
+						!pendingIds.has(`habit:${h.id}`) &&
+						isServerRecordNewerOrEqual(h.updatedAtIso, localHabitMap.get(h.id)?.updatedAtIso)
+				)
+			);
+
+			const localPlanMap = new Map(allLocalPlans.map((p) => [p.id, p]));
 			await db.cadencePlans.bulkPut(
-				ws.cadencePlans.filter((c) => !pendingIds.has(`cadence:${c.dateIso}`))
+				ws.cadencePlans.filter(
+					(c) =>
+						!pendingIds.has(`cadence:${c.dateIso}`) &&
+						!pendingCadenceDates.has(c.dateIso) &&
+						isServerRecordNewerOrEqual(c.updatedAtIso, localPlanMap.get(c.id)?.updatedAtIso)
+				)
 			);
-			await db.books.bulkPut(ws.books.filter((b) => !pendingIds.has(`book:${b.id}`)));
-			await db.media.bulkPut(ws.media.filter((m) => !pendingIds.has(`media:${m.id}`)));
-			await db.notes.bulkPut(ws.notes.filter((n) => !pendingIds.has(`note:${n.id}`)));
+
+			const localBookMap = new Map((await db.books.toArray()).map((b) => [b.id, b]));
+			await db.books.bulkPut(
+				ws.books.filter(
+					(b) =>
+						!pendingIds.has(`book:${b.id}`) &&
+						isServerRecordNewerOrEqual(b.updatedAtIso, localBookMap.get(b.id)?.updatedAtIso)
+				)
+			);
+
+			const localMediaMap = new Map((await db.media.toArray()).map((m) => [m.id, m]));
+			await db.media.bulkPut(
+				ws.media.filter(
+					(m) =>
+						!pendingIds.has(`media:${m.id}`) &&
+						isServerRecordNewerOrEqual(m.updatedAtIso, localMediaMap.get(m.id)?.updatedAtIso)
+				)
+			);
+
+			const localNoteMap = new Map((await db.notes.toArray()).map((n) => [n.id, n]));
+			await db.notes.bulkPut(
+				ws.notes.filter(
+					(n) =>
+						!pendingIds.has(`note:${n.id}`) &&
+						isServerRecordNewerOrEqual(n.updatedAtIso, localNoteMap.get(n.id)?.updatedAtIso)
+				)
+			);
+
+			const localEventMap = new Map((await db.calendarEvents.toArray()).map((ev) => [ev.id, ev]));
 			await db.calendarEvents.bulkPut(
-				ws.calendarEvents.filter((ev) => !pendingIds.has(`event:${ev.id}`))
+				ws.calendarEvents.filter(
+					(ev) =>
+						!pendingIds.has(`event:${ev.id}`) &&
+						isServerRecordNewerOrEqual(ev.updatedAtIso, localEventMap.get(ev.id)?.updatedAtIso)
+				)
 			);
-			await db.lifecycleEvents.bulkPut(ws.lifecycleEvents);
+			await db.lifecycleEvents.bulkPut(
+				ws.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
+			);
 
 			if (ws.availableTags && ws.availableTags.length > 0) {
 				const existingTags = await db.reflectionTags.toArray();
@@ -6459,9 +7160,16 @@ export function useLocalRepository() {
 				await db.dailyEntries.bulkDelete(entriesToDelete);
 			}
 
+			const localEntryMap = new Map(
+				(await db.dailyEntries.toArray()).map((e) => [e.dateIso, e])
+			);
 			const entriesToPut: LocalDailyEntryRecord[] = [];
 			for (const e of ws.entries) {
-				if (!pendingDailyDates.has(e.dateIso)) {
+				const localEntry = localEntryMap.get(e.dateIso);
+				if (
+					!pendingDailyDates.has(e.dateIso) &&
+					isServerRecordNewerOrEqual(e.updatedAtIso, localEntry?.updatedAtIso)
+				) {
 					entriesToPut.push({
 						dateIso: e.dateIso,
 						dayStatus: e.dayStatus,
@@ -6478,6 +7186,7 @@ export function useLocalRepository() {
 
 			const serverLogIds = new Set(ws.logs.map((l) => l.id || `log:${l.dateIso}:${l.habitId}`));
 			const allLocalLogs = await db.habitLogs.toArray();
+			const localLogMap = new Map(allLocalLogs.map((l) => [l.id, l]));
 			const logsToDelete = allLocalLogs
 				.filter((l) => !serverLogIds.has(l.id) && !pendingDailyDates.has(l.dateIso))
 				.map((l) => l.id);
@@ -6487,9 +7196,14 @@ export function useLocalRepository() {
 
 			const logsToPut: LocalHabitLogRecord[] = [];
 			for (const l of ws.logs) {
-				if (!pendingDailyDates.has(l.dateIso)) {
+				const logId = l.id || `log:${l.dateIso}:${l.habitId}`;
+				const localLog = localLogMap.get(logId);
+				if (
+					!pendingDailyDates.has(l.dateIso) &&
+					isServerRecordNewerOrEqual(l.updatedAtIso, localLog?.updatedAtIso)
+				) {
 					logsToPut.push({
-						id: l.id || `log:${l.dateIso}:${l.habitId}`,
+						id: logId,
 						dateIso: l.dateIso,
 						habitId: l.habitId,
 						habitTitleSnapshot: l.habitTitleSnapshot ?? null,
@@ -7039,6 +7753,17 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
 			if (activeDraftDateIso !== dateIso.value) {
+				if (isDirty.value && !pendingSavePayload) {
+					pendingSavePayload = {
+						dateIso: activeDraftDateIso,
+						dayStatus: computedDayStatus.value,
+						reflectionNote: reflectionNote.value,
+						journalText: journalText.value.trim() || null,
+						tags: [...selectedTags.value],
+						updatedAtIso: new Date().toISOString(),
+						logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
+					};
+				}
 				if (pendingSavePayload) {
 					void flushPendingSave();
 				}
@@ -7192,7 +7917,10 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	const computedDayStatus = computed<DayStatusColor>(() => {
 		if (manualDayStatus.value) return manualDayStatus.value;
-		return evaluateDayStatusColor(applicableHabits.value, Object.values(logsByHabitId.value));
+		return evaluateDayStatusColor(applicableHabits.value, Object.values(logsByHabitId.value), {
+			dateIso: dateIso.value,
+			scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
+		});
 	});
 
 	const completionStats = computed(() =>
@@ -7626,14 +8354,12 @@ PATH: app/composables/useLocalBackupOperations.ts
 
 import type { PersonalOSDatabase } from '~/composables/useAppDatabase';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
+import { buildDemoSeedDataset } from '~/core/demo-seed';
 import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
-import { buildDemoSeedDataset, DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/demo-seed';
+import { DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/constants';
 import type { DatabaseBackupPayload, SyncOutboxMutation } from '~/domain/schemas';
 import { parseTagsJson } from '~/domain/tags';
-
-function clonePlain<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
+import { clonePlain } from '~/utils/clone';
 
 export function createLocalBackupOperations(
 	db: PersonalOSDatabase,
@@ -8551,11 +9277,6 @@ onUnmounted(() => {
 PATH: app/components/ui/BaseModal.vue
 ================================================================
 
-<script lang="ts">
-let activeModalCount = 0;
-let savedBodyOverflow = '';
-</script>
-
 <script setup lang="ts">
 import { X } from 'lucide-vue-next';
 
@@ -8582,20 +9303,36 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 }
 
-onMounted(() => {
-	if (activeModalCount === 0) {
-		savedBodyOverflow = document.body.style.overflow;
+function lockBodyScroll() {
+	if (!import.meta.client) return;
+	const currentCount = Number(document.body.dataset.modalCount || '0');
+	if (currentCount === 0) {
+		document.body.dataset.prevOverflow = document.body.style.overflow || '';
 		document.body.style.overflow = 'hidden';
 	}
-	activeModalCount++;
+	document.body.dataset.modalCount = String(currentCount + 1);
+}
+
+function unlockBodyScroll() {
+	if (!import.meta.client) return;
+	const currentCount = Number(document.body.dataset.modalCount || '0');
+	const nextCount = Math.max(0, currentCount - 1);
+	if (nextCount === 0) {
+		document.body.style.overflow = document.body.dataset.prevOverflow || '';
+		delete document.body.dataset.modalCount;
+		delete document.body.dataset.prevOverflow;
+	} else {
+		document.body.dataset.modalCount = String(nextCount);
+	}
+}
+
+onMounted(() => {
+	lockBodyScroll();
 	window.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
-	activeModalCount = Math.max(0, activeModalCount - 1);
-	if (activeModalCount === 0) {
-		document.body.style.overflow = savedBodyOverflow;
-	}
+	unlockBodyScroll();
 	window.removeEventListener('keydown', handleKeydown);
 });
 </script>
@@ -9564,7 +10301,6 @@ PATH: app/components/notes/NoteUpsertModal.vue
 
 <script setup lang="ts">
 import type { NoteEntity, UpsertNoteInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
 import { Tag } from 'lucide-vue-next';
 
 interface Props {
@@ -9601,7 +10337,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="editingNote ? 'ویرایش یادداشت' : 'افزودن یادداشت جدید'" @close="emit('close')">
+	<UiBaseModal :title="editingNote ? 'ویرایش یادداشت' : 'افزودن یادداشت جدید'" @close="emit('close')">
 		<form class="space-y-4 overflow-y-auto p-5 sm:p-6" @submit.prevent="handleSubmit">
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-center">
 				<div class="flex-1">
@@ -9663,7 +10399,7 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>
 
 
@@ -9676,8 +10412,6 @@ PATH: app/components/architect/HabitUpsertModal.vue
 <script setup lang="ts">
 import { CADENCE_DEFAULTS } from '~/domain/constants';
 import type { CreateHabitInput, HabitEntity, HabitStatus, HabitTimeSlot, MutateHabitStructureInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 
 type FormStructureKind = 'tiered' | 'composite' | 'interval_cadence';
 
@@ -9855,7 +10589,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="modalTitle" max-width-class="max-w-xl" @close="emit('close')">
+	<UiBaseModal :title="modalTitle" max-width-class="max-w-xl" @close="emit('close')">
 		<form class="space-y-4 overflow-y-auto p-4 sm:space-y-5 sm:p-8" @submit.prevent="handleSubmit">
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
@@ -9883,7 +10617,7 @@ function handleSubmit() {
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div v-if="!selectedParentId">
 					<label for="h-kind" class="mb-1.5 block text-sm font-bold text-fg">نوع طرح</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-kind"
 						v-model="structureKind"
 						:disabled="hasSubHabits"
@@ -9894,7 +10628,7 @@ function handleSubmit() {
 
 				<div v-if="structureKind === 'tiered'">
 					<label for="h-parent" class="mb-1.5 block text-sm font-bold text-fg">جایگاه در ساختار</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-parent"
 						v-model="selectedParentId"
 						:options="parentOptions"
@@ -9904,7 +10638,7 @@ function handleSubmit() {
 
 				<div v-if="structureKind !== 'interval_cadence' && !selectedParentId">
 					<label for="h-timeslot" class="mb-1.5 block text-sm font-bold text-fg">بازهٔ زمانی در روز</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-timeslot"
 						v-model="selectedTimeSlot"
 						:options="timeSlotOptions"
@@ -9914,7 +10648,7 @@ function handleSubmit() {
 
 				<div v-if="mode === 'edit' && editingHabit">
 					<label for="h-status" class="mb-1.5 block text-sm font-bold text-fg">وضعیت طرح</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-status"
 						v-model="selectedStatus"
 						:options="statusOptions"
@@ -9981,6 +10715,7 @@ function handleSubmit() {
 							v-model.number="defaultMinutesPerInterval"
 							type="number"
 							min="0"
+							max="1440"
 							step="1"
 							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
 						/>
@@ -9992,6 +10727,7 @@ function handleSubmit() {
 							v-model.number="cadenceWindowMinutes"
 							type="number"
 							:min="CADENCE_DEFAULTS.MIN_WINDOW_MINUTES"
+							max="1440"
 							step="5"
 							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
 						/>
@@ -10048,7 +10784,7 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>
 
 
@@ -10139,7 +10875,6 @@ PATH: app/components/architect/ArchitectHabitCard.vue
 
 <script setup lang="ts">
 import type { HabitEntity } from '~/domain/schemas';
-import ArchitectSubHabitGrid from '~/components/architect/ArchitectSubHabitGrid.vue';
 import { BarChart3, Clock, Pencil, Plus } from 'lucide-vue-next';
 
 interface Props {
@@ -10686,9 +11421,12 @@ import { BookHeart } from 'lucide-vue-next';
 
 interface Props {
 	modelValue: string;
+	dayLabel?: string;
 }
 
-defineProps<Props>();
+withDefaults(defineProps<Props>(), {
+	dayLabel: 'این روز'
+});
 
 const emit = defineEmits<{
 	(e: 'update:modelValue', value: string): void;
@@ -10704,7 +11442,7 @@ const emit = defineEmits<{
 		<div class="mb-3 flex items-center justify-between gap-2">
 			<label for="daily-journal-input" class="flex items-center gap-2 text-sm font-black text-fg">
 				<BookHeart class="h-4 w-4 text-accent-text" />
-				<span>خاطره و روایت امروز</span>
+				<span>خاطره و روایت {{ dayLabel }}</span>
 			</label>
 			<button
 				type="button"
@@ -10974,7 +11712,7 @@ const activeNotesBadgeCount = computed(
 		<div v-if="showTomorrowDrawer && cadenceHabits.length > 0" class="mt-4 space-y-4 border-t border-border pt-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<h3 class="text-sm font-black text-fg">
-					هدف فردا ({{ tomorrowHuman.fullLabel }})
+					هدف روز بعد ({{ tomorrowHuman.fullLabel }})
 				</h3>
 
 				<button
@@ -10983,7 +11721,7 @@ const activeNotesBadgeCount = computed(
 					@click="emit('copyTodayToTomorrow')"
 				>
 					<Copy class="h-3.5 w-3.5 text-accent-text" />
-					<span>کپی از امروز</span>
+					<span>کپی از این روز</span>
 				</button>
 			</div>
 
@@ -11000,9 +11738,10 @@ const activeNotesBadgeCount = computed(
 							:value="tomorrowPlans[habit.id]?.plannedMinutesPerInterval"
 							type="number"
 							min="0"
+							max="1440"
 							step="1"
 							class="h-10 w-20 rounded-xl border border-border bg-surface px-3 text-center font-mono text-base font-black text-fg focus:border-border-strong focus:outline-none"
-							@input="emit('updateTomorrowPlan', habit.id, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0))"
+							@input="emit('updateTomorrowPlan', habit.id, Math.min(1440, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0)))"
 						/>
 						<span class="text-xs font-bold text-fg-secondary">دقیقه</span>
 					</label>
@@ -11036,11 +11775,10 @@ PATH: app/components/tracker/JalaliDateScrubber.vue
 ================================================================
 
 <script setup lang="ts">
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import {
 	buildRecentCalendarDays,
 	formatJalaliHuman,
-	getTodayIso,
-	getYesterdayIso,
 	shiftIsoDate,
 	toPersianDigits,
 	type CalendarScrubberDay
@@ -11076,9 +11814,8 @@ const emit = defineEmits<{
 	(e: 'retrySave'): void;
 }>();
 
-const human = computed(() => formatJalaliHuman(props.currentDateIso));
-const todayIso = computed(() => getTodayIso());
-const yesterdayIso = computed(() => getYesterdayIso());
+const { todayIso, yesterdayIso } = useLiveTodayIso();
+const human = computed(() => formatJalaliHuman(props.currentDateIso, todayIso.value));
 const prevDayIso = computed(() => shiftIsoDate(props.currentDateIso, -1));
 const nextDayIso = computed(() => shiftIsoDate(props.currentDateIso, 1));
 
@@ -11237,8 +11974,6 @@ PATH: app/components/media/MediaUpsertModal.vue
 import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, MEDIA_CATEGORY_OPTIONS, MEDIA_STATUS_OPTIONS } from '~/domain/constants';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaStatus, UpdateMediaInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { Clapperboard, History } from 'lucide-vue-next';
 
 interface Props {
@@ -11334,7 +12069,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="editingMedia ? 'ویرایش اطلاعات اثر' : 'ثبت اثر جدید'" @close="emit('close')">
+	<UiBaseModal :title="editingMedia ? 'ویرایش اطلاعات اثر' : 'ثبت اثر جدید'" @close="emit('close')">
 		<template #headerIcon>
 			<Clapperboard class="h-4.5 w-4.5" />
 		</template>
@@ -11416,7 +12151,7 @@ function handleSubmit() {
 				</div>
 				<div>
 					<label for="md-rating" class="mb-1.5 block text-xs font-bold text-fg-secondary">امتیاز</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="md-rating"
 						v-model="selectedRating"
 						:options="BOOK_RATING_OPTIONS"
@@ -11480,7 +12215,7 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>
 
 
@@ -11494,7 +12229,6 @@ PATH: app/components/media/MediaHeaderStats.vue
 import { toPersianDigits } from '~/domain/calendar';
 import { MEDIA_CATEGORY_OPTIONS } from '~/domain/constants';
 import type { MediaCategory, MediaSortBy, MediaStatusFilter } from '~/domain/schemas';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { Clapperboard, Plus } from 'lucide-vue-next';
 
 interface Props {
@@ -11576,7 +12310,7 @@ const sortOptions: ReadonlyArray<{ value: MediaSortBy; label: string }> = [
 				</div>
 
 				<div class="w-full sm:w-40">
-					<CustomSelect
+					<UiCustomSelect
 						:model-value="sortBy"
 						:options="sortOptions"
 						trigger-class="h-10 text-xs font-extrabold text-fg"
@@ -11857,7 +12591,6 @@ PATH: app/components/calendar/CalendarDayPerformanceModal.vue
 import { toPersianDigits } from '~/domain/calendar';
 import { getTierBadgeMeta, TIER_SCORES } from '~/domain/constants';
 import type { DayHabitPerformanceItem } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
 import { ChevronDown, ChevronUp, Clock } from 'lucide-vue-next';
 
 interface Props {
@@ -11882,7 +12615,7 @@ function toggleHabitExpanded(habitId: string) {
 </script>
 
 <template>
-	<BaseModal
+	<UiBaseModal
 		title="جزئیات عملکرد طرح‌ها"
 		:subtitle="fullHumanLabel"
 		max-width-class="max-w-xl"
@@ -12020,7 +12753,7 @@ function toggleHabitExpanded(habitId: string) {
 				</div>
 			</div>
 		</div>
-	</BaseModal>
+	</UiBaseModal>
 </template>
 
 
@@ -12324,56 +13057,116 @@ PATH: app/components/books/BooksHeaderStats.vue
 
 <script setup lang="ts">
 import { toPersianDigits } from '~/domain/calendar';
-import { BookOpen, Plus } from 'lucide-vue-next';
+import type { BookSortBy, BookStatusFilter } from '~/domain/schemas';
+import { BookOpen, Plus, Search } from 'lucide-vue-next';
 
 interface Props {
+	totalCount: number;
 	completedCount: number;
 	readingCount: number;
+	onHoldCount: number;
+	searchQuery: string;
+	statusFilter: BookStatusFilter;
+	sortBy: BookSortBy;
 }
 
 defineProps<Props>();
 
 const emit = defineEmits<{
+	(e: 'update:searchQuery', val: string): void;
+	(e: 'update:statusFilter', val: BookStatusFilter): void;
+	(e: 'update:sortBy', val: BookSortBy): void;
 	(e: 'openCreate'): void;
 }>();
+
+const sortOptions: ReadonlyArray<{ value: BookSortBy; label: string }> = [
+	{ value: 'newest', label: 'جدیدترین‌ها' },
+	{ value: 'rating_desc', label: 'بیشترین امتیاز' },
+	{ value: 'oldest', label: 'قدیمی‌ترین‌ها' },
+	{ value: 'title_asc', label: 'حروف الفبا' }
+];
 </script>
 
 <template>
-	<div
-		class="flex flex-col gap-4 rounded-3xl border border-border bg-surface p-4.5 shadow-(--shadow-soft) sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-6 sm:p-6 sm:px-8"
-	>
-		<div class="flex items-center gap-3">
-			<div
-				class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text sm:h-12 sm:w-12"
-			>
-				<BookOpen class="h-5 w-5 sm:h-6 sm:w-6" />
+	<div class="space-y-4 rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:px-6">
+		<div class="flex flex-wrap items-center justify-between gap-4">
+			<div class="flex items-center gap-3">
+				<div
+					class="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-accent-border bg-accent-soft text-accent-text"
+				>
+					<BookOpen class="h-5 w-5" />
+				</div>
+				<div class="flex items-baseline gap-2.5">
+					<h1 class="text-lg font-black tracking-tight text-fg sm:text-xl">کتابخانه شخصی</h1>
+					<span class="text-xs font-bold text-fg-muted">({{ toPersianDigits(totalCount) }} کتاب)</span>
+				</div>
 			</div>
-			<h1 class="text-xl font-black tracking-tight text-fg sm:text-2xl">کتابخانه شخصی</h1>
+
+			<div class="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+				<div v-if="totalCount > 0" class="relative w-full sm:w-52">
+					<Search class="pointer-events-none absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-fg-muted" />
+					<input
+						:value="searchQuery"
+						type="search"
+						placeholder="جستجوی کتاب یا نویسنده..."
+						class="h-10 w-full rounded-2xl border border-border bg-elevated pr-9 pl-3 text-xs font-bold text-fg placeholder:font-normal placeholder:text-fg-muted focus:border-border-strong focus:outline-none"
+						@input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
+					/>
+				</div>
+
+				<div class="w-full sm:w-40">
+					<UiCustomSelect
+						:model-value="sortBy"
+						:options="sortOptions"
+						trigger-class="h-10 text-xs font-extrabold text-fg"
+						@select="emit('update:sortBy', $event as BookSortBy)"
+					/>
+				</div>
+
+				<button
+					type="button"
+					class="flex h-10 items-center justify-center gap-2 rounded-2xl bg-accent px-4 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90 active:scale-98"
+					@click="emit('openCreate')"
+				>
+					<Plus class="h-4 w-4" />
+					<span>افزودن کتاب جدید</span>
+				</button>
+			</div>
 		</div>
 
-		<div class="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3.5">
-			<div class="grid w-full grid-cols-2 gap-2.5 sm:w-auto sm:flex sm:items-center sm:gap-3.5">
-				<div
-					class="flex flex-col items-center justify-center rounded-2xl border border-optimal-border bg-optimal-soft px-3.5 py-2.5 text-center sm:min-w-32 sm:px-5 sm:py-3"
-				>
-					<div class="font-mono text-xl font-black text-optimal sm:text-2xl">{{ toPersianDigits(completedCount) }}</div>
-					<div class="mt-0.5 whitespace-nowrap text-xs font-bold text-optimal">خوانده‌شده</div>
-				</div>
-				<div
-					class="flex flex-col items-center justify-center rounded-2xl border border-gold-border bg-gold-soft px-3.5 py-2.5 text-center sm:min-w-32 sm:px-5 sm:py-3"
-				>
-					<div class="font-mono text-xl font-black text-gold-text sm:text-2xl">{{ toPersianDigits(readingCount) }}</div>
-					<div class="mt-0.5 whitespace-nowrap text-xs font-bold text-gold-text">در حال مطالعه</div>
-				</div>
-			</div>
-
+		<div class="flex flex-wrap items-center gap-1.5 border-t border-border pt-3.5">
 			<button
 				type="button"
-				class="flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90 active:scale-98 sm:h-12 sm:w-auto sm:text-sm"
-				@click="emit('openCreate')"
+				class="rounded-xl px-3 py-1.5 text-xs font-extrabold transition"
+				:class="statusFilter === 'ALL' ? 'border border-accent-border bg-accent-soft text-accent-text shadow-xs' : 'bg-elevated text-fg-secondary hover:text-fg'"
+				@click="emit('update:statusFilter', 'ALL')"
 			>
-				<Plus class="h-4 w-4" />
-				<span>افزودن کتاب جدید</span>
+				همه ({{ toPersianDigits(totalCount) }})
+			</button>
+			<button
+				type="button"
+				class="rounded-xl px-3 py-1.5 text-xs font-extrabold transition"
+				:class="statusFilter === 'READING' ? 'border border-gold-border bg-gold-soft text-gold-text shadow-xs' : 'bg-elevated text-fg-secondary hover:text-fg'"
+				@click="emit('update:statusFilter', 'READING')"
+			>
+				در حال مطالعه ({{ toPersianDigits(readingCount) }})
+			</button>
+			<button
+				type="button"
+				class="rounded-xl px-3 py-1.5 text-xs font-extrabold transition"
+				:class="statusFilter === 'COMPLETED' ? 'border border-optimal-border bg-optimal-soft text-optimal shadow-xs' : 'bg-elevated text-fg-secondary hover:text-fg'"
+				@click="emit('update:statusFilter', 'COMPLETED')"
+			>
+				خوانده‌شده ({{ toPersianDigits(completedCount) }})
+			</button>
+			<button
+				v-if="onHoldCount > 0 || statusFilter === 'ON_HOLD'"
+				type="button"
+				class="rounded-xl px-3 py-1.5 text-xs font-extrabold transition"
+				:class="statusFilter === 'ON_HOLD' ? 'border border-accent-border bg-accent-soft text-accent-text shadow-xs' : 'bg-elevated text-fg-secondary hover:text-fg'"
+				@click="emit('update:statusFilter', 'ON_HOLD')"
+			>
+				در نوبت / متوقف ({{ toPersianDigits(onHoldCount) }})
 			</button>
 		</div>
 	</div>
@@ -12390,8 +13183,6 @@ PATH: app/components/books/BookUpsertModal.vue
 import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, BOOK_STATUS_OPTIONS } from '~/domain/constants';
 import type { BookEntity, BookStatus, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { BookOpen, History } from 'lucide-vue-next';
 
 interface Props {
@@ -12484,7 +13275,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="editingBook ? 'ویرایش اطلاعات کتاب' : 'افزودن کتاب جدید'" @close="emit('close')">
+	<UiBaseModal :title="editingBook ? 'ویرایش اطلاعات کتاب' : 'افزودن کتاب جدید'" @close="emit('close')">
 		<template #headerIcon>
 			<BookOpen class="h-4.5 w-4.5" />
 		</template>
@@ -12539,7 +13330,7 @@ function handleSubmit() {
 			<div class="grid grid-cols-2 gap-3">
 				<div>
 					<label for="bk-status" class="mb-1.5 block text-xs font-bold text-fg-secondary">وضعیت</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="bk-status"
 						v-model="selectedStatus"
 						:options="BOOK_STATUS_OPTIONS"
@@ -12548,7 +13339,7 @@ function handleSubmit() {
 				</div>
 				<div>
 					<label for="bk-rating" class="mb-1.5 block text-xs font-bold text-fg-secondary">امتیاز</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="bk-rating"
 						v-model="selectedRating"
 						:options="BOOK_RATING_OPTIONS"
@@ -12611,7 +13402,7 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>
 
 
@@ -13103,6 +13894,14 @@ const filteredEvents = computed(() =>
 		? events.value
 		: events.value.filter((e) => e.eventType === selectedFilter.value)
 );
+
+const enrichedEvents = computed(() =>
+	filteredEvents.value.map((ev) => ({
+		...ev,
+		humanDateLabel: formatJalaliHuman(ev.effectiveDateIso).fullLabel,
+		diffs: extractLifecycleRuleDiffs(ev.previousStateJson, ev.newStateJson)
+	}))
+);
 </script>
 
 <template>
@@ -13145,13 +13944,13 @@ const filteredEvents = computed(() =>
 			<p class="text-sm font-extrabold text-failed">{{ eventsError }}</p>
 		</div>
 
-		<div v-else-if="filteredEvents.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center text-xs font-bold text-fg-muted">
+		<div v-else-if="enrichedEvents.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center text-xs font-bold text-fg-muted">
 			رویدادی متناسب با این فیلتر یافت نشد.
 		</div>
 
 		<NuxtErrorBoundary v-else>
 			<div class="relative space-y-4 before:absolute before:top-4 before:right-5 before:bottom-4 before:w-0.5 before:bg-border">
-				<div v-for="ev in filteredEvents" :key="ev.id" class="relative pr-12">
+				<div v-for="ev in enrichedEvents" :key="ev.id" class="relative pr-12">
 					<div class="absolute top-4 right-3.5 h-3.5 w-3.5 rounded-full border-2 border-accent bg-surface"></div>
 
 					<div class="rounded-2xl border border-border bg-surface p-5 shadow-(--shadow-soft) transition hover:border-border-strong">
@@ -13166,7 +13965,7 @@ const filteredEvents = computed(() =>
 								<h3 class="text-sm font-extrabold text-fg">{{ ev.habitTitleSnapshot }}</h3>
 							</div>
 
-							<span class="text-xs font-medium text-fg-muted">{{ formatJalaliHuman(ev.effectiveDateIso).fullLabel }}</span>
+							<span class="text-xs font-medium text-fg-muted">{{ ev.humanDateLabel }}</span>
 						</div>
 
 						<p
@@ -13177,9 +13976,9 @@ const filteredEvents = computed(() =>
 						</p>
 
 						<!-- جزئیات تغییرات و مقادیر قبلی/جدید (Diff View) -->
-						<div v-if="extractLifecycleRuleDiffs(ev.previousStateJson, ev.newStateJson).length > 0" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+						<div v-if="ev.diffs.length > 0" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
 							<div
-								v-for="diff in extractLifecycleRuleDiffs(ev.previousStateJson, ev.newStateJson)"
+								v-for="diff in ev.diffs"
 								:key="diff.fieldLabel"
 								class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-elevated px-3 py-2 text-xs"
 							>
@@ -13228,20 +14027,15 @@ PATH: app/pages/analytics/index.vue
 <script setup lang="ts">
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { buildFullAnalyticsReport } from '~/core/analytics-engine';
-import { getTodayIso, getYesterdayIso, shiftIsoDate } from '~/domain/calendar';
 import type { AnalyticsTimeRange } from '~/domain/schemas';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
-import AnalyticsSummaryCards from '~/components/analytics/AnalyticsSummaryCards.vue';
-import HabitTrendChart from '~/components/analytics/HabitTrendChart.vue';
-import HabitHeatmapMatrix from '~/components/analytics/HabitHeatmapMatrix.vue';
-import HabitEvolutionTimeline from '~/components/analytics/HabitEvolutionTimeline.vue';
-import HabitsComparisonTable from '~/components/analytics/HabitsComparisonTable.vue';
 import { BarChart3 } from 'lucide-vue-next';
 
 const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
+const { yesterdayIso } = useLiveTodayIso();
 
 const selectedRange = computed<AnalyticsTimeRange>(() => {
 	const r = route.query.range as AnalyticsTimeRange | undefined;
@@ -13249,31 +14043,10 @@ const selectedRange = computed<AnalyticsTimeRange>(() => {
 	return '30d';
 });
 
-const queryLowerBoundIso = computed<string | null>(() => {
-	if (selectedRange.value === 'all') return null;
-	const lookbackDays =
-		selectedRange.value === '7d' ? 35 : selectedRange.value === '30d' ? 60 : 120;
-	return shiftIsoDate(getTodayIso(), -lookbackDays);
-});
-
 const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
 const isHabitsLoading = habits.isLoading;
-const rawEntries = useDexieLiveQuery(
-	() =>
-		queryLowerBoundIso.value
-			? db.dailyEntries.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
-			: db.dailyEntries.toArray(),
-	[],
-	queryLowerBoundIso
-);
-const rawLogs = useDexieLiveQuery(
-	() =>
-		queryLowerBoundIso.value
-			? db.habitLogs.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
-			: db.habitLogs.toArray(),
-	[],
-	queryLowerBoundIso
-);
+const rawEntries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
+const rawLogs = useDexieLiveQuery(() => db.habitLogs.toArray(), []);
 const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 const analyticsError = computed(
@@ -13306,7 +14079,7 @@ const report = computed(() =>
 		lifecycleEvents: lifecycleEvents.value,
 		selectedHabitId: selectedHabitId.value,
 		range: selectedRange.value,
-		fallbackEndDateIso: getYesterdayIso()
+		fallbackEndDateIso: yesterdayIso.value
 	})
 );
 
@@ -13342,7 +14115,7 @@ function selectHabitAndScroll(habitId: string) {
 
 				<div class="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
 					<div v-if="habitSelectOptions.length > 0" class="w-full sm:w-64">
-						<CustomSelect
+						<UiCustomSelect
 							:model-value="selectedHabitId"
 							:options="habitSelectOptions"
 							trigger-class="h-11 text-fg"
@@ -13391,16 +14164,16 @@ function selectHabitAndScroll(habitId: string) {
 			<div class="space-y-6">
 				<AnalyticsSummaryCards :report="report.selectedHabitReport" />
 
-				<HabitTrendChart :report="report.selectedHabitReport" />
+				<AnalyticsHabitTrendChart :report="report.selectedHabitReport" />
 
-				<HabitHeatmapMatrix :report="report.selectedHabitReport" />
+				<AnalyticsHabitHeatmapMatrix :report="report.selectedHabitReport" />
 
-				<HabitEvolutionTimeline
+				<AnalyticsHabitEvolutionTimeline
 					:habit-title="report.selectedHabitReport.habit.title"
 					:evolution-timeline="report.selectedHabitReport.evolutionTimeline"
 				/>
 
-				<HabitsComparisonTable
+				<AnalyticsHabitsComparisonTable
 					:rows="report.comparisonRows"
 					:selected-habit-id="selectedHabitId"
 					@select-habit="selectHabitAndScroll"
@@ -13628,21 +14401,17 @@ PATH: app/pages/index.vue
 
 <script setup lang="ts">
 import { useDailyTracker } from '~/composables/useDailyTracker';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { computeUpcomingEventsBanner } from '~/core/calendar-engine';
-import { getTodayIso, getYesterdayIso, shiftIsoDate, toPersianDigits } from '~/domain/calendar';
+import { formatJalaliHuman, shiftIsoDate, toPersianDigits } from '~/domain/calendar';
 import type { HabitTimeSlot, HabitTreeNode } from '~/domain/schemas';
-import JalaliDateScrubber from '~/components/tracker/JalaliDateScrubber.vue';
-import UpcomingEventsBanner from '~/components/tracker/UpcomingEventsBanner.vue';
-import TrackerActionToolbar from '~/components/tracker/TrackerActionToolbar.vue';
-import CadenceHabitCard from '~/components/tracker/CadenceHabitCard.vue';
-import TieredHabitCard from '~/components/tracker/TieredHabitCard.vue';
-import DailyJournalSection from '~/components/tracker/DailyJournalSection.vue';
 import { Moon, Sun, Sunrise } from 'lucide-vue-next';
 
 const route = useRoute();
 const router = useRouter();
 const localRepo = useLocalRepository();
+const { todayIso, yesterdayIso } = useLiveTodayIso();
 
 async function handleToggleCalendarEvent(eventId: string, isCompleted: boolean) {
 	await localRepo.calendar.toggleComplete(eventId, isCompleted);
@@ -13653,7 +14422,12 @@ const currentDateIso = computed(() => {
 	if (param && /^\d{4}-\d{2}-\d{2}$/.test(param)) {
 		return param;
 	}
-	return getYesterdayIso();
+	return yesterdayIso.value;
+});
+
+const currentDayRelativeLabel = computed(() => {
+	const human = formatJalaliHuman(currentDateIso.value, todayIso.value);
+	return human.relativeBadge || `روز ${human.weekday}`;
 });
 
 const tracker = useDailyTracker(currentDateIso);
@@ -13714,7 +14488,7 @@ const bannerCalculation = computed(() =>
 	computeUpcomingEventsBanner({
 		allEvents: tracker.calendarEvents.value,
 		referenceDateIso: currentDateIso.value,
-		todayIso: getTodayIso(),
+		todayIso: todayIso.value,
 		horizonDays: 7
 	})
 );
@@ -13757,7 +14531,7 @@ const groupedTieredSections = computed(() => {
 
 <template>
 	<div class="space-y-6 pb-12">
-		<JalaliDateScrubber
+		<TrackerJalaliDateScrubber
 			:current-date-iso="currentDateIso"
 			:recent-entries="tracker.allEntries.value"
 			:live-day-status="tracker.computedDayStatus.value"
@@ -13769,7 +14543,7 @@ const groupedTieredSections = computed(() => {
 			@retry-save="() => tracker.flushPendingSave(true)"
 		/>
 
-		<UpcomingEventsBanner
+		<TrackerUpcomingEventsBanner
 			:upcoming-items="upcomingBannerItems"
 			:selected-day-events="activeSelectedDayEvents"
 			:current-date-iso="currentDateIso"
@@ -13824,7 +14598,7 @@ const groupedTieredSections = computed(() => {
 
 			<!-- بخش عادات ریتمی تکرارشونده -->
 			<div v-if="tracker.tree.value.cadenceHabits.length > 0" class="space-y-4">
-				<CadenceHabitCard
+				<TrackerCadenceHabitCard
 					v-for="habit in tracker.tree.value.cadenceHabits"
 					:key="habit.id"
 					:habit="habit"
@@ -13847,7 +14621,7 @@ const groupedTieredSections = computed(() => {
 					</div>
 
 					<div class="space-y-2.5">
-						<TieredHabitCard
+						<TrackerTieredHabitCard
 							v-for="node in section.nodes"
 							:key="node.id"
 							:node="node"
@@ -13861,8 +14635,9 @@ const groupedTieredSections = computed(() => {
 			</div>
 
 			<!-- بخش خاطره‌نگاری و روایت روزانه -->
-			<DailyJournalSection
+			<TrackerDailyJournalSection
 				v-model="tracker.journalText.value"
+				:day-label="currentDayRelativeLabel"
 				@change="tracker.scheduleAutoSave(750)"
 				@open-memories="router.push('/memories')"
 			/>
@@ -13900,7 +14675,6 @@ import { useLocalRepository } from '~/composables/useLocalRepository';
 import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
-import NoteItemCard from '~/components/notes/NoteItemCard.vue';
 import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -14168,7 +14942,7 @@ async function handleDeleteNote(noteId: string) {
 
 		<NuxtErrorBoundary v-else>
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				<NoteItemCard
+				<NotesNoteItemCard
 					v-for="note in filteredNotes"
 					:key="note.id"
 					:note="note"
@@ -14220,8 +14994,6 @@ import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateHabitInput, HabitEntity, MutateHabitStructureInput } from '~/domain/schemas';
-import ArchitectHabitCard from '~/components/architect/ArchitectHabitCard.vue';
-import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.vue';
 import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -14361,7 +15133,7 @@ async function handleUpdateHabit(payload: MutateHabitStructureInput) {
 				</div>
 
 				<!-- بخش کشویی طرح‌های بایگانی‌شده -->
-				<ArchivedHabitsSection :archived-habits="archivedHabits" @edit-habit="openEditModal" />
+				<ArchitectArchivedHabitsSection :archived-habits="archivedHabits" @edit-habit="openEditModal" />
 			</div>
 
 			<template #error="{ error, clearError }">
@@ -14409,8 +15181,6 @@ import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter, UpdateMediaInput } from '~/domain/schemas';
-import MediaHeaderStats from '~/components/media/MediaHeaderStats.vue';
-import MediaItemCard from '~/components/media/MediaItemCard.vue';
 import { Clapperboard, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -14604,26 +15374,24 @@ PATH: app/pages/calendar/index.vue
 <script setup lang="ts">
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { assembleJalaliMonthArchive } from '~/core/calendar-engine';
 import {
 	JALALI_MONTH_NAMES,
 	getJalaliMonthLength,
-	getTodayIso,
 	isoToJalaliParts,
 	jalaliPartsToIso,
 	toPersianDigits
 } from '~/domain/calendar';
 import type { CreateCalendarEventInput } from '~/domain/schemas';
-import CalendarMonthGrid from '~/components/calendar/CalendarMonthGrid.vue';
-import CalendarDayInspector from '~/components/calendar/CalendarDayInspector.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { BookHeart, Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 
 const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
+const { todayIso } = useLiveTodayIso();
 const isSubmittingCalendarEvent = ref(false);
 
 async function handleCreateEvent(payload: CreateCalendarEventInput) {
@@ -14644,7 +15412,6 @@ async function handleDeleteEvent(eventId: string) {
 	await localRepo.calendar.delete(eventId);
 }
 
-const todayIso = computed(() => getTodayIso());
 const todayParts = computed(() => isoToJalaliParts(todayIso.value));
 
 const requestedDate = computed(() => {
@@ -14697,8 +15464,34 @@ const monthLogs = useDexieLiveQuery(
 	monthIsoBounds
 );
 const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
-const allBooks = useDexieLiveQuery(() => db.books.toArray(), []);
-const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
+const monthBooks = useDexieLiveQuery(
+	() => {
+		const { startIso, endIso } = monthIsoBounds.value;
+		return db.books
+			.filter((b) => {
+				const f = b.finishedAtIso;
+				const s = b.startedAtIso;
+				return Boolean((f && f >= startIso && f <= endIso) || (s && s >= startIso && s <= endIso));
+			})
+			.toArray();
+	},
+	[],
+	monthIsoBounds
+);
+const monthMedia = useDexieLiveQuery(
+	() => {
+		const { startIso, endIso } = monthIsoBounds.value;
+		return db.media
+			.filter((m) => {
+				const f = m.finishedAtIso;
+				const s = m.startedAtIso;
+				return Boolean((f && f >= startIso && f <= endIso) || (s && s >= startIso && s <= endIso));
+			})
+			.toArray();
+	},
+	[],
+	monthIsoBounds
+);
 
 const isCalendarLoading = computed(
 	() =>
@@ -14739,8 +15532,8 @@ const archiveData = computed(() =>
 		entriesInMonth: monthEntries.value,
 		logsInMonth: monthLogs.value,
 		eventsInMonth: allEvents.value,
-		booksInMonth: allBooks.value,
-		mediaInMonth: allMedia.value
+		booksInMonth: monthBooks.value,
+		mediaInMonth: monthMedia.value
 	})
 );
 
@@ -14816,7 +15609,7 @@ function goToToday() {
 						</button>
 
 						<div class="w-32 sm:w-36">
-							<CustomSelect
+							<UiCustomSelect
 								:model-value="currentMonth"
 								:options="monthOptions"
 								trigger-class="h-11 text-fg"
@@ -14825,7 +15618,7 @@ function goToToday() {
 						</div>
 
 						<div class="w-24 sm:w-28">
-							<CustomSelect
+							<UiCustomSelect
 								:model-value="currentYear"
 								:options="yearOptions"
 								trigger-class="h-11 font-mono text-fg"
@@ -14966,9 +15759,13 @@ PATH: app/pages/books/index.vue
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
-import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
-import BookItemCard from '~/components/books/BookItemCard.vue';
+import type {
+	BookEntity,
+	BookSortBy,
+	BookStatusFilter,
+	CreateBookInput,
+	UpdateBookInput
+} from '~/domain/schemas';
 import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -14978,12 +15775,49 @@ const books = useDexieLiveQuery(() => db.books.orderBy('createdAtIso').reverse()
 const isBooksLoading = books.isLoading;
 const booksError = books.error;
 
+const searchQuery = ref('');
+const statusFilter = ref<BookStatusFilter>('ALL');
+const sortBy = ref<BookSortBy>('newest');
 const isModalOpen = ref(false);
 const isSubmittingBook = ref(false);
 const editingBook = ref<BookEntity | null>(null);
 
 const completedCount = computed(() => books.value.filter((b) => b.status === 'completed').length);
 const readingCount = computed(() => books.value.filter((b) => b.status === 'reading').length);
+const onHoldCount = computed(() => books.value.filter((b) => b.status === 'on_hold').length);
+
+const filteredBooks = computed(() => {
+	const q = searchQuery.value.trim().toLowerCase();
+	const filtered = books.value.filter((b) => {
+		if (statusFilter.value === 'READING' && b.status !== 'reading') return false;
+		if (statusFilter.value === 'COMPLETED' && b.status !== 'completed') return false;
+		if (statusFilter.value === 'ON_HOLD' && b.status !== 'on_hold') return false;
+		if (q) {
+			const haystack = `${b.title} ${b.author ?? ''} ${b.notes ?? ''}`.toLowerCase();
+			if (!haystack.includes(q)) return false;
+		}
+		return true;
+	});
+
+	return [...filtered].sort((a, b) => {
+		if (sortBy.value === 'rating_desc') {
+			const rDiff = (b.rating ?? 0) - (a.rating ?? 0);
+			if (rDiff !== 0) return rDiff;
+			return b.createdAtIso > a.createdAtIso ? 1 : b.createdAtIso < a.createdAtIso ? -1 : 0;
+		}
+		if (sortBy.value === 'newest') {
+			const dateA = a.finishedAtIso || a.startedAtIso || a.createdAtIso;
+			const dateB = b.finishedAtIso || b.startedAtIso || b.createdAtIso;
+			return dateB > dateA ? 1 : dateB < dateA ? -1 : 0;
+		}
+		if (sortBy.value === 'oldest') {
+			const dateA = a.finishedAtIso || a.startedAtIso || a.createdAtIso;
+			const dateB = b.finishedAtIso || b.startedAtIso || b.createdAtIso;
+			return dateA > dateB ? 1 : dateA < dateB ? -1 : 0;
+		}
+		return a.title.localeCompare(b.title, 'fa');
+	});
+});
 
 const existingSuggestions = computed(() => {
 	const map = new Map<string, string | null>();
@@ -15035,10 +15869,18 @@ async function handleDeleteBook(bookId: string) {
 </script>
 
 <template>
-	<div class="space-y-8 pb-16">
+	<div class="space-y-6 pb-16">
 		<BooksHeaderStats
+			:total-count="books.length"
 			:completed-count="completedCount"
 			:reading-count="readingCount"
+			:on-hold-count="onHoldCount"
+			:search-query="searchQuery"
+			:status-filter="statusFilter"
+			:sort-by="sortBy"
+			@update:search-query="searchQuery = $event"
+			@update:status-filter="statusFilter = $event"
+			@update:sort-by="sortBy = $event"
 			@open-create="openCreateModal"
 		/>
 
@@ -15072,10 +15914,14 @@ async function handleDeleteBook(bookId: string) {
 			</button>
 		</div>
 
+		<div v-else-if="filteredBooks.length === 0" class="rounded-3xl border border-border bg-surface p-10 text-center text-sm font-semibold text-fg-muted">
+			کتابی با این فیلتر یا عبارت جستجو یافت نشد.
+		</div>
+
 		<NuxtErrorBoundary v-else>
 			<div class="space-y-2.5">
-				<BookItemCard
-					v-for="book in books"
+				<BooksBookItemCard
+					v-for="book in filteredBooks"
 					:key="book.id"
 					:book="book"
 					@edit="openEditModal"
@@ -15127,7 +15973,7 @@ import { useSyncEngine } from '~/composables/useSyncEngine';
 import { useTheme } from '~/composables/useTheme';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { toPersianDigits } from '~/domain/calendar';
-import { isDemoRecordId } from '~/domain/demo-seed';
+import { isDemoRecordId } from '~/domain/constants';
 import { DatabaseBackupPayloadSchema, extractApiErrorInfo } from '~/domain/schemas';
 import {
 	AlertTriangle,
@@ -15288,15 +16134,7 @@ async function importBackup() {
 		const mergeResult = await localRepo.restoreBackupPayload(parsed.data);
 
 		if (navigator.onLine) {
-			try {
-				await $fetch('/api/backup/import', {
-					method: 'POST',
-					body: parsed.data
-				});
-				void syncEngine.syncNow({ checkRemoteUpdates: true });
-			} catch {
-				// در صورت عدم دسترسی موقت به سرور، داده‌های محلی در Dexie ادغام شده‌اند
-			}
+			void syncEngine.syncNow({ checkRemoteUpdates: true });
 		}
 
 		const addedLabel = toPersianDigits(mergeResult.addedOrUpdatedCount);
@@ -15790,6 +16628,13 @@ import type {
 } from '~/domain/schemas';
 
 export const DEFAULT_HABIT_CATEGORY = 'عمومی';
+
+export const DEMO_ID_PREFIX = 'demo:';
+export const DEMO_ENTRY_TAG = 'داده_آزمایشی';
+
+export function isDemoRecordId(id: string | null | undefined): boolean {
+	return Boolean(id && id.startsWith(DEMO_ID_PREFIX));
+}
 
 export const TIER_SCORES = {
 	SKIPPED: -1,
@@ -16455,6 +17300,12 @@ export type LifecycleEventType = z.infer<typeof LifecycleEventTypeSchema>;
 export const BookStatusSchema = z.enum(['reading', 'completed', 'on_hold']);
 export type BookStatus = z.infer<typeof BookStatusSchema>;
 
+export const BookStatusFilterSchema = z.enum(['ALL', 'READING', 'COMPLETED', 'ON_HOLD']);
+export type BookStatusFilter = z.infer<typeof BookStatusFilterSchema>;
+
+export const BookSortBySchema = z.enum(['newest', 'rating_desc', 'oldest', 'title_asc']);
+export type BookSortBy = z.infer<typeof BookSortBySchema>;
+
 export const MediaCategorySchema = z.enum(['movie', 'series', 'anime', 'animation']);
 export type MediaCategory = z.infer<typeof MediaCategorySchema>;
 
@@ -16496,9 +17347,9 @@ export const HabitEntitySchema = z.object({
 	silverDesc: z.string().nullable(),
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
-	defaultIntervals: z.number().int().min(0),
-	defaultMinutesPerInterval: z.number().min(0),
-	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES),
+	defaultIntervals: z.number().int().min(0).max(96),
+	defaultMinutesPerInterval: z.number().min(0).max(1440),
+	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).max(1440),
 	sortOrder: z.number().int().default(0),
 	createdAtIso: z.string(),
 	updatedAtIso: z.string().nullable().optional()
@@ -16533,9 +17384,9 @@ export const CadencePlanEntitySchema = z.object({
 	id: z.string(),
 	dateIso: z.string(),
 	habitId: z.string(),
-	plannedIntervals: z.number().int().min(0),
-	plannedMinutesPerInterval: z.number().min(0),
-	cadenceWindowMinutes: z.number().int().min(15),
+	plannedIntervals: z.number().int().min(0).max(96),
+	plannedMinutesPerInterval: z.number().min(0).max(1440),
+	cadenceWindowMinutes: z.number().int().min(15).max(1440),
 	updatedAtIso: z.string().nullable().optional()
 });
 export type CadencePlanEntity = z.infer<typeof CadencePlanEntitySchema>;
@@ -16551,11 +17402,11 @@ export const HabitLogItemInputSchema = z.object({
 		.nullable(),
 	achievedRuleSnapshot: z.string().nullable().optional(),
 	habitSnapshotJson: z.string().nullable().optional(),
-	completedIntervals: z.number().int().min(0).nullable(),
-	actualMinutesPerInterval: z.number().min(0).nullable(),
-	totalActualMinutes: z.number().min(0).nullable(),
-	plannedIntervalsSnapshot: z.number().int().min(0).nullable(),
-	plannedMinutesSnapshot: z.number().min(0).nullable(),
+	completedIntervals: z.number().int().min(0).max(96).nullable(),
+	actualMinutesPerInterval: z.number().min(0).max(1440).nullable(),
+	totalActualMinutes: z.number().min(0).max(1440).nullable(),
+	plannedIntervalsSnapshot: z.number().int().min(0).max(96).nullable(),
+	plannedMinutesSnapshot: z.number().min(0).max(1440).nullable(),
 	updatedAtIso: z.string().nullable().optional()
 });
 export type HabitLogItemInput = z.infer<typeof HabitLogItemInputSchema>;
@@ -16574,12 +17425,14 @@ export type SaveDailyEntryInput = z.infer<typeof SaveDailyEntryInputSchema>;
 export const SaveCadencePlanBatchSchema = z.object({
 	targetDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	reason: z.string().optional(),
+	updatedAtIso: z.string().optional(),
 	items: z.array(
 		z.object({
 			habitId: z.string(),
-			plannedIntervals: z.number().int().min(0),
-			plannedMinutesPerInterval: z.number().min(0),
-			cadenceWindowMinutes: z.number().int().min(15)
+			plannedIntervals: z.number().int().min(0).max(96),
+			plannedMinutesPerInterval: z.number().min(0).max(1440),
+			cadenceWindowMinutes: z.number().int().min(15).max(1440),
+			updatedAtIso: z.string().optional()
 		})
 	)
 });
@@ -16598,12 +17451,13 @@ export const CreateHabitInputSchema = z.object({
 	silverDesc: z.string().nullable().optional(),
 	goldDesc: z.string().nullable().optional(),
 	emergencyMinDesc: z.string().nullable().optional(),
-	defaultIntervals: z.number().int().min(0).default(CADENCE_DEFAULTS.INTERVALS),
-	defaultMinutesPerInterval: z.number().min(0).default(CADENCE_DEFAULTS.MINUTES_PER_INTERVAL),
+	defaultIntervals: z.number().int().min(0).max(96).default(CADENCE_DEFAULTS.INTERVALS),
+	defaultMinutesPerInterval: z.number().min(0).max(1440).default(CADENCE_DEFAULTS.MINUTES_PER_INTERVAL),
 	cadenceWindowMinutes: z
 		.number()
 		.int()
 		.min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES)
+		.max(1440)
 		.default(CADENCE_DEFAULTS.WINDOW_MINUTES),
 	reason: z.string().optional()
 });
@@ -16623,8 +17477,8 @@ export const MutateHabitStructureSchema = z.object({
 	silverDesc: z.string().nullable(),
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
-	defaultMinutesPerInterval: z.number().min(0).optional(),
-	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).optional(),
+	defaultMinutesPerInterval: z.number().min(0).max(1440).optional(),
+	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).max(1440).optional(),
 	reason: z.string().min(2, 'نوشتن دلیل تغییر برای ثبت در تاریخچه الزامی است')
 });
 export type MutateHabitStructureInput = z.infer<typeof MutateHabitStructureSchema>;
@@ -17166,6 +18020,24 @@ export const LocalAuthRecordSchema = z.object({
 });
 export type LocalAuthRecord = z.infer<typeof LocalAuthRecordSchema>;
 
+export const HabitLifecycleStateSnapshotSchema = z
+	.object({
+		title: z.string().nullable().optional(),
+		trackingMode: z.string().nullable().optional(),
+		scheduleLabel: z.string().nullable().optional(),
+		emergencyMinDesc: z.string().nullable().optional(),
+		defaultMinutesPerInterval: z.union([z.number(), z.string()]).nullable().optional(),
+		cadenceWindowMinutes: z.union([z.number(), z.string()]).nullable().optional(),
+		bronzeDesc: z.string().nullable().optional(),
+		silverDesc: z.string().nullable().optional(),
+		goldDesc: z.string().nullable().optional(),
+		status: z.string().nullable().optional(),
+		notes: z.string().nullable().optional(),
+		minutes: z.number().nullable().optional()
+	})
+	.passthrough();
+export type HabitLifecycleStateSnapshot = z.infer<typeof HabitLifecycleStateSnapshotSchema>;
+
 export const HabitRuleDiffItemSchema = z.object({
 	fieldLabel: z.string(),
 	previousValue: z.string(),
@@ -17439,393 +18311,6 @@ export { parseTagsJson } from '~/domain/tags';
 ----------------------------------------------------------------
 
 ================================================================
-PATH: app/domain/demo-seed.ts
-================================================================
-
-import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, shiftIsoDate } from '~/domain/calendar';
-import { evaluateDayStatusColor, resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
-import type {
-	BookEntity,
-	CadencePlanEntity,
-	CalendarEventEntity,
-	DatabaseBackupPayload,
-	HabitEntity,
-	HabitLogItemInput,
-	LifecycleEventEntity,
-	MediaEntity,
-	NoteEntity
-} from '~/domain/schemas';
-
-export const DEMO_ID_PREFIX = 'demo:';
-export const DEMO_ENTRY_TAG = 'داده_آزمایشی';
-
-export function isDemoRecordId(id: string | null | undefined): boolean {
-	return Boolean(id && id.startsWith(DEMO_ID_PREFIX));
-}
-
-export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): DatabaseBackupPayload {
-	const nowIso = new Date().toISOString();
-	const startIso = shiftIsoDate(referenceTodayIso, -6);
-
-	const habits: HabitEntity[] = [
-		{
-			id: 'demo:habit-workout',
-			parentId: null,
-			title: 'ورزش و تحرک صبحگاهی (آزمایشی)',
-			category: 'سلامت',
-			trackingMode: 'tiered',
-			timeSlot: 'morning',
-			isSituational: false,
-			status: 'active',
-			scheduleLabel: 'بعد از بیدار شدن',
-			notes: 'حداقل نرمش کششی روزانه برای شروع پرانرژی',
-			bronzeDesc: '۱۰ دقیقه نرمش کششی',
-			silverDesc: '۲۰ دقیقه ورزش هوازی',
-			goldDesc: '۳۵ دقیقه تمرین کامل',
-			emergencyMinDesc: null,
-			defaultIntervals: 1,
-			defaultMinutesPerInterval: 0,
-			cadenceWindowMinutes: 60,
-			sortOrder: 101,
-			createdAtIso: startIso,
-			updatedAtIso: nowIso
-		},
-		{
-			id: 'demo:habit-deep-work',
-			parentId: null,
-			title: 'تمرین تمرکز عمیق (آزمایشی)',
-			category: 'کار',
-			trackingMode: 'interval_cadence',
-			timeSlot: 'day',
-			isSituational: false,
-			status: 'active',
-			scheduleLabel: 'در طول روز بدون گوشی',
-			notes: null,
-			bronzeDesc: null,
-			silverDesc: null,
-			goldDesc: null,
-			emergencyMinDesc: 'حداقل ۵ دقیقه تمرکز پیوسته',
-			defaultIntervals: 1,
-			defaultMinutesPerInterval: 20,
-			cadenceWindowMinutes: 60,
-			sortOrder: 102,
-			createdAtIso: startIso,
-			updatedAtIso: nowIso
-		},
-		{
-			id: 'demo:habit-night-routine',
-			parentId: null,
-			title: 'روتین آرامش شبانه (آزمایشی)',
-			category: 'رشد فردی',
-			trackingMode: 'tiered',
-			timeSlot: 'night',
-			isSituational: false,
-			status: 'active',
-			scheduleLabel: 'یک ساعت قبل از خواب',
-			notes: 'مجموعه‌طرح نمونه برای تست زیرطرح‌ها',
-			bronzeDesc: null,
-			silverDesc: null,
-			goldDesc: null,
-			emergencyMinDesc: null,
-			defaultIntervals: 1,
-			defaultMinutesPerInterval: 0,
-			cadenceWindowMinutes: 60,
-			sortOrder: 103,
-			createdAtIso: startIso,
-			updatedAtIso: nowIso
-		},
-		{
-			id: 'demo:habit-sub-reading',
-			parentId: 'demo:habit-night-routine',
-			title: 'مطالعه آزاد شبانه (آزمایشی)',
-			category: 'یادگیری',
-			trackingMode: 'tiered',
-			timeSlot: 'night',
-			isSituational: false,
-			status: 'active',
-			scheduleLabel: 'قبل از خواب',
-			notes: null,
-			bronzeDesc: '۵ صفحه کتاب',
-			silverDesc: '۱۰ صفحه کتاب',
-			goldDesc: '۲۰ صفحه کتاب',
-			emergencyMinDesc: null,
-			defaultIntervals: 1,
-			defaultMinutesPerInterval: 0,
-			cadenceWindowMinutes: 60,
-			sortOrder: 104,
-			createdAtIso: startIso,
-			updatedAtIso: nowIso
-		},
-		{
-			id: 'demo:habit-sub-review',
-			parentId: 'demo:habit-night-routine',
-			title: 'مرور و برنامه‌ریزی فردا (آزمایشی)',
-			category: 'رشد فردی',
-			trackingMode: 'tiered',
-			timeSlot: 'night',
-			isSituational: false,
-			status: 'active',
-			scheduleLabel: 'پایان شب',
-			notes: null,
-			bronzeDesc: 'ثبت وضعیت روز',
-			silverDesc: 'ثبت وضعیت + اولویت فردا',
-			goldDesc: 'مرور کامل روز و نوشتن خاطره',
-			emergencyMinDesc: null,
-			defaultIntervals: 1,
-			defaultMinutesPerInterval: 0,
-			cadenceWindowMinutes: 60,
-			sortOrder: 105,
-			createdAtIso: startIso,
-			updatedAtIso: nowIso
-		}
-	];
-
-	const habitMap = new Map(habits.map((h) => [h.id, h]));
-
-	const lifecycleEvents: LifecycleEventEntity[] = habits.map((h) => ({
-		id: `demo:lifecycle:${h.id}`,
-		habitId: h.id,
-		habitTitleSnapshot: h.title,
-		eventType: h.parentId ? 'CONVERTED_TO_SUBHABIT' : 'CREATED',
-		effectiveDateIso: h.createdAtIso,
-		summary: h.parentId
-			? `ایجاد زیرطرح آزمایشی «${h.title}»`
-			: `ایجاد طرح آزمایشی «${h.title}»`,
-		reason: 'تزریق داده‌های آزمایشی جهت بررسی عملکرد سیستم',
-		previousStateJson: null,
-		newStateJson: JSON.stringify(h),
-		createdAtIso: nowIso
-	}));
-
-	const dailyPatterns: ReadonlyArray<{
-		offset: number;
-		workoutTier: number;
-		deepMinutes: number;
-		readingTier: number;
-		reviewTier: number;
-		journal: string | null;
-	}> = [
-		{ offset: -6, workoutTier: 2, deepMinutes: 15, readingTier: 2, reviewTier: 3, journal: 'روز اول تست سیستم؛ ساختار سطح‌بندی طرح‌ها حس خوبی دارد.' },
-		{ offset: -5, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: null },
-		{ offset: -4, workoutTier: 1, deepMinutes: 10, readingTier: 1, reviewTier: 2, journal: 'امروز کمی خسته بودم اما حداقل‌های برنزی را حفظ کردم.' },
-		{ offset: -3, workoutTier: 3, deepMinutes: 25, readingTier: 3, reviewTier: 3, journal: null },
-		{ offset: -2, workoutTier: 0, deepMinutes: 0, readingTier: 1, reviewTier: 1, journal: null },
-		{ offset: -1, workoutTier: 3, deepMinutes: 20, readingTier: 2, reviewTier: 3, journal: 'بازگشت به ریتم مطلوب و تکمیل تمرکز عمیق.' },
-		{ offset: 0, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: 'ثبت آزمایشی امروز برای بررسی نمودارها و تقویم.' }
-	];
-
-	const dailyEntries: DatabaseBackupPayload['data']['dailyEntries'] = [];
-	const habitLogs: DatabaseBackupPayload['data']['habitLogs'] = [];
-	const cadencePlans: CadencePlanEntity[] = [];
-
-	for (const pat of dailyPatterns) {
-		const dateIso = shiftIsoDate(referenceTodayIso, pat.offset);
-		const dayUpdatedIso = `${dateIso}T20:00:00.000Z`;
-
-		cadencePlans.push({
-			id: `demo:plan:${dateIso}:demo:habit-deep-work`,
-			dateIso,
-			habitId: 'demo:habit-deep-work',
-			plannedIntervals: 1,
-			plannedMinutesPerInterval: 20,
-			cadenceWindowMinutes: 60,
-			updatedAtIso: dayUpdatedIso
-		});
-
-		const rawDayLogs: HabitLogItemInput[] = [
-			{
-				habitId: 'demo:habit-workout',
-				habitTitleSnapshot: habitMap.get('demo:habit-workout')!.title,
-				achievedTier: pat.workoutTier,
-				achievedRuleSnapshot: resolveHabitRuleSnapshot(habitMap.get('demo:habit-workout')!, pat.workoutTier),
-				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-workout')!),
-				completedIntervals: null,
-				actualMinutesPerInterval: null,
-				totalActualMinutes: null,
-				plannedIntervalsSnapshot: null,
-				plannedMinutesSnapshot: null,
-				updatedAtIso: dayUpdatedIso
-			},
-			{
-				habitId: 'demo:habit-deep-work',
-				habitTitleSnapshot: habitMap.get('demo:habit-deep-work')!.title,
-				achievedTier: pat.deepMinutes >= 20 ? 3 : pat.deepMinutes > 0 ? 1 : 0,
-				achievedRuleSnapshot: `${pat.deepMinutes} دقیقه از هدف ۲۰ دقیقه`,
-				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-deep-work')!),
-				completedIntervals: 1,
-				actualMinutesPerInterval: pat.deepMinutes,
-				totalActualMinutes: pat.deepMinutes,
-				plannedIntervalsSnapshot: 1,
-				plannedMinutesSnapshot: 20,
-				updatedAtIso: dayUpdatedIso
-			},
-			{
-				habitId: 'demo:habit-sub-reading',
-				habitTitleSnapshot: habitMap.get('demo:habit-sub-reading')!.title,
-				achievedTier: pat.readingTier,
-				achievedRuleSnapshot: resolveHabitRuleSnapshot(habitMap.get('demo:habit-sub-reading')!, pat.readingTier),
-				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-sub-reading')!),
-				completedIntervals: null,
-				actualMinutesPerInterval: null,
-				totalActualMinutes: null,
-				plannedIntervalsSnapshot: null,
-				plannedMinutesSnapshot: null,
-				updatedAtIso: dayUpdatedIso
-			},
-			{
-				habitId: 'demo:habit-sub-review',
-				habitTitleSnapshot: habitMap.get('demo:habit-sub-review')!.title,
-				achievedTier: pat.reviewTier,
-				achievedRuleSnapshot: resolveHabitRuleSnapshot(habitMap.get('demo:habit-sub-review')!, pat.reviewTier),
-				habitSnapshotJson: serializeHabitSpecSnapshot(habitMap.get('demo:habit-sub-review')!),
-				completedIntervals: null,
-				actualMinutesPerInterval: null,
-				totalActualMinutes: null,
-				plannedIntervalsSnapshot: null,
-				plannedMinutesSnapshot: null,
-				updatedAtIso: dayUpdatedIso
-			}
-		];
-
-		for (const l of rawDayLogs) {
-			habitLogs.push({
-				id: `demo:log:${dateIso}:${l.habitId}`,
-				dateIso,
-				habitId: l.habitId,
-				habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-				achievedTier: l.achievedTier,
-				achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-				habitSnapshotJson: l.habitSnapshotJson ?? null,
-				completedIntervals: l.completedIntervals,
-				actualMinutesPerInterval: l.actualMinutesPerInterval,
-				totalActualMinutes: l.totalActualMinutes,
-				plannedIntervalsSnapshot: l.plannedIntervalsSnapshot,
-				plannedMinutesSnapshot: l.plannedMinutesSnapshot,
-				updatedAtIso: l.updatedAtIso ?? dayUpdatedIso
-			});
-		}
-
-		const status = evaluateDayStatusColor(habits, rawDayLogs);
-		dailyEntries.push({
-			id: `demo:entry:${dateIso}`,
-			dateIso,
-			dayStatus: status,
-			reflectionNote: 'ثبت آزمایشی جهت بررسی نمودارها',
-			journalText: pat.journal,
-			tagsJson: JSON.stringify([DEMO_ENTRY_TAG, status === 'optimal' ? 'انگیزه بالا' : 'خستگی']),
-			updatedAtIso: dayUpdatedIso
-		});
-	}
-
-	const books: BookEntity[] = [
-		{
-			id: 'demo:book-1',
-			title: 'کار عمیق (Deep Work) - آزمایشی',
-			author: 'کال نیوپورت',
-			status: 'completed',
-			startedAtIso: startIso,
-			finishedAtIso: referenceTodayIso,
-			rating: 5,
-			notes: 'نمونه کتاب آزمایشی برای بررسی کتابخانه و تقویم',
-			createdAtIso: nowIso,
-			updatedAtIso: nowIso
-		},
-		{
-			id: 'demo:book-2',
-			title: 'هنر شفاف اندیشیدن - آزمایشی',
-			author: 'رولف دوبلی',
-			status: 'reading',
-			startedAtIso: shiftIsoDate(referenceTodayIso, -2),
-			finishedAtIso: null,
-			rating: 4,
-			notes: 'در حال مطالعه (آزمایشی)',
-			createdAtIso: nowIso,
-			updatedAtIso: nowIso
-		}
-	];
-
-	const media: MediaEntity[] = [
-		{
-			id: 'demo:media-1',
-			title: 'Interstellar (آزمایشی)',
-			category: 'movie',
-			status: 'completed',
-			startedAtIso: shiftIsoDate(referenceTodayIso, -3),
-			finishedAtIso: shiftIsoDate(referenceTodayIso, -3),
-			rating: 5,
-			notes: 'نمونه فیلم ثبت‌شده در آرشیو آزمایشی',
-			createdAtIso: nowIso,
-			updatedAtIso: nowIso
-		},
-		{
-			id: 'demo:media-2',
-			title: 'Attack on Titan (آزمایشی)',
-			category: 'anime',
-			status: 'on_hold',
-			startedAtIso: null,
-			finishedAtIso: null,
-			rating: 5,
-			notes: 'نمونه اثر در نوبت تماشا',
-			createdAtIso: nowIso,
-			updatedAtIso: nowIso
-		}
-	];
-
-	const notes: NoteEntity[] = [
-		{
-			id: 'demo:note-1',
-			title: 'مستندات رسمی Nuxt (یادداشت آزمایشی)',
-			content: 'لینک مستقیم بررسی مستندات:\nhttps://nuxt.com/docs\nشماره پیگیری نمونه: 9876543210',
-			category: 'ابزارها',
-			isPinned: true,
-			createdAtIso: nowIso,
-			updatedAtIso: nowIso
-		}
-	];
-
-	const tomorrowIso = shiftIsoDate(referenceTodayIso, 1);
-	const tomorrowParts = isoToJalaliParts(tomorrowIso);
-
-	const calendarEvents: CalendarEventEntity[] = [
-		{
-			id: 'demo:event-1',
-			title: 'ارزیابی هفتگی سیستم (رویداد آزمایشی)',
-			eventType: 'reminder',
-			isAnnual: false,
-			dateIso: tomorrowIso,
-			jalaliMonth: tomorrowParts.jm,
-			jalaliDay: tomorrowParts.jd,
-			isCompleted: false,
-			notes: 'نمونه رویداد برای تست بنر یادآور صفحه اصلی و تقویم',
-			createdAtIso: nowIso,
-			updatedAtIso: nowIso
-		}
-	];
-
-	return {
-		version: 1,
-		appName: 'new-life',
-		exportedAtIso: nowIso,
-		jalaliDate: isoToJalaliSlash(referenceTodayIso),
-		data: {
-			habits,
-			dailyEntries,
-			habitLogs,
-			cadencePlans,
-			books,
-			media,
-			notes,
-			calendarEvents,
-			lifecycleEvents,
-			reflectionTags: []
-		}
-	};
-}
-
-
-----------------------------------------------------------------
-
-================================================================
 PATH: app/plugins/persian-digits.client.ts
 ================================================================
 
@@ -17892,6 +18377,24 @@ export default defineNuxtRouteMiddleware(async (to) => {
 		return navigateTo('/');
 	}
 });
+
+
+----------------------------------------------------------------
+
+================================================================
+PATH: app/utils/clone.ts
+================================================================
+
+import { toRaw } from 'vue';
+
+export function clonePlain<T>(value: T): T {
+	const raw = toRaw(value);
+	try {
+		return structuredClone(raw);
+	} catch {
+		return JSON.parse(JSON.stringify(raw)) as T;
+	}
+}
 
 
 ----------------------------------------------------------------
@@ -18203,6 +18706,7 @@ services:
       - NITRO_HOST=0.0.0.0
       - NITRO_PORT=3000
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/personal_os}
+      - SESSION_HMAC_SECRET=${SESSION_HMAC_SECRET:-}
       - TZ=Asia/Tehran
 
 volumes:

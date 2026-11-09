@@ -27,6 +27,7 @@ export function isDailyEntryEmpty(
 		input.logs.every(
 			(l) =>
 				(l.achievedTier === null || l.achievedTier === undefined) &&
+				(l.actualMinutesPerInterval === null || l.actualMinutesPerInterval === undefined) &&
 				(l.totalActualMinutes === null ||
 					l.totalActualMinutes === 0 ||
 					l.totalActualMinutes === undefined)
@@ -157,8 +158,9 @@ export function shouldDiscardHabitLogItem(
 
 	const isUnscheduledAndUnloggedCadence =
 		habit?.trackingMode === 'interval_cadence' &&
+		(log.achievedTier === null || log.achievedTier === undefined) &&
+		(log.actualMinutesPerInterval === null || log.actualMinutesPerInterval === undefined) &&
 		(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
-		(!log.actualMinutesPerInterval || log.actualMinutesPerInterval <= 0) &&
 		(!log.totalActualMinutes || log.totalActualMinutes <= 0);
 
 	return isUnloggedTiered || isUnscheduledAndUnloggedCadence;
@@ -511,7 +513,14 @@ export function isHabitNodeCompleted(params: {
 		return tier !== null && tier !== undefined;
 	}
 
-	const actual = resolveEffectiveCadenceMinutes(logsByHabitId[habit.id]);
+	const log = logsByHabitId[habit.id];
+	if (log?.achievedTier !== null && log?.achievedTier !== undefined) {
+		return true;
+	}
+	if (log?.actualMinutesPerInterval !== null && log?.actualMinutesPerInterval !== undefined) {
+		return hasExistingEntry || isDirty;
+	}
+	const actual = resolveEffectiveCadenceMinutes(log);
 	return actual > 0 && (hasExistingEntry || isDirty);
 }
 
@@ -585,6 +594,7 @@ export function evaluateDayStatusColor(
 			.filter(
 				(l) =>
 					(l.achievedTier !== null && l.achievedTier !== undefined) ||
+					(l.actualMinutesPerInterval !== null && l.actualMinutesPerInterval !== undefined) ||
 					(l.plannedMinutesSnapshot !== null &&
 						l.plannedMinutesSnapshot !== undefined &&
 						l.plannedMinutesSnapshot > 0) ||

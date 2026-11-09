@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
+import { isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, MEDIA_CATEGORY_OPTIONS, MEDIA_STATUS_OPTIONS } from '~/domain/constants';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaStatus, UpdateMediaInput } from '~/domain/schemas';
 import { Clapperboard, History } from 'lucide-vue-next';
 
 interface Props {
+	todayIso: string;
 	editingMedia?: MediaEntity | null;
 	existingSuggestions?: Array<{ title: string; category: MediaCategory }>;
 	isSubmitting?: boolean;
@@ -21,7 +22,7 @@ const emit = defineEmits<{
 	(e: 'submit', payload: CreateMediaInput | UpdateMediaInput): void;
 }>();
 
-const defaultJalaliToday = toPersianDigits(isoToJalaliSlash(getTodayIso()));
+const defaultJalaliToday = computed(() => toPersianDigits(isoToJalaliSlash(props.todayIso)));
 const initialStatus: MediaStatus = props.editingMedia?.status ?? 'completed';
 
 const title = ref(props.editingMedia?.title ?? '');
@@ -35,9 +36,17 @@ const finishedJalali = ref(
 	props.editingMedia?.finishedAtIso
 		? toPersianDigits(isoToJalaliSlash(props.editingMedia.finishedAtIso))
 		: initialStatus === 'completed'
-			? defaultJalaliToday
+			? defaultJalaliToday.value
 			: ''
 );
+
+watch(selectedStatus, (nextStatus) => {
+	if (nextStatus === 'completed' && !finishedJalali.value.trim()) {
+		finishedJalali.value = defaultJalaliToday.value;
+	} else if (nextStatus !== 'completed' && !props.editingMedia?.finishedAtIso) {
+		finishedJalali.value = '';
+	}
+});
 const notes = ref(props.editingMedia?.notes ?? '');
 const validationError = ref<string | null>(null);
 
@@ -61,9 +70,12 @@ function handleTitleChange(e: Event) {
 function handleSubmit() {
 	if (!title.value.trim() || props.isSubmitting) return;
 
+	const effectiveFinishedJalali =
+		selectedStatus.value === 'completed' ? finishedJalali.value.trim() : '';
+
 	const rangeCheck = validateJalaliDateRange({
 		startedJalali: startedJalali.value,
-		finishedJalali: finishedJalali.value
+		finishedJalali: effectiveFinishedJalali
 	});
 	if (!rangeCheck.valid) {
 		validationError.value = rangeCheck.error ?? 'تاریخ وارد شده نامعتبر است';
@@ -78,7 +90,7 @@ function handleSubmit() {
 			category: selectedCategory.value,
 			status: selectedStatus.value,
 			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: finishedJalali.value.trim() || undefined,
+			finishedJalali: effectiveFinishedJalali || undefined,
 			rating: selectedRating.value,
 			notes: notes.value.trim() || undefined
 		});
@@ -88,7 +100,7 @@ function handleSubmit() {
 			category: selectedCategory.value,
 			status: selectedStatus.value,
 			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: finishedJalali.value.trim() || undefined,
+			finishedJalali: effectiveFinishedJalali || undefined,
 			rating: selectedRating.value,
 			notes: notes.value.trim() || undefined
 		});

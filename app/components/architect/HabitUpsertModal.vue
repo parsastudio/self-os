@@ -64,6 +64,23 @@ const cadenceWindowMinutes = ref<number>(
 const notes = ref(props.editingHabit?.notes ?? '');
 const reason = ref('');
 
+watch(structureKind, (nextKind) => {
+	if (nextKind !== 'tiered') {
+		selectedParentId.value = '';
+		isSituational.value = false;
+	}
+});
+
+watch(selectedParentId, (nextParentId) => {
+	if (nextParentId) {
+		structureKind.value = 'tiered';
+		const parentHabit = props.rootHabits.find((h) => h.id === nextParentId);
+		if (parentHabit) {
+			selectedTimeSlot.value = parentHabit.timeSlot;
+		}
+	}
+});
+
 const modalTitle = computed(() =>
 	props.mode === 'edit' && props.editingHabit
 		? `ویرایش «${props.editingHabit.title}»`
@@ -112,58 +129,56 @@ const timeSlotOptions = [
 function handleSubmit() {
 	if (!title.value.trim() || props.isSubmitting) return;
 
+	const isTieredLeaf = structureKind.value === 'tiered';
+	const isCadence = structureKind.value === 'interval_cadence';
+	const effectiveParentId = isTieredLeaf ? selectedParentId.value || null : null;
+
 	if (props.mode === 'edit' && props.editingHabit) {
 		emit('update', {
 			habitId: props.editingHabit.id,
 			title: title.value.trim(),
-			parentId: selectedParentId.value || null,
+			parentId: effectiveParentId,
 			category: props.editingHabit.category,
 			timeSlot: selectedTimeSlot.value,
-			isSituational: isSituational.value,
+			isSituational: isTieredLeaf ? isSituational.value : false,
 			status: selectedStatus.value,
 			scheduleLabel: scheduleLabel.value.trim() || null,
 			notes: notes.value.trim() || null,
-			bronzeDesc:
-				structureKind.value === 'interval_cadence' ? null : (bronzeDesc.value.trim() || null),
-			silverDesc:
-				structureKind.value === 'interval_cadence' ? null : (silverDesc.value.trim() || null),
-			goldDesc:
-				structureKind.value === 'interval_cadence' ? null : (goldDesc.value.trim() || null),
-			emergencyMinDesc:
-				structureKind.value === 'interval_cadence'
-					? (emergencyMinDesc.value.trim() || null)
-					: null,
-			defaultMinutesPerInterval:
-				structureKind.value === 'interval_cadence'
-					? Math.max(0, Number(defaultMinutesPerInterval.value) || 0)
-					: props.editingHabit.defaultMinutesPerInterval,
-			cadenceWindowMinutes:
-				structureKind.value === 'interval_cadence'
-					? Math.max(
-							CADENCE_DEFAULTS.MIN_WINDOW_MINUTES,
-							Math.round(Number(cadenceWindowMinutes.value) || CADENCE_DEFAULTS.WINDOW_MINUTES)
-						)
-					: props.editingHabit.cadenceWindowMinutes,
+			bronzeDesc: isTieredLeaf ? bronzeDesc.value.trim() || null : null,
+			silverDesc: isTieredLeaf ? silverDesc.value.trim() || null : null,
+			goldDesc: isTieredLeaf ? goldDesc.value.trim() || null : null,
+			emergencyMinDesc: isCadence ? emergencyMinDesc.value.trim() || null : null,
+			defaultMinutesPerInterval: isCadence
+				? Math.max(0, Number(defaultMinutesPerInterval.value) || 0)
+				: props.editingHabit.defaultMinutesPerInterval,
+			cadenceWindowMinutes: isCadence
+				? Math.max(
+						CADENCE_DEFAULTS.MIN_WINDOW_MINUTES,
+						Math.round(Number(cadenceWindowMinutes.value) || CADENCE_DEFAULTS.WINDOW_MINUTES)
+					)
+				: props.editingHabit.cadenceWindowMinutes,
 			reason: reason.value.trim() || 'ویرایش قوانین طرح'
 		});
 	} else {
-		const isCadence = structureKind.value === 'interval_cadence';
 		emit('create', {
 			title: title.value.trim(),
-			parentId: selectedParentId.value || null,
+			parentId: effectiveParentId,
 			category: 'عمومی',
 			trackingMode: isCadence ? 'interval_cadence' : 'tiered',
 			timeSlot: selectedTimeSlot.value,
-			isSituational: isSituational.value,
+			isSituational: isTieredLeaf ? isSituational.value : false,
 			scheduleLabel: scheduleLabel.value.trim() || undefined,
 			notes: notes.value.trim() || undefined,
-			bronzeDesc: isCadence ? undefined : (bronzeDesc.value.trim() || undefined),
-			silverDesc: isCadence ? undefined : (silverDesc.value.trim() || undefined),
-			goldDesc: isCadence ? undefined : (goldDesc.value.trim() || undefined),
-			emergencyMinDesc: isCadence ? (emergencyMinDesc.value.trim() || undefined) : undefined,
+			bronzeDesc: isTieredLeaf ? bronzeDesc.value.trim() || undefined : undefined,
+			silverDesc: isTieredLeaf ? silverDesc.value.trim() || undefined : undefined,
+			goldDesc: isTieredLeaf ? goldDesc.value.trim() || undefined : undefined,
+			emergencyMinDesc: isCadence ? emergencyMinDesc.value.trim() || undefined : undefined,
 			defaultIntervals: CADENCE_DEFAULTS.INTERVALS,
 			defaultMinutesPerInterval: isCadence
-				? Math.max(0, Number(defaultMinutesPerInterval.value) || CADENCE_DEFAULTS.MINUTES_PER_INTERVAL)
+				? Math.max(
+						0,
+						Number(defaultMinutesPerInterval.value) || CADENCE_DEFAULTS.MINUTES_PER_INTERVAL
+					)
 				: 0,
 			cadenceWindowMinutes: isCadence
 				? Math.max(

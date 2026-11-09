@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
+import { isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, BOOK_STATUS_OPTIONS } from '~/domain/constants';
 import type { BookEntity, BookStatus, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import { BookOpen, History } from 'lucide-vue-next';
 
 interface Props {
+	todayIso: string;
 	editingBook?: BookEntity | null;
 	existingSuggestions?: Array<{ title: string; author: string | null }>;
 	isSubmitting?: boolean;
@@ -21,11 +22,12 @@ const emit = defineEmits<{
 	(e: 'submit', payload: CreateBookInput | UpdateBookInput): void;
 }>();
 
-const defaultJalaliToday = toPersianDigits(isoToJalaliSlash(getTodayIso()));
+const defaultJalaliToday = computed(() => toPersianDigits(isoToJalaliSlash(props.todayIso)));
+const initialStatus: BookStatus = props.editingBook?.status ?? 'completed';
 
 const title = ref(props.editingBook?.title ?? '');
 const author = ref(props.editingBook?.author ?? '');
-const selectedStatus = ref<BookStatus>(props.editingBook?.status ?? 'completed');
+const selectedStatus = ref<BookStatus>(initialStatus);
 const selectedRating = ref<number>(props.editingBook?.rating ?? 5);
 const startedJalali = ref(
 	props.editingBook?.startedAtIso ? toPersianDigits(isoToJalaliSlash(props.editingBook.startedAtIso)) : ''
@@ -33,8 +35,18 @@ const startedJalali = ref(
 const finishedJalali = ref(
 	props.editingBook?.finishedAtIso
 		? toPersianDigits(isoToJalaliSlash(props.editingBook.finishedAtIso))
-		: defaultJalaliToday
+		: initialStatus === 'completed'
+			? defaultJalaliToday.value
+			: ''
 );
+
+watch(selectedStatus, (nextStatus) => {
+	if (nextStatus === 'completed' && !finishedJalali.value.trim()) {
+		finishedJalali.value = defaultJalaliToday.value;
+	} else if (nextStatus !== 'completed' && !props.editingBook?.finishedAtIso) {
+		finishedJalali.value = '';
+	}
+});
 const notes = ref(props.editingBook?.notes ?? '');
 const validationError = ref<string | null>(null);
 
@@ -58,9 +70,12 @@ function handleTitleChange(e: Event) {
 function handleSubmit() {
 	if (!title.value.trim() || props.isSubmitting) return;
 
+	const effectiveFinishedJalali =
+		selectedStatus.value === 'completed' ? finishedJalali.value.trim() : '';
+
 	const rangeCheck = validateJalaliDateRange({
 		startedJalali: startedJalali.value,
-		finishedJalali: finishedJalali.value
+		finishedJalali: effectiveFinishedJalali
 	});
 	if (!rangeCheck.valid) {
 		validationError.value = rangeCheck.error ?? 'تاریخ وارد شده نامعتبر است';
@@ -75,7 +90,7 @@ function handleSubmit() {
 			author: author.value.trim() || undefined,
 			status: selectedStatus.value,
 			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: finishedJalali.value.trim() || undefined,
+			finishedJalali: effectiveFinishedJalali || undefined,
 			rating: selectedRating.value,
 			notes: notes.value.trim() || undefined
 		});
@@ -85,7 +100,7 @@ function handleSubmit() {
 			author: author.value.trim() || undefined,
 			status: selectedStatus.value,
 			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: finishedJalali.value.trim() || undefined,
+			finishedJalali: effectiveFinishedJalali || undefined,
 			rating: selectedRating.value,
 			notes: notes.value.trim() || undefined
 		});

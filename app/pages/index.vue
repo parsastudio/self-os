@@ -132,6 +132,8 @@ const groupedTieredSections = computed(() => {
 	<div class="space-y-6 pb-12">
 		<TrackerJalaliDateScrubber
 			:current-date-iso="currentDateIso"
+			:today-iso="todayIso"
+			:yesterday-iso="yesterdayIso"
 			:recent-entries="tracker.allEntries.value"
 			:live-day-status="tracker.computedDayStatus.value"
 			:is-live-dirty="tracker.isDirty.value"

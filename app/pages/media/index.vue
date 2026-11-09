@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter, UpdateMediaInput } from '~/domain/schemas';
 import { Clapperboard, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
+const { todayIso } = useLiveTodayIso();
 
 const mediaItems = useDexieLiveQuery(() => db.media.orderBy('createdAtIso').reverse().toArray(), []);
 const isMediaLoading = mediaItems.isLoading;
@@ -177,6 +179,7 @@ async function handleDeleteMedia(mediaId: string) {
 		<LazyMediaUpsertModal
 			v-if="isModalOpen"
 			:key="editingMedia?.id ?? 'new'"
+			:today-iso="todayIso"
 			:editing-media="editingMedia"
 			:existing-suggestions="existingSuggestions"
 			:is-submitting="isSubmittingMedia"

@@ -1,4 +1,4 @@
-import { onScopeDispose, type Ref } from 'vue';
+import { onMounted, onScopeDispose, type Ref } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -15,7 +15,7 @@ import {
 	resolveHistoricalHabitForDate
 } from '~/core/habit-engine';
 import { shiftIsoDate } from '~/domain/calendar';
-import { DEFAULT_REFLECTION_TAGS, TIER_SCORES } from '~/domain/constants';
+import { CADENCE_SUCCESS_RATIOS, DEFAULT_REFLECTION_TAGS, TIER_SCORES } from '~/domain/constants';
 import type {
 	CadenceDraftItem,
 	DayStatusColor,
@@ -103,7 +103,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			reflectionNote.value = entry.value?.reflectionNote ?? '';
 			journalText.value = entry.value?.journalText ?? '';
 			selectedTags.value = entry.value?.tags ? [...entry.value.tags] : [];
-			manualDayStatus.value = entry.value?.dayStatus ?? null;
+			manualDayStatus.value = null;
 
 			const dayPlanMap = new Map(dayCadencePlans.value.map((p) => [p.habitId, p]));
 			const existingLogMap = new Map(logs.value.map((l) => [l.habitId, l]));
@@ -112,8 +112,23 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			for (const habit of habits.value) {
 				const existing = existingLogMap.get(habit.id);
 				const dayPlan = dayPlanMap.get(habit.id);
-				const plannedIntervals = dayPlan?.plannedIntervals ?? null;
-				const plannedMinutes = dayPlan?.plannedMinutesPerInterval ?? null;
+				const hasDefaultCadenceTarget =
+					habit.trackingMode === 'interval_cadence' &&
+					habit.status === 'active' &&
+					habit.defaultMinutesPerInterval > 0 &&
+					(!entry.value || habit.createdAtIso.slice(0, 10) <= dateIso.value);
+				const plannedIntervals =
+					dayPlan !== undefined
+						? dayPlan.plannedIntervals
+						: hasDefaultCadenceTarget
+							? habit.defaultIntervals
+							: null;
+				const plannedMinutes =
+					dayPlan !== undefined
+						? dayPlan.plannedMinutesPerInterval
+						: hasDefaultCadenceTarget
+							? habit.defaultMinutesPerInterval
+							: null;
 
 				if (existing) {
 					nextLogs[habit.id] = {
@@ -136,14 +151,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 						achievedTier: null,
 						achievedRuleSnapshot: null,
 						completedIntervals: null,
-						actualMinutesPerInterval:
-							habit.trackingMode === 'interval_cadence' && plannedMinutes && plannedMinutes > 0
-								? 0
-								: null,
-						totalActualMinutes:
-							habit.trackingMode === 'interval_cadence' && plannedMinutes && plannedMinutes > 0
-								? 0
-								: null,
+						actualMinutesPerInterval: null,
+						totalActualMinutes: null,
 						plannedIntervalsSnapshot: plannedIntervals,
 						plannedMinutesSnapshot: plannedMinutes,
 						updatedAtIso: null
@@ -158,9 +167,14 @@ export function useDailyTracker(dateIso: Ref<string>) {
 				const tPlan = tomorrowPlanMap.get(habit.id);
 				nextTomorrow[habit.id] = {
 					habitId: habit.id,
-					plannedIntervals: 1,
-					plannedMinutesPerInterval: tPlan?.plannedMinutesPerInterval ?? 0,
-					cadenceWindowMinutes: 60
+					plannedIntervals: tPlan?.plannedIntervals ?? habit.defaultIntervals ?? 1,
+					plannedMinutesPerInterval:
+						tPlan !== undefined
+							? tPlan.plannedMinutesPerInterval
+							: habit.status === 'active'
+								? habit.defaultMinutesPerInterval
+								: 0,
+					cadenceWindowMinutes: tPlan?.cadenceWindowMinutes ?? habit.cadenceWindowMinutes ?? 60
 				};
 			}
 			tomorrowPlansByHabitId.value = nextTomorrow;
@@ -172,13 +186,29 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	const scheduledCadenceHabitIds = computed<ReadonlySet<string>>(() => {
 		const set = new Set<string>();
+		const explicitZeroIds = new Set<string>();
 		for (const plan of dayCadencePlans.value) {
 			if (plan.plannedMinutesPerInterval > 0) {
 				set.add(plan.habitId);
+			} else {
+				explicitZeroIds.add(plan.habitId);
+			}
+		}
+		for (const habit of habits.value) {
+			if (
+				habit.trackingMode === 'interval_cadence' &&
+				habit.status === 'active' &&
+				habit.defaultMinutesPerInterval > 0 &&
+				!explicitZeroIds.has(habit.id) &&
+				(!entry.value || habit.createdAtIso.slice(0, 10) <= dateIso.value)
+			) {
+				set.add(habit.id);
 			}
 		}
 		for (const log of logs.value) {
 			if (
+				(log.achievedTier !== null && log.achievedTier !== undefined) ||
+				(log.actualMinutesPerInterval !== null && log.actualMinutesPerInterval !== undefined) ||
 				(log.plannedMinutesSnapshot !== null &&
 					log.plannedMinutesSnapshot !== undefined &&
 					log.plannedMinutesSnapshot > 0) ||
@@ -200,8 +230,10 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		const set = new Set<string>();
 		for (const log of Object.values(logsByHabitId.value)) {
 			const hasTier = log.achievedTier !== null && log.achievedTier !== undefined;
+			const hasExplicitCadenceActual =
+				log.actualMinutesPerInterval !== null && log.actualMinutesPerInterval !== undefined;
 			const hasMinutes = resolveEffectiveCadenceMinutes(log) > 0;
-			if (hasTier || hasMinutes) {
+			if (hasTier || hasExplicitCadenceActual || hasMinutes) {
 				set.add(log.habitId);
 			}
 		}
@@ -242,6 +274,9 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	const computedDayStatus = computed<DayStatusColor>(() => {
 		if (manualDayStatus.value) return manualDayStatus.value;
+		if (!isDirty.value && entry.value && loggedHabitIds.value.size === 0) {
+			return entry.value.dayStatus;
+		}
 		return evaluateDayStatusColor(applicableHabits.value, Object.values(logsByHabitId.value), {
 			dateIso: dateIso.value,
 			scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
@@ -335,9 +370,34 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		}
 	}
 
+	function handlePageVisibilityFlush() {
+		if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+			if (pendingSavePayload || isDirty.value) {
+				void flushPendingSave(isDirty.value);
+			}
+		}
+	}
+
+	function handlePageHideFlush() {
+		if (pendingSavePayload || isDirty.value) {
+			void flushPendingSave(isDirty.value);
+		}
+	}
+
+	if (import.meta.client) {
+		onMounted(() => {
+			document.addEventListener('visibilitychange', handlePageVisibilityFlush);
+			window.addEventListener('pagehide', handlePageHideFlush);
+		});
+	}
+
 	onScopeDispose(() => {
-		if (pendingSavePayload) {
-			void flushPendingSave();
+		if (import.meta.client) {
+			document.removeEventListener('visibilitychange', handlePageVisibilityFlush);
+			window.removeEventListener('pagehide', handlePageHideFlush);
+		}
+		if (pendingSavePayload || isDirty.value) {
+			void flushPendingSave(isDirty.value);
 		}
 	});
 
@@ -395,24 +455,34 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		const nowIso = new Date().toISOString();
 		const habit = effectiveHabitsForDate.value.find((h) => h.id === habitId);
 
-		logsByHabitId.value[habitId] = {
-			...current,
-			habitTitleSnapshot: habit?.title ?? current.habitTitleSnapshot ?? null,
-			achievedTier: tier,
-			achievedRuleSnapshot: habit && tier !== null ? resolveHabitRuleSnapshot(habit, tier) : null,
-			updatedAtIso: nowIso
+		logsByHabitId.value = {
+			...logsByHabitId.value,
+			[habitId]: {
+				...current,
+				habitTitleSnapshot: habit?.title ?? current.habitTitleSnapshot ?? null,
+				achievedTier: tier,
+				achievedRuleSnapshot: habit && tier !== null ? resolveHabitRuleSnapshot(habit, tier) : null,
+				updatedAtIso: nowIso
+			}
 		};
 		manualDayStatus.value = null;
 		scheduleAutoSave(0);
 	}
 
 	function setParentGroupAllTier(parentId: string, tier: number) {
-		const children = effectiveHabitsForDate.value.filter((h) => h.parentId === parentId && h.status === 'active');
+		const children = effectiveHabitsForDate.value.filter(
+			(h) => h.parentId === parentId && h.status === 'active'
+		);
 		const allAlreadySelected =
-			children.length > 0 && children.every((child) => logsByHabitId.value[child.id]?.achievedTier === tier);
+			children.length > 0 &&
+			children.every((child) => logsByHabitId.value[child.id]?.achievedTier === tier);
 		const targetTier = allAlreadySelected ? null : tier;
+		const nowIso = new Date().toISOString();
+		const nextLogs = { ...logsByHabitId.value };
 
 		for (const child of children) {
+			const currentChildLog = nextLogs[child.id];
+			if (!currentChildLog) continue;
 			const maxChildTier = getMaxSupportedTier(child);
 			const effectiveTier =
 				targetTier === null
@@ -420,9 +490,31 @@ export function useDailyTracker(dateIso: Ref<string>) {
 					: targetTier === TIER_SCORES.FAILED || targetTier === TIER_SCORES.SKIPPED
 						? targetTier
 						: Math.min(targetTier, maxChildTier);
-			setTierExplicit(child.id, effectiveTier);
+			nextLogs[child.id] = {
+				...currentChildLog,
+				habitTitleSnapshot: child.title,
+				achievedTier: effectiveTier,
+				achievedRuleSnapshot:
+					effectiveTier !== null ? resolveHabitRuleSnapshot(child, effectiveTier) : null,
+				updatedAtIso: nowIso
+			};
 		}
-		setTierExplicit(parentId, null);
+
+		const parentCurrent = nextLogs[parentId];
+		if (parentCurrent) {
+			const parentHabit = effectiveHabitsForDate.value.find((h) => h.id === parentId);
+			nextLogs[parentId] = {
+				...parentCurrent,
+				habitTitleSnapshot: parentHabit?.title ?? parentCurrent.habitTitleSnapshot ?? null,
+				achievedTier: null,
+				achievedRuleSnapshot: null,
+				updatedAtIso: nowIso
+			};
+		}
+
+		logsByHabitId.value = nextLogs;
+		manualDayStatus.value = null;
+		scheduleAutoSave(0);
 	}
 
 	function clearDay() {
@@ -431,16 +523,13 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		for (const habit of habits.value) {
 			const current = updated[habit.id];
 			if (!current) continue;
-			const isScheduledCadence =
-				habit.trackingMode === 'interval_cadence' &&
-				scheduledCadenceHabitIds.value.has(habit.id);
 			updated[habit.id] = {
 				...current,
 				achievedTier: null,
 				achievedRuleSnapshot: null,
 				completedIntervals: null,
-				actualMinutesPerInterval: isScheduledCadence ? 0 : null,
-				totalActualMinutes: isScheduledCadence ? 0 : null,
+				actualMinutesPerInterval: null,
+				totalActualMinutes: null,
 				updatedAtIso: nowIso
 			};
 		}
@@ -452,18 +541,65 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		scheduleAutoSave(0);
 	}
 
-	function updateCadenceActual(habitId: string, minutesPerInterval: number) {
+	function updateCadenceActual(habitId: string, minutesPerInterval: number | null) {
 		const current = logsByHabitId.value[habitId];
 		if (!current) return;
 		const nowIso = new Date().toISOString();
-		const safeMinutes = Math.max(0, Number.isNaN(minutesPerInterval) ? 0 : minutesPerInterval);
+		const habit = effectiveHabitsForDate.value.find((h) => h.id === habitId);
 
-		logsByHabitId.value[habitId] = {
-			...current,
-			completedIntervals: null,
-			actualMinutesPerInterval: safeMinutes,
-			totalActualMinutes: safeMinutes,
-			updatedAtIso: nowIso
+		if (minutesPerInterval === null) {
+			logsByHabitId.value = {
+				...logsByHabitId.value,
+				[habitId]: {
+					...current,
+					achievedTier: null,
+					achievedRuleSnapshot: null,
+					completedIntervals: null,
+					actualMinutesPerInterval: null,
+					totalActualMinutes: null,
+					updatedAtIso: nowIso
+				}
+			};
+			manualDayStatus.value = null;
+			scheduleAutoSave(0);
+			return;
+		}
+
+		const safeMinutes = Math.max(0, Number.isNaN(minutesPerInterval) ? 0 : minutesPerInterval);
+		const plannedMinutes =
+			current.plannedMinutesSnapshot && current.plannedMinutesSnapshot > 0
+				? current.plannedMinutesSnapshot
+				: habit?.defaultMinutesPerInterval && habit.defaultMinutesPerInterval > 0
+					? habit.defaultMinutesPerInterval
+					: null;
+
+		const achievedTier =
+			safeMinutes <= 0
+				? TIER_SCORES.FAILED
+				: !plannedMinutes || safeMinutes >= plannedMinutes
+					? TIER_SCORES.GOLD
+					: safeMinutes / plannedMinutes >= CADENCE_SUCCESS_RATIOS.SILVER_THRESHOLD
+						? TIER_SCORES.SILVER
+						: TIER_SCORES.BRONZE;
+
+		const achievedRuleSnapshot = plannedMinutes
+			? `${safeMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`
+			: `${safeMinutes} دقیقه انجام‌شده`;
+
+		logsByHabitId.value = {
+			...logsByHabitId.value,
+			[habitId]: {
+				...current,
+				habitTitleSnapshot: habit?.title ?? current.habitTitleSnapshot ?? null,
+				achievedTier,
+				achievedRuleSnapshot,
+				completedIntervals: 1,
+				actualMinutesPerInterval: safeMinutes,
+				totalActualMinutes: safeMinutes,
+				plannedIntervalsSnapshot: current.plannedIntervalsSnapshot ?? habit?.defaultIntervals ?? 1,
+				plannedMinutesSnapshot: plannedMinutes,
+				updatedAtIso: nowIso
+			}
 		};
 		manualDayStatus.value = null;
 		scheduleAutoSave(0);
