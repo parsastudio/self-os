@@ -140,7 +140,8 @@ const groupedTieredSections = computed(() => {
 			</NuxtLink>
 		</div>
 
-		<template v-else>
+		<NuxtErrorBoundary v-else>
+			<div class="space-y-6">
 			<TrackerActionToolbar
 				:cadence-habits="tracker.schedulableCadenceHabits.value"
 				:tomorrow-iso="tracker.tomorrowIso.value"
@@ -201,6 +202,22 @@ const groupedTieredSections = computed(() => {
 				@change="tracker.scheduleAutoSave(750)"
 				@open-memories="router.push('/memories')"
 			/>
-		</template>
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در نمایش فهرست طرح‌های روزانه' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>

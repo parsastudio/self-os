@@ -6,7 +6,13 @@ import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
 import NoteItemCard from '~/components/notes/NoteItemCard.vue';
-import NoteUpsertModal from '~/components/notes/NoteUpsertModal.vue';
+>>>>>>>
+<<<<<<< SEARCH
+		<NoteUpsertModal
+			v-if="isModalOpen"
+=======
+		<LazyNotesNoteUpsertModal
+			v-if="isModalOpen"
 import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 
 const db = useAppDatabase();

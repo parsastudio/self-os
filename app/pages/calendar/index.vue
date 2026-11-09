@@ -97,6 +97,10 @@ const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
 const allBooks = useDexieLiveQuery(() => db.books.toArray(), []);
 const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
 
+const isCalendarLoading = computed(
+	() => allHabits.isLoading.value && monthEntries.isLoading.value && allHabits.value.length === 0
+);
+
 const userSelectedIso = ref<string | null>(null);
 
 const archiveData = computed(() =>
@@ -225,6 +229,12 @@ function goToToday() {
 			</div>
 		</section>
 
+		<div v-if="isCalendarLoading" class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12" aria-busy="true">
+			<div class="h-96 animate-pulse rounded-3xl border border-border bg-surface lg:col-span-7"></div>
+			<div class="h-80 animate-pulse rounded-3xl border border-border bg-surface lg:col-span-5"></div>
+		</div>
+
+		<NuxtErrorBoundary v-else>
 		<div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
 			<!-- گرید ماه جلالی -->
 			<div class="space-y-6 lg:col-span-7">
@@ -284,5 +294,21 @@ function goToToday() {
 				/>
 			</div>
 		</div>
+
+		<template #error="{ error, clearError }">
+			<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+				<p class="text-sm font-extrabold text-failed">
+					{{ error?.message || 'خطا در بارگذاری تقویم و رویدادهای ماه' }}
+				</p>
+				<button
+					type="button"
+					class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+					@click="clearError()"
+				>
+					تلاش مجدد
+				</button>
+			</div>
+		</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>

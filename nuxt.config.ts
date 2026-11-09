@@ -26,9 +26,6 @@ export default defineNuxtConfig({
   },
 
   nitro: {
-    prerender: {
-      routes: ['/']
-    },
     experimental: {
       openAPI: false
     }

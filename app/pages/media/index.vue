@@ -5,7 +5,13 @@ import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter, UpdateMediaInput } from '~/domain/schemas';
 import MediaHeaderStats from '~/components/media/MediaHeaderStats.vue';
 import MediaItemCard from '~/components/media/MediaItemCard.vue';
-import MediaUpsertModal from '~/components/media/MediaUpsertModal.vue';
+>>>>>>>
+<<<<<<< SEARCH
+		<MediaUpsertModal
+			v-if="isModalOpen"
+=======
+		<LazyMediaUpsertModal
+			v-if="isModalOpen"
 import { Clapperboard, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();

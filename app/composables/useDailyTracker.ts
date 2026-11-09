@@ -57,6 +57,14 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	let pendingSavePayload: SaveDailyEntryInput | null = null;
 	let activeDraftDateIso = dateIso.value;
 
+	const isHydratingQueries = computed(
+		() =>
+			entry.isLoading.value ||
+			logs.isLoading.value ||
+			dayCadencePlans.isLoading.value ||
+			tomorrowCadencePlans.isLoading.value
+	);
+
 	const availableTags = computed(() => {
 		if (tagsRecords.value.length > 0) {
 			return tagsRecords.value.map((t) => t.label);
@@ -66,28 +74,12 @@ export function useDailyTracker(dateIso: Ref<string>) {
 
 	// Synchronize when date or database queries change
 	watch(
-		[
-			dateIso,
-			entry,
-			logs,
-			habits,
-			dayCadencePlans,
-			tomorrowCadencePlans,
-			entry.isLoading,
-			logs.isLoading,
-			dayCadencePlans.isLoading,
-			tomorrowCadencePlans.isLoading
-		],
+		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
 			if (activeDraftDateIso !== dateIso.value && pendingSavePayload) {
 				void flushPendingSave();
 			}
-			if (
-				entry.isLoading.value ||
-				logs.isLoading.value ||
-				dayCadencePlans.isLoading.value ||
-				tomorrowCadencePlans.isLoading.value
-			) {
+			if (isHydratingQueries.value) {
 				return;
 			}
 			activeDraftDateIso = dateIso.value;

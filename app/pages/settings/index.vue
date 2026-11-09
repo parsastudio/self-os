@@ -36,6 +36,7 @@ const clientAuth = useClientAuth();
 
 const habits = useDexieLiveQuery(() => db.habits.toArray(), []);
 const entries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
+const isStatsLoading = computed(() => habits.isLoading.value || entries.isLoading.value);
 
 const selectedFile = ref<File | null>(null);
 const newPassword = ref('');
@@ -351,7 +352,14 @@ async function handleLogout(forceOfflineLogout = false) {
 					<Database class="h-5 w-5 text-accent-text" />
 					<h2 class="text-base font-black text-fg">پشتیبان‌گیری از داده‌ها</h2>
 				</div>
-				<span class="rounded-xl border border-border bg-elevated px-3 py-1 font-mono text-xs font-bold text-fg-secondary">
+				<span
+					v-if="isStatsLoading"
+					class="h-7 w-36 animate-pulse rounded-xl border border-border bg-elevated"
+				></span>
+				<span
+					v-else
+					class="rounded-xl border border-border bg-elevated px-3 py-1 font-mono text-xs font-bold text-fg-secondary"
+				>
 					{{ toPersianDigits(habits.length) }} طرح • {{ toPersianDigits(entries.length) }} روز ثبت‌شده
 				</span>
 			</div>

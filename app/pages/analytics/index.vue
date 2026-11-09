@@ -2,7 +2,7 @@
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { buildFullAnalyticsReport } from '~/core/analytics-engine';
-import { getYesterdayIso } from '~/domain/calendar';
+import { getTodayIso, getYesterdayIso, shiftIsoDate } from '~/domain/calendar';
 import type { AnalyticsTimeRange } from '~/domain/schemas';
 import CustomSelect from '~/components/ui/CustomSelect.vue';
 import AnalyticsSummaryCards from '~/components/analytics/AnalyticsSummaryCards.vue';
@@ -16,17 +16,38 @@ const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
 
-const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
-const isHabitsLoading = habits.isLoading;
-const rawEntries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
-const rawLogs = useDexieLiveQuery(() => db.habitLogs.toArray(), []);
-const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
-
 const selectedRange = computed<AnalyticsTimeRange>(() => {
 	const r = route.query.range as AnalyticsTimeRange | undefined;
 	if (r && ['7d', '30d', '90d', 'all'].includes(r)) return r;
 	return '30d';
 });
+
+const queryLowerBoundIso = computed<string | null>(() => {
+	if (selectedRange.value === 'all') return null;
+	const lookbackDays =
+		selectedRange.value === '7d' ? 35 : selectedRange.value === '30d' ? 60 : 120;
+	return shiftIsoDate(getTodayIso(), -lookbackDays);
+});
+
+const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
+const isHabitsLoading = habits.isLoading;
+const rawEntries = useDexieLiveQuery(
+	() =>
+		queryLowerBoundIso.value
+			? db.dailyEntries.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
+			: db.dailyEntries.toArray(),
+	[],
+	queryLowerBoundIso
+);
+const rawLogs = useDexieLiveQuery(
+	() =>
+		queryLowerBoundIso.value
+			? db.habitLogs.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
+			: db.habitLogs.toArray(),
+	[],
+	queryLowerBoundIso
+);
+const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 const selectedHabitId = computed(() => {
 	const h = route.query.habit as string | undefined;
@@ -124,23 +145,40 @@ function selectHabitAndScroll(habitId: string) {
 			</NuxtLink>
 		</div>
 
-		<template v-else-if="report.selectedHabitReport">
-			<AnalyticsSummaryCards :report="report.selectedHabitReport" />
+		<NuxtErrorBoundary v-else-if="report.selectedHabitReport">
+			<div class="space-y-6">
+				<AnalyticsSummaryCards :report="report.selectedHabitReport" />
 
-			<HabitTrendChart :report="report.selectedHabitReport" />
+				<HabitTrendChart :report="report.selectedHabitReport" />
 
-			<HabitHeatmapMatrix :report="report.selectedHabitReport" />
+				<HabitHeatmapMatrix :report="report.selectedHabitReport" />
 
-			<HabitEvolutionTimeline
-				:habit-title="report.selectedHabitReport.habit.title"
-				:evolution-timeline="report.selectedHabitReport.evolutionTimeline"
-			/>
+				<HabitEvolutionTimeline
+					:habit-title="report.selectedHabitReport.habit.title"
+					:evolution-timeline="report.selectedHabitReport.evolutionTimeline"
+				/>
 
-			<HabitsComparisonTable
-				:rows="report.comparisonRows"
-				:selected-habit-id="selectedHabitId"
-				@select-habit="selectHabitAndScroll"
-			/>
-		</template>
+				<HabitsComparisonTable
+					:rows="report.comparisonRows"
+					:selected-habit-id="selectedHabitId"
+					@select-habit="selectHabitAndScroll"
+				/>
+			</div>
+
+			<template #error="{ error, clearError }">
+				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
+					<p class="text-sm font-extrabold text-failed">
+						{{ error?.message || 'خطا در محاسبه و ترسیم نمودارهای آماری' }}
+					</p>
+					<button
+						type="button"
+						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
+						@click="clearError()"
+					>
+						تلاش مجدد
+					</button>
+				</div>
+			</template>
+		</NuxtErrorBoundary>
 	</div>
 </template>

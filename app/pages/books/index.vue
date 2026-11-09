@@ -5,7 +5,13 @@ import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
 import BookItemCard from '~/components/books/BookItemCard.vue';
-import BookUpsertModal from '~/components/books/BookUpsertModal.vue';
+>>>>>>>
+<<<<<<< SEARCH
+		<BookUpsertModal
+			v-if="isModalOpen"
+=======
+		<LazyBooksBookUpsertModal
+			v-if="isModalOpen"
 import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
