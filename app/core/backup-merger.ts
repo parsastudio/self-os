@@ -15,14 +15,6 @@ import type {
 	NoteEntity
 } from '~/domain/schemas';
 
-export type {
-	BackupDailyEntryRow,
-	BackupHabitLogRow,
-	BackupReflectionTagRow,
-	ExistingWorkspaceData,
-	MergedBackupResult
-};
-
 function normText(str: string | null | undefined): string {
 	return (str ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -34,6 +26,43 @@ function isIncomingNewer(
 	if (!incomingIso) return false;
 	if (!existingIso) return true;
 	return compareTimestampsIso(incomingIso, existingIso) > 0;
+}
+
+function mergeCollectionBySignature<T extends { id: string; updatedAtIso?: string | null }>(params: {
+	existingItems: ReadonlyArray<T>;
+	incomingItems: ReadonlyArray<T>;
+	getSignature: (item: T) => string;
+	isIdentical: (existingItem: T, incomingItem: T) => boolean;
+}): { toUpsert: T[]; skippedCount: number } {
+	const existingById = new Map(params.existingItems.map((item) => [item.id, item]));
+	const existingBySig = new Map(
+		params.existingItems.map((item) => [params.getSignature(item), item])
+	);
+	const toUpsert: T[] = [];
+	let skippedCount = 0;
+
+	for (const inc of params.incomingItems) {
+		const sig = params.getSignature(inc);
+		const ext = existingById.get(inc.id) ?? existingBySig.get(sig);
+
+		if (!ext) {
+			toUpsert.push(inc);
+			existingById.set(inc.id, inc);
+			existingBySig.set(sig, inc);
+		} else if (
+			params.isIdentical(ext, inc) ||
+			!isIncomingNewer(inc.updatedAtIso, ext.updatedAtIso)
+		) {
+			skippedCount++;
+		} else {
+			const merged: T = { ...inc, id: ext.id };
+			toUpsert.push(merged);
+			existingById.set(ext.id, merged);
+			existingBySig.set(sig, merged);
+		}
+	}
+
+	return { toUpsert, skippedCount };
 }
 
 export function computeSmartBackupMerge(
@@ -201,146 +230,62 @@ export function computeSmartBackupMerge(
 	}
 
 	// 5. Books (Deduplicate by ID or by normalized Title + Author + FinishedAtIso)
-	const existingBookById = new Map(existing.books.map((b) => [b.id, b]));
-	const existingBookBySig = new Map(
-		existing.books.map((b) => [
-			`${normText(b.title)}|${normText(b.author)}|${b.finishedAtIso ?? ''}`,
-			b
-		])
-	);
-	const booksToUpsert: BookEntity[] = [];
-
-	for (const incBook of incoming.books) {
-		const sig = `${normText(incBook.title)}|${normText(incBook.author)}|${incBook.finishedAtIso ?? ''}`;
-		const ext = existingBookById.get(incBook.id) ?? existingBookBySig.get(sig);
-
-		if (!ext) {
-			booksToUpsert.push(incBook);
-			existingBookById.set(incBook.id, incBook);
-			existingBookBySig.set(sig, incBook);
-		} else {
-			const isIdentical =
-				normText(ext.title) === normText(incBook.title) &&
-				normText(ext.author) === normText(incBook.author) &&
-				ext.status === incBook.status &&
-				ext.rating === incBook.rating &&
-				normText(ext.notes) === normText(incBook.notes);
-
-			if (isIdentical || !isIncomingNewer(incBook.updatedAtIso, ext.updatedAtIso)) {
-				skippedDuplicatesCount++;
-			} else {
-				const mergedBook: BookEntity = { ...incBook, id: ext.id };
-				booksToUpsert.push(mergedBook);
-				existingBookById.set(ext.id, mergedBook);
-				existingBookBySig.set(sig, mergedBook);
-			}
-		}
-	}
+	const booksMerge = mergeCollectionBySignature<BookEntity>({
+		existingItems: existing.books,
+		incomingItems: incoming.books,
+		getSignature: (b) => `${normText(b.title)}|${normText(b.author)}|${b.finishedAtIso ?? ''}`,
+		isIdentical: (ext, inc) =>
+			normText(ext.title) === normText(inc.title) &&
+			normText(ext.author) === normText(inc.author) &&
+			ext.status === inc.status &&
+			ext.rating === inc.rating &&
+			normText(ext.notes) === normText(inc.notes)
+	});
+	const booksToUpsert = booksMerge.toUpsert;
+	skippedDuplicatesCount += booksMerge.skippedCount;
 
 	// 6. Media (Deduplicate by ID or by normalized Title + Category + FinishedAtIso)
-	const existingMediaById = new Map(existing.media.map((m) => [m.id, m]));
-	const existingMediaBySig = new Map(
-		existing.media.map((m) => [
-			`${normText(m.title)}|${m.category}|${m.finishedAtIso ?? ''}`,
-			m
-		])
-	);
-	const mediaToUpsert: MediaEntity[] = [];
-
-	for (const incMedia of incoming.media) {
-		const sig = `${normText(incMedia.title)}|${incMedia.category}|${incMedia.finishedAtIso ?? ''}`;
-		const ext = existingMediaById.get(incMedia.id) ?? existingMediaBySig.get(sig);
-
-		if (!ext) {
-			mediaToUpsert.push(incMedia);
-			existingMediaById.set(incMedia.id, incMedia);
-			existingMediaBySig.set(sig, incMedia);
-		} else {
-			const isIdentical =
-				normText(ext.title) === normText(incMedia.title) &&
-				ext.category === incMedia.category &&
-				ext.status === incMedia.status &&
-				ext.rating === incMedia.rating &&
-				normText(ext.notes) === normText(incMedia.notes);
-
-			if (isIdentical || !isIncomingNewer(incMedia.updatedAtIso, ext.updatedAtIso)) {
-				skippedDuplicatesCount++;
-			} else {
-				const mergedMedia: MediaEntity = { ...incMedia, id: ext.id };
-				mediaToUpsert.push(mergedMedia);
-				existingMediaById.set(ext.id, mergedMedia);
-				existingMediaBySig.set(sig, mergedMedia);
-			}
-		}
-	}
+	const mediaMerge = mergeCollectionBySignature<MediaEntity>({
+		existingItems: existing.media,
+		incomingItems: incoming.media,
+		getSignature: (m) => `${normText(m.title)}|${m.category}|${m.finishedAtIso ?? ''}`,
+		isIdentical: (ext, inc) =>
+			normText(ext.title) === normText(inc.title) &&
+			ext.category === inc.category &&
+			ext.status === inc.status &&
+			ext.rating === inc.rating &&
+			normText(ext.notes) === normText(inc.notes)
+	});
+	const mediaToUpsert = mediaMerge.toUpsert;
+	skippedDuplicatesCount += mediaMerge.skippedCount;
 
 	// 7. Notes (Deduplicate by ID or by normalized Title + Content)
-	const existingNoteById = new Map(existing.notes.map((n) => [n.id, n]));
-	const existingNoteBySig = new Map(
-		existing.notes.map((n) => [`${normText(n.title)}|${normText(n.content)}`, n])
-	);
-	const notesToUpsert: NoteEntity[] = [];
-
-	for (const incNote of incoming.notes) {
-		const sig = `${normText(incNote.title)}|${normText(incNote.content)}`;
-		const ext = existingNoteById.get(incNote.id) ?? existingNoteBySig.get(sig);
-
-		if (!ext) {
-			notesToUpsert.push(incNote);
-			existingNoteById.set(incNote.id, incNote);
-			existingNoteBySig.set(sig, incNote);
-		} else {
-			const isIdentical =
-				normText(ext.title) === normText(incNote.title) &&
-				normText(ext.content) === normText(incNote.content) &&
-				normText(ext.category) === normText(incNote.category) &&
-				ext.isPinned === incNote.isPinned;
-
-			if (isIdentical || !isIncomingNewer(incNote.updatedAtIso, ext.updatedAtIso)) {
-				skippedDuplicatesCount++;
-			} else {
-				const mergedNote: NoteEntity = { ...incNote, id: ext.id };
-				notesToUpsert.push(mergedNote);
-				existingNoteById.set(ext.id, mergedNote);
-				existingNoteBySig.set(sig, mergedNote);
-			}
-		}
-	}
+	const notesMerge = mergeCollectionBySignature<NoteEntity>({
+		existingItems: existing.notes,
+		incomingItems: incoming.notes,
+		getSignature: (n) => `${normText(n.title)}|${normText(n.content)}`,
+		isIdentical: (ext, inc) =>
+			normText(ext.title) === normText(inc.title) &&
+			normText(ext.content) === normText(inc.content) &&
+			normText(ext.category) === normText(inc.category) &&
+			ext.isPinned === inc.isPinned
+	});
+	const notesToUpsert = notesMerge.toUpsert;
+	skippedDuplicatesCount += notesMerge.skippedCount;
 
 	// 8. Calendar Events (Deduplicate by ID or by Title + Annual + Date/Jalali)
-	const existingEventById = new Map(existing.calendarEvents.map((e) => [e.id, e]));
-	const existingEventBySig = new Map(
-		existing.calendarEvents.map((e) => [
+	const eventsMerge = mergeCollectionBySignature<CalendarEventEntity>({
+		existingItems: existing.calendarEvents,
+		incomingItems: incoming.calendarEvents,
+		getSignature: (e) =>
 			`${normText(e.title)}|${e.isAnnual ? '1' : '0'}|${e.dateIso ?? ''}|${e.jalaliMonth}-${e.jalaliDay}`,
-			e
-		])
-	);
-	const calendarEventsToUpsert: CalendarEventEntity[] = [];
-
-	for (const incEv of incoming.calendarEvents) {
-		const sig = `${normText(incEv.title)}|${incEv.isAnnual ? '1' : '0'}|${incEv.dateIso ?? ''}|${incEv.jalaliMonth}-${incEv.jalaliDay}`;
-		const ext = existingEventById.get(incEv.id) ?? existingEventBySig.get(sig);
-
-		if (!ext) {
-			calendarEventsToUpsert.push(incEv);
-			existingEventById.set(incEv.id, incEv);
-			existingEventBySig.set(sig, incEv);
-		} else {
-			const isIdentical =
-				normText(ext.title) === normText(incEv.title) &&
-				ext.isCompleted === incEv.isCompleted &&
-				normText(ext.notes) === normText(incEv.notes);
-
-			if (isIdentical || !isIncomingNewer(incEv.updatedAtIso, ext.updatedAtIso)) {
-				skippedDuplicatesCount++;
-			} else {
-				const mergedEv: CalendarEventEntity = { ...incEv, id: ext.id };
-				calendarEventsToUpsert.push(mergedEv);
-				existingEventById.set(ext.id, mergedEv);
-				existingEventBySig.set(sig, mergedEv);
-			}
-		}
-	}
+		isIdentical: (ext, inc) =>
+			normText(ext.title) === normText(inc.title) &&
+			ext.isCompleted === inc.isCompleted &&
+			normText(ext.notes) === normText(inc.notes)
+	});
+	const calendarEventsToUpsert = eventsMerge.toUpsert;
+	skippedDuplicatesCount += eventsMerge.skippedCount;
 
 	// 9. Lifecycle Events (Deduplicate by ID or by remappedHabitId + eventType + effectiveDateIso + summary)
 	const existingLcById = new Set(existing.lifecycleEvents.map((lc) => lc.id));

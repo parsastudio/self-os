@@ -32,6 +32,36 @@ import type {
 
 const SYNC_STATE_SINGLETON_ID = 'singleton';
 
+function mapEntryRow(e: typeof dailyEntries.$inferSelect) {
+	return {
+		id: e.id,
+		dateIso: e.dateIso,
+		dayStatus: e.dayStatus,
+		reflectionNote: e.reflectionNote,
+		journalText: e.journalText ?? null,
+		tags: parseTagsJson(e.tagsJson),
+		updatedAtIso: e.updatedAtIso
+	};
+}
+
+function mapLogRow(l: typeof habitLogs.$inferSelect) {
+	return {
+		id: l.id,
+		dateIso: l.dateIso,
+		habitId: l.habitId,
+		habitTitleSnapshot: l.habitTitleSnapshot,
+		achievedTier: l.achievedTier,
+		achievedRuleSnapshot: l.achievedRuleSnapshot,
+		habitSnapshotJson: l.habitSnapshotJson ?? null,
+		completedIntervals: l.completedIntervals,
+		actualMinutesPerInterval: l.actualMinutesPerInterval,
+		totalActualMinutes: l.totalActualMinutes,
+		plannedIntervalsSnapshot: l.plannedIntervalsSnapshot,
+		plannedMinutesSnapshot: l.plannedMinutesSnapshot,
+		updatedAtIso: l.updatedAtIso ?? null
+	};
+}
+
 function resolveSafeIso(candidateIso?: string): string {
 	return normalizeTimestampIso(candidateIso, new Date().toISOString()) ?? new Date().toISOString();
 }
@@ -157,12 +187,39 @@ export async function processClientSyncRequest(
 
 		const nowMs = Date.now();
 		await db.transaction(async (tx) => {
+			const clearTombstoneIfPresent = async (tombstoneKey: string) => {
+				if (tombstoneMap.has(tombstoneKey)) {
+					await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
+					tombstoneMap.delete(tombstoneKey);
+				}
+			};
+
+			const applyTombstonedDelete = async (params: {
+				tombstoneKey: string;
+				existingUpdatedAtIso: string | null | undefined;
+				safeQueuedIso: string;
+				executeDelete: () => Promise<unknown>;
+			}) => {
+				if (
+					!params.existingUpdatedAtIso ||
+					compareTimestampsIso(params.safeQueuedIso, params.existingUpdatedAtIso) >= 0
+				) {
+					await params.executeDelete();
+					await recordServerDeletionTombstones(
+						[params.tombstoneKey],
+						params.safeQueuedIso,
+						tx
+					);
+					tombstoneMap.set(params.tombstoneKey, params.safeQueuedIso);
+				}
+			};
+
 			for (const mutation of sortedMutations) {
 				const safeQueuedIso = clampClientTimestampIso(mutation.queuedAtIso, nowMs);
 				if (mutation.kind === 'SAVE_DAILY_ENTRY') {
 					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
-					await saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
+					await saveCadencePlansForDate(mutation.payload, tx);
 				} else if (mutation.kind === 'UPSERT_BOOK') {
 					const effectiveIso = clampClientTimestampIso(
 						mutation.payload.updatedAtIso ?? safeQueuedIso,
@@ -170,10 +227,7 @@ export async function processClientSyncRequest(
 					);
 					const tombstoneKey = `del:book:${mutation.payload.id}`;
 					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = {
-							...mutation.payload,
-							updatedAtIso: effectiveIso
-						};
+						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
 						await tx
 							.insert(books)
 							.values(payload)
@@ -182,26 +236,21 @@ export async function processClientSyncRequest(
 								set: payload,
 								setWhere: sql`${books.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${books.updatedAtIso}`
 							});
-						if (tombstoneMap.has(tombstoneKey)) {
-							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
-							tombstoneMap.delete(tombstoneKey);
-						}
+						await clearTombstoneIfPresent(tombstoneKey);
 					}
 				} else if (mutation.kind === 'DELETE_BOOK') {
-					const tombstoneKey = `del:book:${mutation.payload.bookId}`;
-					const existingBook = await tx
+					const existing = await tx
 						.select({ updatedAtIso: books.updatedAtIso })
 						.from(books)
 						.where(eq(books.id, mutation.payload.bookId))
 						.limit(1);
-					if (
-						!existingBook[0]?.updatedAtIso ||
-						compareTimestampsIso(safeQueuedIso, existingBook[0].updatedAtIso) >= 0
-					) {
-						await tx.delete(books).where(eq(books.id, mutation.payload.bookId));
-						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
-						tombstoneMap.set(tombstoneKey, safeQueuedIso);
-					}
+					await applyTombstonedDelete({
+						tombstoneKey: `del:book:${mutation.payload.bookId}`,
+						existingUpdatedAtIso: existing[0]?.updatedAtIso,
+						safeQueuedIso,
+						executeDelete: () =>
+							tx.delete(books).where(eq(books.id, mutation.payload.bookId))
+					});
 				} else if (mutation.kind === 'UPSERT_MEDIA') {
 					const effectiveIso = clampClientTimestampIso(
 						mutation.payload.updatedAtIso ?? safeQueuedIso,
@@ -209,10 +258,7 @@ export async function processClientSyncRequest(
 					);
 					const tombstoneKey = `del:media:${mutation.payload.id}`;
 					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = {
-							...mutation.payload,
-							updatedAtIso: effectiveIso
-						};
+						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
 						await tx
 							.insert(mediaLogs)
 							.values(payload)
@@ -221,36 +267,26 @@ export async function processClientSyncRequest(
 								set: payload,
 								setWhere: sql`${mediaLogs.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${mediaLogs.updatedAtIso}`
 							});
-						if (tombstoneMap.has(tombstoneKey)) {
-							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
-							tombstoneMap.delete(tombstoneKey);
-						}
+						await clearTombstoneIfPresent(tombstoneKey);
 					}
 				} else if (mutation.kind === 'DELETE_MEDIA') {
-					const tombstoneKey = `del:media:${mutation.payload.mediaId}`;
-					const existingMedia = await tx
+					const existing = await tx
 						.select({ updatedAtIso: mediaLogs.updatedAtIso })
 						.from(mediaLogs)
 						.where(eq(mediaLogs.id, mutation.payload.mediaId))
 						.limit(1);
-					if (
-						!existingMedia[0]?.updatedAtIso ||
-						compareTimestampsIso(safeQueuedIso, existingMedia[0].updatedAtIso) >= 0
-					) {
-						await tx
-							.delete(mediaLogs)
-							.where(eq(mediaLogs.id, mutation.payload.mediaId));
-						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
-						tombstoneMap.set(tombstoneKey, safeQueuedIso);
-					}
+					await applyTombstonedDelete({
+						tombstoneKey: `del:media:${mutation.payload.mediaId}`,
+						existingUpdatedAtIso: existing[0]?.updatedAtIso,
+						safeQueuedIso,
+						executeDelete: () =>
+							tx.delete(mediaLogs).where(eq(mediaLogs.id, mutation.payload.mediaId))
+					});
 				} else if (mutation.kind === 'UPSERT_NOTE') {
 					const effectiveIso = clampClientTimestampIso(mutation.payload.updatedAtIso, nowMs);
 					const tombstoneKey = `del:note:${mutation.payload.id}`;
 					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = {
-							...mutation.payload,
-							updatedAtIso: effectiveIso
-						};
+						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
 						await tx
 							.insert(notes)
 							.values(payload)
@@ -259,26 +295,21 @@ export async function processClientSyncRequest(
 								set: payload,
 								setWhere: sql`excluded.updated_at_iso >= ${notes.updatedAtIso}`
 							});
-						if (tombstoneMap.has(tombstoneKey)) {
-							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
-							tombstoneMap.delete(tombstoneKey);
-						}
+						await clearTombstoneIfPresent(tombstoneKey);
 					}
 				} else if (mutation.kind === 'DELETE_NOTE') {
-					const tombstoneKey = `del:note:${mutation.payload.noteId}`;
-					const existingNote = await tx
+					const existing = await tx
 						.select({ updatedAtIso: notes.updatedAtIso })
 						.from(notes)
 						.where(eq(notes.id, mutation.payload.noteId))
 						.limit(1);
-					if (
-						!existingNote[0]?.updatedAtIso ||
-						compareTimestampsIso(safeQueuedIso, existingNote[0].updatedAtIso) >= 0
-					) {
-						await tx.delete(notes).where(eq(notes.id, mutation.payload.noteId));
-						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
-						tombstoneMap.set(tombstoneKey, safeQueuedIso);
-					}
+					await applyTombstonedDelete({
+						tombstoneKey: `del:note:${mutation.payload.noteId}`,
+						existingUpdatedAtIso: existing[0]?.updatedAtIso,
+						safeQueuedIso,
+						executeDelete: () =>
+							tx.delete(notes).where(eq(notes.id, mutation.payload.noteId))
+					});
 				} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
 					const effectiveIso = clampClientTimestampIso(
 						mutation.payload.updatedAtIso ?? safeQueuedIso,
@@ -286,10 +317,7 @@ export async function processClientSyncRequest(
 					);
 					const tombstoneKey = `del:event:${mutation.payload.id}`;
 					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = {
-							...mutation.payload,
-							updatedAtIso: effectiveIso
-						};
+						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
 						await tx
 							.insert(calendarEvents)
 							.values(payload)
@@ -298,28 +326,23 @@ export async function processClientSyncRequest(
 								set: payload,
 								setWhere: sql`${calendarEvents.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${calendarEvents.updatedAtIso}`
 							});
-						if (tombstoneMap.has(tombstoneKey)) {
-							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
-							tombstoneMap.delete(tombstoneKey);
-						}
+						await clearTombstoneIfPresent(tombstoneKey);
 					}
 				} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
-					const tombstoneKey = `del:event:${mutation.payload.eventId}`;
-					const existingEvent = await tx
+					const existing = await tx
 						.select({ updatedAtIso: calendarEvents.updatedAtIso })
 						.from(calendarEvents)
 						.where(eq(calendarEvents.id, mutation.payload.eventId))
 						.limit(1);
-					if (
-						!existingEvent[0]?.updatedAtIso ||
-						compareTimestampsIso(safeQueuedIso, existingEvent[0].updatedAtIso) >= 0
-					) {
-						await tx
-							.delete(calendarEvents)
-							.where(eq(calendarEvents.id, mutation.payload.eventId));
-						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
-						tombstoneMap.set(tombstoneKey, safeQueuedIso);
-					}
+					await applyTombstonedDelete({
+						tombstoneKey: `del:event:${mutation.payload.eventId}`,
+						existingUpdatedAtIso: existing[0]?.updatedAtIso,
+						safeQueuedIso,
+						executeDelete: () =>
+							tx
+								.delete(calendarEvents)
+								.where(eq(calendarEvents.id, mutation.payload.eventId))
+					});
 				} else if (mutation.kind === 'UPSERT_HABIT') {
 					const payload = {
 						...mutation.payload,
@@ -459,24 +482,26 @@ export async function processClientSyncRequest(
 				)
 		]);
 
-		const deletedHabitIds: string[] = [];
-		const deletedEntryDates: string[] = [];
-		const deletedLogIds: string[] = [];
-		const deletedPlanIds: string[] = [];
-		const deletedBookIds: string[] = [];
-		const deletedMediaIds: string[] = [];
-		const deletedNoteIds: string[] = [];
-		const deletedEventIds: string[] = [];
+		const deletedBuckets: Record<
+			'habit' | 'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event',
+			string[]
+		> = {
+			habit: [],
+			entry: [],
+			log: [],
+			plan: [],
+			book: [],
+			media: [],
+			note: [],
+			event: []
+		};
 
 		for (const t of tombstoneRows) {
-			if (t.id.startsWith('del:habit:')) deletedHabitIds.push(t.id.slice('del:habit:'.length));
-			else if (t.id.startsWith('del:entry:')) deletedEntryDates.push(t.id.slice('del:entry:'.length));
-			else if (t.id.startsWith('del:log:')) deletedLogIds.push(t.id.slice('del:log:'.length));
-			else if (t.id.startsWith('del:plan:')) deletedPlanIds.push(t.id.slice('del:plan:'.length));
-			else if (t.id.startsWith('del:book:')) deletedBookIds.push(t.id.slice('del:book:'.length));
-			else if (t.id.startsWith('del:media:')) deletedMediaIds.push(t.id.slice('del:media:'.length));
-			else if (t.id.startsWith('del:note:')) deletedNoteIds.push(t.id.slice('del:note:'.length));
-			else if (t.id.startsWith('del:event:')) deletedEventIds.push(t.id.slice('del:event:'.length));
+			const match = t.id.match(/^del:(habit|entry|log|plan|book|media|note|event):(.+)$/);
+			if (match && match[1] && match[2]) {
+				const kind = match[1] as keyof typeof deletedBuckets;
+				deletedBuckets[kind].push(match[2]);
+			}
 		}
 
 		const deltaWorkspace: DeltaWorkspaceSnapshot = {
@@ -484,44 +509,22 @@ export async function processClientSyncRequest(
 			syncedAtIso: serverTimeIso,
 			habits: changedHabits,
 			availableTags,
-			entries: changedEntriesRaw.map((e) => ({
-				id: e.id,
-				dateIso: e.dateIso,
-				dayStatus: e.dayStatus,
-				reflectionNote: e.reflectionNote,
-				journalText: e.journalText ?? null,
-				tags: parseTagsJson(e.tagsJson),
-				updatedAtIso: e.updatedAtIso
-			})),
-			logs: changedLogsRaw.map((l) => ({
-				id: l.id,
-				dateIso: l.dateIso,
-				habitId: l.habitId,
-				habitTitleSnapshot: l.habitTitleSnapshot,
-				achievedTier: l.achievedTier,
-				achievedRuleSnapshot: l.achievedRuleSnapshot,
-				habitSnapshotJson: l.habitSnapshotJson ?? null,
-				completedIntervals: l.completedIntervals,
-				actualMinutesPerInterval: l.actualMinutesPerInterval,
-				totalActualMinutes: l.totalActualMinutes,
-				plannedIntervalsSnapshot: l.plannedIntervalsSnapshot,
-				plannedMinutesSnapshot: l.plannedMinutesSnapshot,
-				updatedAtIso: l.updatedAtIso ?? null
-			})),
+			entries: changedEntriesRaw.map(mapEntryRow),
+			logs: changedLogsRaw.map(mapLogRow),
 			cadencePlans: changedCadencePlans,
 			books: changedBooks,
 			media: changedMedia,
 			notes: changedNotes,
 			calendarEvents: changedCalendarEvents,
 			lifecycleEvents: changedLifecycleEvents,
-			deletedHabitIds,
-			deletedEntryDates,
-			deletedLogIds,
-			deletedPlanIds,
-			deletedBookIds,
-			deletedMediaIds,
-			deletedNoteIds,
-			deletedEventIds
+			deletedHabitIds: deletedBuckets.habit,
+			deletedEntryDates: deletedBuckets.entry,
+			deletedLogIds: deletedBuckets.log,
+			deletedPlanIds: deletedBuckets.plan,
+			deletedBookIds: deletedBuckets.book,
+			deletedMediaIds: deletedBuckets.media,
+			deletedNoteIds: deletedBuckets.note,
+			deletedEventIds: deletedBuckets.event
 		};
 
 		return {
@@ -565,39 +568,13 @@ export async function processClientSyncRequest(
 			.orderBy(desc(habitLifecycleEvents.createdAtIso))
 	]);
 
-	const mappedEntries = allEntriesRaw.map((e) => ({
-		id: e.id,
-		dateIso: e.dateIso,
-		dayStatus: e.dayStatus,
-		reflectionNote: e.reflectionNote,
-		journalText: e.journalText ?? null,
-		tags: parseTagsJson(e.tagsJson),
-		updatedAtIso: e.updatedAtIso
-	}));
-
-	const mappedLogs = allLogsRaw.map((l) => ({
-		id: l.id,
-		dateIso: l.dateIso,
-		habitId: l.habitId,
-		habitTitleSnapshot: l.habitTitleSnapshot,
-		achievedTier: l.achievedTier,
-		achievedRuleSnapshot: l.achievedRuleSnapshot,
-		habitSnapshotJson: l.habitSnapshotJson ?? null,
-		completedIntervals: l.completedIntervals,
-		actualMinutesPerInterval: l.actualMinutesPerInterval,
-		totalActualMinutes: l.totalActualMinutes,
-		plannedIntervalsSnapshot: l.plannedIntervalsSnapshot,
-		plannedMinutesSnapshot: l.plannedMinutesSnapshot,
-		updatedAtIso: l.updatedAtIso ?? null
-	}));
-
 	const fullWorkspace: LocalWorkspaceSnapshot = {
 		versionIso: serverVersionIso,
 		syncedAtIso: serverTimeIso,
 		habits: allHabits,
 		availableTags,
-		entries: mappedEntries,
-		logs: mappedLogs,
+		entries: allEntriesRaw.map(mapEntryRow),
+		logs: allLogsRaw.map(mapLogRow),
 		cadencePlans: allCadencePlans,
 		books: allBooks,
 		media: allMedia,

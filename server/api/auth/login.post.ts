@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { defineEventHandler, readBody, setCookie, createError, getRequestHeader, type H3Event } from 'h3';
 import { LoginInputSchema } from '~/domain/schemas';
 import {
@@ -27,11 +28,6 @@ function resolveProgressiveDelayMs(attemptNumber: number): number {
 	if (attemptNumber === 2) return 2000;
 	if (attemptNumber === 3) return 3000;
 	return 5000;
-}
-
-function sleep(ms: number): Promise<void> {
-	if (ms <= 0) return Promise.resolve();
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const MAX_TRACKED_IPS = 1000;

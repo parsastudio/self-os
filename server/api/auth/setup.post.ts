@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { defineEventHandler, readBody, setCookie, createError } from 'h3';
 import { SetupPasswordInputSchema } from '~/domain/schemas';
 import {
@@ -24,7 +25,7 @@ export default defineEventHandler(async (event) => {
 	}
 
 	if (parsed.data.website && parsed.data.website.trim().length > 0) {
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+		await sleep(2000);
 		throw createError({ statusCode: 400, statusMessage: 'درخواست نامعتبر است' });
 	}
 

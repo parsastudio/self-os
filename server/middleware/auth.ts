@@ -1,21 +1,12 @@
 import {
 	defineEventHandler,
-	getCookie,
-	setCookie,
-	deleteCookie,
 	getRequestHeader,
 	getRequestHost,
 	setResponseHeaders,
 	createError,
 	type H3Event
 } from 'h3';
-import {
-	isPasswordConfigured,
-	validateAndExtendSession,
-	getSessionCookieOptions,
-	resolveIsSecureCookie,
-	SESSION_COOKIE_NAME
-} from '~~/server/repositories/auth.repo';
+import { resolveEventAuthSession } from '~~/server/repositories/auth.repo';
 
 function verifyCsrfProtection(event: H3Event): void {
 	const secFetchSite = getRequestHeader(event, 'sec-fetch-site')?.trim().toLowerCase();
@@ -81,31 +72,17 @@ export default defineEventHandler(async (event) => {
 		return;
 	}
 
-	const passwordConfigured = await isPasswordConfigured();
-	const rawToken = getCookie(event, SESSION_COOKIE_NAME) || null;
-	let isAuthenticated = false;
-
-	const isSecure = resolveIsSecureCookie(event);
-
-	if (passwordConfigured && rawToken) {
-		const sessionStatus = await validateAndExtendSession(rawToken);
-		isAuthenticated = sessionStatus.valid;
-
-		if (sessionStatus.valid && sessionStatus.shouldRefreshCookie) {
-			setCookie(event, SESSION_COOKIE_NAME, rawToken, getSessionCookieOptions(isSecure));
-		} else if (!sessionStatus.valid) {
-			deleteCookie(event, SESSION_COOKIE_NAME, { path: '/' });
-		}
-	}
+	const { isPasswordConfigured, isAuthenticated, sessionToken } =
+		await resolveEventAuthSession(event, false);
 
 	event.context.isAuthenticated = isAuthenticated;
-	event.context.isPasswordConfigured = passwordConfigured;
-	event.context.sessionToken = rawToken;
+	event.context.isPasswordConfigured = isPasswordConfigured;
+	event.context.sessionToken = sessionToken;
 
-	if (!passwordConfigured || !isAuthenticated) {
+	if (!isPasswordConfigured || !isAuthenticated) {
 		throw createError({
 			statusCode: 401,
-			statusMessage: passwordConfigured
+			statusMessage: isPasswordConfigured
 				? 'ابتدا وارد حساب کاربری شوید'
 				: 'ابتدا رمز عبور اولیه سیستم را تنظیم کنید'
 		});

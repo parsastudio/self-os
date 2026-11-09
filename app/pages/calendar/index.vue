@@ -286,12 +286,7 @@ function goToToday() {
 			<div class="h-80 animate-pulse rounded-3xl border border-border bg-surface lg:col-span-5"></div>
 		</div>
 
-		<div
-			v-else-if="calendarError"
-			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
-		>
-			<p class="text-sm font-extrabold text-failed">{{ calendarError }}</p>
-		</div>
+		<UiErrorStateCard v-else-if="calendarError" :message="calendarError" />
 
 		<NuxtErrorBoundary v-else>
 		<div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
@@ -364,18 +359,12 @@ function goToToday() {
 		/>
 
 		<template #error="{ error, clearError }">
-			<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
-				<p class="text-sm font-extrabold text-failed">
-					{{ error?.message || 'خطا در بارگذاری تقویم و رویدادهای ماه' }}
-				</p>
-				<button
-					type="button"
-					class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
-					@click="clearError()"
-				>
-					تلاش مجدد
-				</button>
-			</div>
+			<UiErrorStateCard
+				:message="error?.message"
+				fallback-message="خطا در بارگذاری تقویم و رویدادهای ماه"
+				retryable
+				@retry="clearError()"
+			/>
 		</template>
 		</NuxtErrorBoundary>
 	</div>

@@ -102,32 +102,10 @@ export function createLocalBackupOperations(
 
 		await db.transaction(
 			'rw',
-			[
-				db.habits,
-				db.dailyEntries,
-				db.habitLogs,
-				db.cadencePlans,
-				db.books,
-				db.media,
-				db.notes,
-				db.calendarEvents,
-				db.lifecycleEvents,
-				db.reflectionTags,
-				db.syncOutbox
-			],
+			db.workspaceAndSyncTables,
 			async () => {
 				if (mode === 'replace') {
-					await db.habits.clear();
-					await db.dailyEntries.clear();
-					await db.habitLogs.clear();
-					await db.cadencePlans.clear();
-					await db.books.clear();
-					await db.media.clear();
-					await db.notes.clear();
-					await db.calendarEvents.clear();
-					await db.lifecycleEvents.clear();
-					await db.reflectionTags.clear();
-					await db.syncOutbox.clear();
+					await Promise.all(db.workspaceAndSyncTables.map((t) => t.clear()));
 				}
 
 				const stagedMutations: SyncOutboxMutation[] = [];
@@ -301,17 +279,7 @@ export function createLocalBackupOperations(
 
 		await db.transaction(
 			'rw',
-			[
-				db.habits,
-				db.dailyEntries,
-				db.habitLogs,
-				db.cadencePlans,
-				db.books,
-				db.media,
-				db.notes,
-				db.calendarEvents,
-				db.lifecycleEvents
-			],
+			db.workspaceTables,
 			async () => {
 				await db.habits.bulkPut(data.habits);
 				await db.cadencePlans.bulkPut(data.cadencePlans);
@@ -346,76 +314,43 @@ export function createLocalBackupOperations(
 	}
 
 	async function removeDemoSeed(): Promise<void> {
-		await db.transaction(
-			'rw',
-			[
-				db.habits,
-				db.dailyEntries,
+		const deleteMatchingById = async <T extends { id: string }>(
+			table: { toArray: () => Promise<T[]>; bulkDelete: (keys: string[]) => Promise<void> },
+			predicate: (row: T) => boolean = (row) => isDemoRecordId(row.id)
+		) => {
+			const keys = (await table.toArray()).filter(predicate).map((r) => r.id);
+			if (keys.length > 0) await table.bulkDelete(keys);
+		};
+
+		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+			await deleteMatchingById(db.habits);
+			await deleteMatchingById(
 				db.habitLogs,
+				(l) => isDemoRecordId(l.id) || isDemoRecordId(l.habitId)
+			);
+			await deleteMatchingById(
 				db.cadencePlans,
-				db.books,
-				db.media,
-				db.notes,
-				db.calendarEvents,
+				(p) => isDemoRecordId(p.id) || isDemoRecordId(p.habitId)
+			);
+			await deleteMatchingById(db.books);
+			await deleteMatchingById(db.media);
+			await deleteMatchingById(db.notes);
+			await deleteMatchingById(db.calendarEvents);
+			await deleteMatchingById(
 				db.lifecycleEvents,
-				db.syncOutbox
-			],
-			async () => {
-				const demoHabitIds = (await db.habits.toArray())
-					.filter((h) => isDemoRecordId(h.id))
-					.map((h) => h.id);
-				if (demoHabitIds.length > 0) await db.habits.bulkDelete(demoHabitIds);
+				(lc) => isDemoRecordId(lc.id) || isDemoRecordId(lc.habitId)
+			);
+			await deleteMatchingById(db.syncOutbox, (m) => m.id.includes('demo:'));
 
-				const demoLogIds = (await db.habitLogs.toArray())
-					.filter((l) => isDemoRecordId(l.id) || isDemoRecordId(l.habitId))
-					.map((l) => l.id);
-				if (demoLogIds.length > 0) await db.habitLogs.bulkDelete(demoLogIds);
-
-				const demoEntryDates = (await db.dailyEntries.toArray())
-					.filter(
-						(e) =>
-							e.tags.includes(DEMO_ENTRY_TAG) ||
-							e.reflectionNote === 'ثبت آزمایشی جهت بررسی نمودارها'
-					)
-					.map((e) => e.dateIso);
-				if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
-
-				const demoPlanIds = (await db.cadencePlans.toArray())
-					.filter((p) => isDemoRecordId(p.id) || isDemoRecordId(p.habitId))
-					.map((p) => p.id);
-				if (demoPlanIds.length > 0) await db.cadencePlans.bulkDelete(demoPlanIds);
-
-				const demoBookIds = (await db.books.toArray())
-					.filter((b) => isDemoRecordId(b.id))
-					.map((b) => b.id);
-				if (demoBookIds.length > 0) await db.books.bulkDelete(demoBookIds);
-
-				const demoMediaIds = (await db.media.toArray())
-					.filter((m) => isDemoRecordId(m.id))
-					.map((m) => m.id);
-				if (demoMediaIds.length > 0) await db.media.bulkDelete(demoMediaIds);
-
-				const demoNoteIds = (await db.notes.toArray())
-					.filter((n) => isDemoRecordId(n.id))
-					.map((n) => n.id);
-				if (demoNoteIds.length > 0) await db.notes.bulkDelete(demoNoteIds);
-
-				const demoEventIds = (await db.calendarEvents.toArray())
-					.filter((ev) => isDemoRecordId(ev.id))
-					.map((ev) => ev.id);
-				if (demoEventIds.length > 0) await db.calendarEvents.bulkDelete(demoEventIds);
-
-				const demoLifecycleIds = (await db.lifecycleEvents.toArray())
-					.filter((lc) => isDemoRecordId(lc.id) || isDemoRecordId(lc.habitId))
-					.map((lc) => lc.id);
-				if (demoLifecycleIds.length > 0) await db.lifecycleEvents.bulkDelete(demoLifecycleIds);
-
-				const demoOutboxIds = (await db.syncOutbox.toArray())
-					.filter((m) => m.id.includes('demo:'))
-					.map((m) => m.id);
-				if (demoOutboxIds.length > 0) await db.syncOutbox.bulkDelete(demoOutboxIds);
-			}
-		);
+			const demoEntryDates = (await db.dailyEntries.toArray())
+				.filter(
+					(e) =>
+						e.tags.includes(DEMO_ENTRY_TAG) ||
+						e.reflectionNote === 'ثبت آزمایشی جهت بررسی نمودارها'
+				)
+				.map((e) => e.dateIso);
+			if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
+		});
 	}
 
 	return {

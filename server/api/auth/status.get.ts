@@ -1,31 +1,10 @@
-import { defineEventHandler, getCookie, setCookie, deleteCookie } from 'h3';
-import {
-	isPasswordConfigured,
-	validateAndExtendSession,
-	getSessionCookieOptions,
-	resolveIsSecureCookie,
-	SESSION_COOKIE_NAME
-} from '~~/server/repositories/auth.repo';
+import { defineEventHandler } from 'h3';
+import { resolveEventAuthSession } from '~~/server/repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
-	const configured = await isPasswordConfigured();
-	const token = getCookie(event, SESSION_COOKIE_NAME);
-	let isAuthenticated = false;
-	const isSecure = resolveIsSecureCookie(event);
-
-	if (configured && token) {
-		const status = await validateAndExtendSession(token, true);
-		isAuthenticated = status.valid;
-
-		if (status.valid) {
-			setCookie(event, SESSION_COOKIE_NAME, token, getSessionCookieOptions(isSecure));
-		} else {
-			deleteCookie(event, SESSION_COOKIE_NAME, { path: '/' });
-		}
-	}
-
+	const { isPasswordConfigured, isAuthenticated } = await resolveEventAuthSession(event, true);
 	return {
-		isPasswordConfigured: configured,
+		isPasswordConfigured,
 		isAuthenticated
 	};
 });

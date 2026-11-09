@@ -264,6 +264,31 @@ export function getApplicableHabitsForDate(
 	});
 }
 
+function applyHabitSpecOverlay(
+	habit: HabitEntity,
+	overlay: Partial<HabitHistoricalSpec>
+): HabitEntity {
+	return {
+		...habit,
+		title: overlay.title || habit.title,
+		category: overlay.category || habit.category,
+		scheduleLabel:
+			overlay.scheduleLabel !== undefined ? overlay.scheduleLabel : habit.scheduleLabel,
+		notes: overlay.notes !== undefined ? overlay.notes : habit.notes,
+		bronzeDesc: overlay.bronzeDesc !== undefined ? overlay.bronzeDesc : habit.bronzeDesc,
+		silverDesc: overlay.silverDesc !== undefined ? overlay.silverDesc : habit.silverDesc,
+		goldDesc: overlay.goldDesc !== undefined ? overlay.goldDesc : habit.goldDesc,
+		emergencyMinDesc:
+			overlay.emergencyMinDesc !== undefined
+				? overlay.emergencyMinDesc
+				: habit.emergencyMinDesc,
+		isSituational:
+			overlay.isSituational !== undefined
+				? Boolean(overlay.isSituational)
+				: habit.isSituational
+	};
+}
+
 export function resolveHistoricalHabitForDate(params: {
 	habit: HabitEntity;
 	dateIso: string;
@@ -274,31 +299,17 @@ export function resolveHistoricalHabitForDate(params: {
 
 	if (logSnapshotJson) {
 		try {
-			const parsed = JSON.parse(logSnapshotJson) as Partial<HabitHistoricalSpec>;
-			return {
-				...habit,
-				title: parsed.title || habit.title,
-				category: parsed.category || habit.category,
-				scheduleLabel:
-					parsed.scheduleLabel !== undefined ? parsed.scheduleLabel : habit.scheduleLabel,
-				notes: parsed.notes !== undefined ? parsed.notes : habit.notes,
-				bronzeDesc: parsed.bronzeDesc !== undefined ? parsed.bronzeDesc : habit.bronzeDesc,
-				silverDesc: parsed.silverDesc !== undefined ? parsed.silverDesc : habit.silverDesc,
-				goldDesc: parsed.goldDesc !== undefined ? parsed.goldDesc : habit.goldDesc,
-				emergencyMinDesc:
-					parsed.emergencyMinDesc !== undefined
-						? parsed.emergencyMinDesc
-						: habit.emergencyMinDesc,
-				isSituational:
-					parsed.isSituational !== undefined ? Boolean(parsed.isSituational) : habit.isSituational
-			};
+			return applyHabitSpecOverlay(
+				habit,
+				JSON.parse(logSnapshotJson) as Partial<HabitHistoricalSpec>
+			);
 		} catch {
 			// Fallback to lifecycle events or current habit
 		}
 	}
 
 	if (lifecycleEvents && lifecycleEvents.length > 0) {
-		const futureEvents = lifecycleEvents
+		const earliestFutureEvent = lifecycleEvents
 			.filter(
 				(ev) =>
 					ev.habitId === habit.id &&
@@ -307,28 +318,14 @@ export function resolveHistoricalHabitForDate(params: {
 			)
 			.sort((a, b) =>
 				a.createdAtIso > b.createdAtIso ? 1 : a.createdAtIso < b.createdAtIso ? -1 : 0
-			);
+			)[0];
 
-		const earliestFutureEvent = futureEvents[0];
 		if (earliestFutureEvent?.previousStateJson) {
 			try {
-				const prev = JSON.parse(earliestFutureEvent.previousStateJson) as Partial<HabitEntity>;
-				return {
-					...habit,
-					title: prev.title || habit.title,
-					scheduleLabel:
-						prev.scheduleLabel !== undefined ? prev.scheduleLabel : habit.scheduleLabel,
-					notes: prev.notes !== undefined ? prev.notes : habit.notes,
-					bronzeDesc: prev.bronzeDesc !== undefined ? prev.bronzeDesc : habit.bronzeDesc,
-					silverDesc: prev.silverDesc !== undefined ? prev.silverDesc : habit.silverDesc,
-					goldDesc: prev.goldDesc !== undefined ? prev.goldDesc : habit.goldDesc,
-					emergencyMinDesc:
-						prev.emergencyMinDesc !== undefined
-							? prev.emergencyMinDesc
-							: habit.emergencyMinDesc,
-					isSituational:
-						prev.isSituational !== undefined ? Boolean(prev.isSituational) : habit.isSituational
-				};
+				return applyHabitSpecOverlay(
+					habit,
+					JSON.parse(earliestFutureEvent.previousStateJson) as Partial<HabitHistoricalSpec>
+				);
 			} catch {
 				// Ignore malformed JSON
 			}

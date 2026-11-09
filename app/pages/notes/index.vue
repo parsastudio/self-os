@@ -235,12 +235,7 @@ async function handleDeleteNote(noteId: string) {
 			<div v-for="idx in 6" :key="idx" class="h-44 animate-pulse rounded-3xl border border-border bg-surface"></div>
 		</div>
 
-		<div
-			v-else-if="notesError"
-			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
-		>
-			<p class="text-sm font-extrabold text-failed">{{ notesError }}</p>
-		</div>
+		<UiErrorStateCard v-else-if="notesError" :message="notesError" />
 
 		<div
 			v-else-if="notes.length === 0"
@@ -285,18 +280,12 @@ async function handleDeleteNote(noteId: string) {
 			</div>
 
 			<template #error="{ error, clearError }">
-				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
-					<p class="text-sm font-extrabold text-failed">
-						{{ error?.message || 'خطا در نمایش یادداشت‌ها' }}
-					</p>
-					<button
-						type="button"
-						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
-						@click="clearError()"
-					>
-						تلاش مجدد
-					</button>
-				</div>
+				<UiErrorStateCard
+					:message="error?.message"
+					fallback-message="خطا در نمایش یادداشت‌ها"
+					retryable
+					@retry="clearError()"
+				/>
 			</template>
 		</NuxtErrorBoundary>
 

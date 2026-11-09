@@ -157,12 +157,7 @@ const groupedTieredSections = computed(() => {
 			<div v-for="idx in 3" :key="idx" class="h-24 animate-pulse rounded-3xl border border-border bg-surface"></div>
 		</div>
 
-		<div
-			v-else-if="trackerError"
-			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
-		>
-			<p class="text-sm font-extrabold text-failed">{{ trackerError }}</p>
-		</div>
+		<UiErrorStateCard v-else-if="trackerError" :message="trackerError" />
 
 		<div v-else-if="tracker.habits.value.length === 0" class="rounded-3xl border border-border bg-surface p-10 text-center">
 			<h2 class="text-xl font-black text-fg">پایگاه داده خالی است</h2>
@@ -245,18 +240,12 @@ const groupedTieredSections = computed(() => {
 			</div>
 
 			<template #error="{ error, clearError }">
-				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
-					<p class="text-sm font-extrabold text-failed">
-						{{ error?.message || 'خطا در نمایش فهرست طرح‌های روزانه' }}
-					</p>
-					<button
-						type="button"
-						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
-						@click="clearError()"
-					>
-						تلاش مجدد
-					</button>
-				</div>
+				<UiErrorStateCard
+					:message="error?.message"
+					fallback-message="خطا در نمایش فهرست طرح‌های روزانه"
+					retryable
+					@retry="clearError()"
+				/>
 			</template>
 		</NuxtErrorBoundary>
 	</div>

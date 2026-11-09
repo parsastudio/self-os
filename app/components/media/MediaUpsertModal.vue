@@ -83,28 +83,22 @@ function handleSubmit() {
 	}
 	validationError.value = null;
 
-	if (props.editingMedia) {
-		emit('submit', {
-			mediaId: props.editingMedia.id,
-			title: title.value.trim(),
-			category: selectedCategory.value,
-			status: selectedStatus.value,
-			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: effectiveFinishedJalali || undefined,
-			rating: selectedRating.value,
-			notes: notes.value.trim() || undefined
-		});
-	} else {
-		emit('submit', {
-			title: title.value.trim(),
-			category: selectedCategory.value,
-			status: selectedStatus.value,
-			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: effectiveFinishedJalali || undefined,
-			rating: selectedRating.value,
-			notes: notes.value.trim() || undefined
-		});
-	}
+	const basePayload: CreateMediaInput = {
+		title: title.value.trim(),
+		category: selectedCategory.value,
+		status: selectedStatus.value,
+		startedJalali: startedJalali.value.trim() || undefined,
+		finishedJalali: effectiveFinishedJalali || undefined,
+		rating: selectedRating.value,
+		notes: notes.value.trim() || undefined
+	};
+
+	emit(
+		'submit',
+		props.editingMedia
+			? { ...basePayload, mediaId: props.editingMedia.id }
+			: basePayload
+	);
 }
 </script>
 

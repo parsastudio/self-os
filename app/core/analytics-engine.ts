@@ -93,10 +93,16 @@ function resolveDateRangeWindow(
 	return { startIso, endIso, dateList };
 }
 
+function averageRounded(values: ReadonlyArray<number>): number | null {
+	if (values.length === 0) return null;
+	let sum = 0;
+	for (const val of values) sum += val;
+	return Math.round(sum / values.length);
+}
+
 function evaluateSingleLeafHabitDay(
 	habit: HabitEntity,
-	log: AnalyticsRawLog | undefined,
-	hasDailyEntry: boolean
+	log: AnalyticsRawLog | undefined
 ): {
 	outcome: DayHabitOutcome;
 	tierLevel: number | null;
@@ -256,21 +262,15 @@ function evaluateSingleLeafHabitDay(
 function evaluateHabitDay(
 	habit: HabitEntity,
 	children: HabitEntity[],
-	logsByHabitOnDate: Map<string, AnalyticsRawLog> | undefined,
-	hasDailyEntry: boolean
+	logsByHabitOnDate: Map<string, AnalyticsRawLog> | undefined
 ) {
 	if (children.length === 0) {
-		const log = logsByHabitOnDate?.get(habit.id);
-		return evaluateSingleLeafHabitDay(habit, log, hasDailyEntry);
+		return evaluateSingleLeafHabitDay(habit, logsByHabitOnDate?.get(habit.id));
 	}
 
 	const childResults = children.map((child) => ({
 		child,
-		evalResult: evaluateSingleLeafHabitDay(
-			child,
-			logsByHabitOnDate?.get(child.id),
-			hasDailyEntry
-		)
+		evalResult: evaluateSingleLeafHabitDay(child, logsByHabitOnDate?.get(child.id))
 	}));
 
 	const loggedChildren = childResults.filter((r) => r.evalResult.outcome !== 'unlogged');
@@ -299,10 +299,8 @@ function evaluateHabitDay(
 		};
 	}
 
-	const avgScore = Math.round(
-		scoredChildren.reduce((acc, r) => acc + (r.evalResult.score ?? 0), 0) /
-			scoredChildren.length
-	);
+	const avgScore =
+		averageRounded(scoredChildren.map((r) => r.evalResult.score ?? 0)) ?? 0;
 
 	let outcome: DayHabitOutcome = 'bronze';
 	let tierLevel = 1;
@@ -347,7 +345,6 @@ function buildEvolutionTimelineForHabit(
 	children: HabitEntity[],
 	allEvents: LifecycleEventEntity[],
 	allLogsByDate: Map<string, Map<string, AnalyticsRawLog>>,
-	entryByDate: Map<string, AnalyticsRawEntry>,
 	referenceTodayIso: string
 ): HabitEvolutionItem[] {
 	const relevantIds = new Set<string>([habit.id, ...children.map((c) => c.id)]);
@@ -365,35 +362,18 @@ function buildEvolutionTimelineForHabit(
 
 		for (let offset = -14; offset < 0; offset++) {
 			const dIso = shiftIsoDate(ev.effectiveDateIso, offset);
-			const res = evaluateHabitDay(
-				habit,
-				children,
-				allLogsByDate.get(dIso),
-				entryByDate.has(dIso)
-			);
+			const res = evaluateHabitDay(habit, children, allLogsByDate.get(dIso));
 			if (res.score !== null) beforeScores.push(res.score);
 		}
 
 		for (let offset = 0; offset <= 14; offset++) {
 			const dIso = shiftIsoDate(ev.effectiveDateIso, offset);
-			const res = evaluateHabitDay(
-				habit,
-				children,
-				allLogsByDate.get(dIso),
-				entryByDate.has(dIso)
-			);
+			const res = evaluateHabitDay(habit, children, allLogsByDate.get(dIso));
 			if (res.score !== null) afterScores.push(res.score);
 		}
 
-		const beforeSuccessRate =
-			beforeScores.length > 0
-				? Math.round(beforeScores.reduce((a, b) => a + b, 0) / beforeScores.length)
-				: null;
-
-		const afterSuccessRate =
-			afterScores.length > 0
-				? Math.round(afterScores.reduce((a, b) => a + b, 0) / afterScores.length)
-				: null;
+		const beforeSuccessRate = averageRounded(beforeScores);
+		const afterSuccessRate = averageRounded(afterScores);
 
 		const impactDelta =
 			beforeSuccessRate !== null && afterSuccessRate !== null
@@ -482,16 +462,8 @@ function computeStreaksFromSeries(
 function computeTrendDelta(validScores: ReadonlyArray<number>, fallbackAvg: number): number {
 	if (validScores.length < 2) return 0;
 	const mid = Math.floor(validScores.length / 2);
-	const firstHalf = validScores.slice(0, mid);
-	const secondHalf = validScores.slice(mid);
-	const firstAvg =
-		firstHalf.length > 0
-			? firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length
-			: fallbackAvg;
-	const secondAvg =
-		secondHalf.length > 0
-			? secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length
-			: fallbackAvg;
+	const firstAvg = averageRounded(validScores.slice(0, mid)) ?? fallbackAvg;
+	const secondAvg = averageRounded(validScores.slice(mid)) ?? fallbackAvg;
 	return Math.round(secondAvg - firstAvg);
 }
 
@@ -583,12 +555,7 @@ export function buildFullAnalyticsReport(params: {
 		let skippedCount = 0;
 
 		for (const dIso of dateList) {
-			const res = evaluateHabitDay(
-				h,
-				children,
-				logsByDate.get(dIso),
-				entryByDate.has(dIso)
-			);
+			const res = evaluateHabitDay(h, children, logsByDate.get(dIso));
 			seriesScores.push({ iso: dIso, outcome: res.outcome, score: res.score });
 			if (res.outcome === 'gold') goldCount++;
 			else if (res.outcome === 'silver') silverCount++;
@@ -605,10 +572,7 @@ export function buildFullAnalyticsReport(params: {
 		const validScores = seriesScores
 			.map((s) => s.score)
 			.filter((s): s is number => s !== null);
-		const avgQualityScore =
-			validScores.length > 0
-				? Math.round(validScores.reduce((a, b) => a + b, 0) / validScores.length)
-				: 0;
+		const avgQualityScore = averageRounded(validScores) ?? 0;
 
 		const trendDelta = computeTrendDelta(validScores, avgQualityScore);
 		const habitCreatedDateIso = h.createdAtIso ? h.createdAtIso.slice(0, 10) : '';
@@ -617,12 +581,7 @@ export function buildFullAnalyticsReport(params: {
 				? seriesScores.map((s) => ({ dateIso: s.iso, outcome: s.outcome }))
 				: allTimeDateList.map((dIso) => ({
 						dateIso: dIso,
-						outcome: evaluateHabitDay(
-							h,
-							children,
-							logsByDate.get(dIso),
-							entryByDate.has(dIso)
-						).outcome
+						outcome: evaluateHabitDay(h, children, logsByDate.get(dIso)).outcome
 					}));
 		const { currentStreak, bestStreak } = computeStreaksFromSeries(
 			fullStreakSeries,
@@ -666,7 +625,6 @@ export function buildFullAnalyticsReport(params: {
 			children,
 			lifecycleEvents,
 			logsByDate,
-			entryByDate,
 			todayIso
 		);
 
@@ -694,18 +652,13 @@ export function buildFullAnalyticsReport(params: {
 			const evalRes = evaluateHabitDay(
 				targetHabit,
 				children,
-				logsByDate.get(dIso),
-				Boolean(entry)
+				logsByDate.get(dIso)
 			);
 
 			if (evalRes.score !== null) {
 				recentValidScores.push(evalRes.score);
 			}
-			const windowSlice = recentValidScores.slice(-7);
-			const rollingAvgScore =
-				windowSlice.length > 0
-					? Math.round(windowSlice.reduce((a, b) => a + b, 0) / windowSlice.length)
-					: null;
+			const rollingAvgScore = averageRounded(recentValidScores.slice(-7));
 
 			if (evalRes.outcome === 'gold') goldCount++;
 			else if (evalRes.outcome === 'silver') silverCount++;
@@ -745,12 +698,7 @@ export function buildFullAnalyticsReport(params: {
 		const goldRate =
 			loggedDaysCount > 0 ? Math.round((goldCount / loggedDaysCount) * 100) : 0;
 
-		const avgQualityScore =
-			recentValidScores.length > 0
-				? Math.round(
-						recentValidScores.reduce((a, b) => a + b, 0) / recentValidScores.length
-					)
-				: 0;
+		const avgQualityScore = averageRounded(recentValidScores) ?? 0;
 
 		const trendDelta = computeTrendDelta(recentValidScores, avgQualityScore);
 

@@ -15,14 +15,6 @@ import type {
 	SyncOutboxMutation
 } from '~/domain/schemas';
 
-export type {
-	LocalAuthRecord,
-	LocalDailyEntryRecord,
-	LocalHabitLogRecord,
-	LocalReflectionTagRecord,
-	SyncMetaRecord
-};
-
 export class PersonalOSDatabase extends Dexie {
 	habits!: Table<HabitEntity, string>;
 	dailyEntries!: Table<LocalDailyEntryRecord, string>;
@@ -57,53 +49,33 @@ export class PersonalOSDatabase extends Dexie {
 			localAuth: 'key'
 		});
 	}
+
+	get workspaceTables(): Table[] {
+		return [
+			this.habits,
+			this.dailyEntries,
+			this.habitLogs,
+			this.cadencePlans,
+			this.books,
+			this.media,
+			this.notes,
+			this.calendarEvents,
+			this.lifecycleEvents,
+			this.reflectionTags
+		];
+	}
+
+	get workspaceAndSyncTables(): Table[] {
+		return [...this.workspaceTables, this.syncOutbox];
+	}
+
+	get clearableTables(): Table[] {
+		return [...this.workspaceAndSyncTables, this.syncMeta];
+	}
 }
 
 let dbInstance: PersonalOSDatabase | null = null;
 let ssrNoopDbProxy: PersonalOSDatabase | null = null;
-
-function createSsrNoopTableProxy(): unknown {
-	const noopAsync = async () => undefined;
-	const noopArrayAsync = async () => [];
-	const chainable: Record<string, unknown> = {
-		toArray: noopArrayAsync,
-		primaryKeys: noopArrayAsync,
-		first: noopAsync,
-		count: async () => 0,
-		delete: async () => 0
-	};
-	chainable.reverse = () => chainable;
-	chainable.limit = () => chainable;
-	chainable.equals = () => chainable;
-	chainable.between = () => chainable;
-	chainable.filter = () => chainable;
-
-	return new Proxy(
-		{},
-		{
-			get(_target, prop) {
-				if (prop === 'get' || prop === 'put' || prop === 'delete' || prop === 'clear') {
-					return noopAsync;
-				}
-				if (prop === 'bulkPut' || prop === 'bulkDelete') {
-					return noopAsync;
-				}
-				if (prop === 'toArray') {
-					return noopArrayAsync;
-				}
-				if (
-					prop === 'orderBy' ||
-					prop === 'where' ||
-					prop === 'filter' ||
-					prop === 'toCollection'
-				) {
-					return () => chainable;
-				}
-				return noopAsync;
-			}
-		}
-	);
-}
 
 export function getAppDatabase(): PersonalOSDatabase | null {
 	if (!import.meta.client) {
@@ -121,16 +93,10 @@ export function useAppDatabase(): PersonalOSDatabase {
 		return db;
 	}
 	if (!ssrNoopDbProxy) {
-		const tableProxy = createSsrNoopTableProxy();
-		ssrNoopDbProxy = new Proxy({} as PersonalOSDatabase, {
-			get(_target, prop) {
-				if (prop === 'transaction') {
-					return async (_mode: string, _tables: unknown, scope: () => Promise<unknown>) =>
-						scope();
-				}
-				return tableProxy;
-			}
+		const recursiveNoop: unknown = new Proxy(() => Promise.resolve([]), {
+			get: () => recursiveNoop
 		});
+		ssrNoopDbProxy = recursiveNoop as PersonalOSDatabase;
 	}
 	return ssrNoopDbProxy;
 }

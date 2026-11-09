@@ -24,8 +24,6 @@ import type {
 	SaveDailyEntryInput
 } from '~/domain/schemas';
 
-export type { CadenceDraftItem };
-
 export function useDailyTracker(dateIso: Ref<string>) {
 	const db = useAppDatabase();
 	const localRepo = useLocalRepository();

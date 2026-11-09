@@ -3,8 +3,6 @@ import { useClientAuth } from '~/composables/useClientAuth';
 import { onLocalMutationStaged, useLocalRepository } from '~/composables/useLocalRepository';
 import { extractApiErrorInfo, type ServerSyncResponse, type SyncStatusVisual } from '~/domain/schemas';
 
-export type { SyncStatusVisual };
-
 const status = ref<SyncStatusVisual>('synced');
 const pendingCount = ref(0);
 const isOnline = ref(true);

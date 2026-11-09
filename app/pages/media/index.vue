@@ -4,6 +4,7 @@ import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaSortBy, MediaStatusFilter, UpdateMediaInput } from '~/domain/schemas';
+import { sortArchiveItems } from '~/utils/archive-sort';
 import { Clapperboard, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -41,24 +42,7 @@ const filteredItems = computed(() => {
 		return true;
 	});
 
-	return [...list].sort((a, b) => {
-		if (sortBy.value === 'rating_desc') {
-			const rDiff = (b.rating ?? 0) - (a.rating ?? 0);
-			if (rDiff !== 0) return rDiff;
-			return b.createdAtIso > a.createdAtIso ? 1 : b.createdAtIso < a.createdAtIso ? -1 : 0;
-		}
-		if (sortBy.value === 'newest') {
-			const dateA = a.finishedAtIso || a.createdAtIso;
-			const dateB = b.finishedAtIso || b.createdAtIso;
-			return dateB > dateA ? 1 : dateB < dateA ? -1 : 0;
-		}
-		if (sortBy.value === 'oldest') {
-			const dateA = a.finishedAtIso || a.createdAtIso;
-			const dateB = b.finishedAtIso || b.createdAtIso;
-			return dateA > dateB ? 1 : dateA < dateB ? -1 : 0;
-		}
-		return a.title.localeCompare(b.title, 'fa');
-	});
+	return sortArchiveItems(list, sortBy.value);
 });
 
 function openCreateModal() {
@@ -118,12 +102,7 @@ async function handleDeleteMedia(mediaId: string) {
 			<div v-for="idx in 4" :key="idx" class="h-20 animate-pulse rounded-2xl border border-border bg-surface"></div>
 		</div>
 
-		<div
-			v-else-if="mediaError"
-			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
-		>
-			<p class="text-sm font-extrabold text-failed">{{ mediaError }}</p>
-		</div>
+		<UiErrorStateCard v-else-if="mediaError" :message="mediaError" />
 
 		<div
 			v-else-if="mediaItems.length === 0"
@@ -161,18 +140,12 @@ async function handleDeleteMedia(mediaId: string) {
 			</div>
 
 			<template #error="{ error, clearError }">
-				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
-					<p class="text-sm font-extrabold text-failed">
-						{{ error?.message || 'خطا در نمایش آرشیو فیلم و انیمه' }}
-					</p>
-					<button
-						type="button"
-						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
-						@click="clearError()"
-					>
-						تلاش مجدد
-					</button>
-				</div>
+				<UiErrorStateCard
+					:message="error?.message"
+					fallback-message="خطا در نمایش آرشیو فیلم و انیمه"
+					retryable
+					@retry="clearError()"
+				/>
 			</template>
 		</NuxtErrorBoundary>
 

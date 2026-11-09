@@ -1,5 +1,5 @@
 import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, shiftIsoDate } from '~/domain/calendar';
-import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX, isDemoRecordId } from '~/domain/constants';
+import { DEMO_ENTRY_TAG } from '~/domain/constants';
 import { evaluateDayStatusColor, resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
 import type {
 	BookEntity,
@@ -12,8 +12,6 @@ import type {
 	MediaEntity,
 	NoteEntity
 } from '~/domain/schemas';
-
-export { DEMO_ENTRY_TAG, DEMO_ID_PREFIX, isDemoRecordId };
 
 export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): DatabaseBackupPayload {
 	const nowIso = new Date().toISOString();

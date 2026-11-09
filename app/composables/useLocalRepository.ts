@@ -1,4 +1,4 @@
-import { type LocalDailyEntryRecord, type LocalHabitLogRecord, type SyncMetaRecord, useAppDatabase } from '~/composables/useAppDatabase';
+import { useAppDatabase } from '~/composables/useAppDatabase';
 import { createLocalBackupOperations } from '~/composables/useLocalBackupOperations';
 import { clonePlain } from '~/utils/clone';
 import {
@@ -26,6 +26,8 @@ import type {
 	DeltaWorkspaceSnapshot,
 	HabitEntity,
 	LifecycleEventEntity,
+	LocalDailyEntryRecord,
+	LocalHabitLogRecord,
 	LocalWorkspaceSnapshot,
 	MediaEntity,
 	MediaStatus,
@@ -33,6 +35,7 @@ import type {
 	NoteEntity,
 	SaveCadencePlanBatch,
 	SaveDailyEntryInput,
+	SyncMetaRecord,
 	SyncOutboxMutation,
 	UpdateBookInput,
 	UpdateMediaInput,
@@ -62,19 +65,7 @@ export function useLocalRepository() {
 	): Promise<void> {
 		const mutationList = Array.isArray(mutations) ? mutations : [mutations];
 		const plainMutations = mutationList.map((m) => clonePlain(m));
-		await db.transaction('rw', [
-			db.syncOutbox,
-			db.habits,
-			db.dailyEntries,
-			db.habitLogs,
-			db.cadencePlans,
-			db.books,
-			db.media,
-			db.notes,
-			db.calendarEvents,
-			db.lifecycleEvents,
-			db.reflectionTags
-		], async () => {
+		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
 			await applyLocal();
 			if (plainMutations.length > 0) {
 				await db.syncOutbox.bulkPut(plainMutations);
@@ -84,6 +75,54 @@ export function useLocalRepository() {
 		for (const listener of mutationStagedListeners) {
 			listener();
 		}
+	}
+
+	function mapServerEntryToLocal(
+		e: LocalWorkspaceSnapshot['entries'][number]
+	): LocalDailyEntryRecord {
+		return {
+			dateIso: e.dateIso,
+			dayStatus: e.dayStatus,
+			reflectionNote: e.reflectionNote,
+			journalText: e.journalText ?? null,
+			tags: [...e.tags],
+			updatedAtIso: e.updatedAtIso
+		};
+	}
+
+	function mapServerLogToLocal(
+		l: LocalWorkspaceSnapshot['logs'][number],
+		fallbackNowIso: string
+	): LocalHabitLogRecord {
+		return {
+			id: l.id || `log:${l.dateIso}:${l.habitId}`,
+			dateIso: l.dateIso,
+			habitId: l.habitId,
+			habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+			achievedTier: l.achievedTier,
+			achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+			habitSnapshotJson: l.habitSnapshotJson ?? null,
+			completedIntervals: l.completedIntervals ?? null,
+			actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
+			totalActualMinutes: l.totalActualMinutes ?? null,
+			plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
+			plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
+			updatedAtIso: l.updatedAtIso || fallbackNowIso
+		};
+	}
+
+	async function syncReflectionTagsToLocal(availableTags?: string[]): Promise<void> {
+		if (!availableTags || availableTags.length === 0) return;
+		const existingTags = await db.reflectionTags.toArray();
+		const existingByLabel = new Map(existingTags.map((t) => [t.label, t]));
+		const uniqueLabels = Array.from(new Set(availableTags));
+		const tagRecords = uniqueLabels.map((label, idx) => ({
+			id: existingByLabel.get(label)?.id ?? `tag:${label}`,
+			label,
+			sortOrder: idx + 1
+		}));
+		await db.reflectionTags.clear();
+		await db.reflectionTags.bulkPut(tagRecords);
 	}
 
 	const daily = {
@@ -376,66 +415,46 @@ export function useLocalRepository() {
 		};
 	}
 
+	async function upsertBookInternal(
+		input: CreateBookInput & { bookId?: string }
+	): Promise<BookEntity> {
+		const existing = input.bookId ? await db.books.get(input.bookId) : undefined;
+		const { nowIso, base } = buildTrackedItemMeta({
+			id: input.bookId,
+			title: input.title,
+			startedJalali: input.startedJalali,
+			finishedJalali: input.finishedJalali,
+			isCompleted: input.status === 'completed',
+			rating: input.rating,
+			notes: input.notes,
+			existingCreatedAtIso: existing?.createdAtIso
+		});
+		const entity: BookEntity = {
+			...base,
+			author: input.author?.trim() || null,
+			status: input.status
+		};
+		await stageMutation(
+			{
+				id: `book:${entity.id}`,
+				kind: 'UPSERT_BOOK',
+				queuedAtIso: nowIso,
+				payload: entity
+			},
+			async () => {
+				await db.books.put(entity);
+			}
+		);
+		return entity;
+	}
+
 	const books = {
 		async create(input: CreateBookInput): Promise<BookEntity> {
-			const { nowIso, base } = buildTrackedItemMeta({
-				title: input.title,
-				startedJalali: input.startedJalali,
-				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed',
-				rating: input.rating,
-				notes: input.notes
-			});
-			const newBook: BookEntity = {
-				...base,
-				author: input.author?.trim() || null,
-				status: input.status
-			};
-
-			await stageMutation(
-				{
-					id: `book:${newBook.id}`,
-					kind: 'UPSERT_BOOK',
-					queuedAtIso: nowIso,
-					payload: newBook
-				},
-				async () => {
-					await db.books.put(newBook);
-				}
-			);
-
-			return newBook;
+			return upsertBookInternal(input);
 		},
 
 		async update(input: UpdateBookInput): Promise<void> {
-			const existing = await db.books.get(input.bookId);
-			const { nowIso, base } = buildTrackedItemMeta({
-				id: input.bookId,
-				title: input.title,
-				startedJalali: input.startedJalali,
-				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed',
-				rating: input.rating,
-				notes: input.notes,
-				existingCreatedAtIso: existing?.createdAtIso
-			});
-			const updated: BookEntity = {
-				...base,
-				author: input.author?.trim() || null,
-				status: input.status
-			};
-
-			await stageMutation(
-				{
-					id: `book:${input.bookId}`,
-					kind: 'UPSERT_BOOK',
-					queuedAtIso: nowIso,
-					payload: updated
-				},
-				async () => {
-					await db.books.put(updated);
-				}
-			);
+			await upsertBookInternal(input);
 		},
 
 		async updateStatus(bookId: string, status: BookStatus): Promise<void> {
@@ -480,66 +499,46 @@ export function useLocalRepository() {
 		}
 	};
 
+	async function upsertMediaInternal(
+		input: CreateMediaInput & { mediaId?: string }
+	): Promise<MediaEntity> {
+		const existing = input.mediaId ? await db.media.get(input.mediaId) : undefined;
+		const { nowIso, base } = buildTrackedItemMeta({
+			id: input.mediaId,
+			title: input.title,
+			startedJalali: input.startedJalali,
+			finishedJalali: input.finishedJalali,
+			isCompleted: input.status === 'completed',
+			rating: input.rating,
+			notes: input.notes,
+			existingCreatedAtIso: existing?.createdAtIso
+		});
+		const entity: MediaEntity = {
+			...base,
+			category: input.category,
+			status: input.status
+		};
+		await stageMutation(
+			{
+				id: `media:${entity.id}`,
+				kind: 'UPSERT_MEDIA',
+				queuedAtIso: nowIso,
+				payload: entity
+			},
+			async () => {
+				await db.media.put(entity);
+			}
+		);
+		return entity;
+	}
+
 	const media = {
 		async create(input: CreateMediaInput): Promise<MediaEntity> {
-			const { nowIso, base } = buildTrackedItemMeta({
-				title: input.title,
-				startedJalali: input.startedJalali,
-				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed',
-				rating: input.rating,
-				notes: input.notes
-			});
-			const newMedia: MediaEntity = {
-				...base,
-				category: input.category,
-				status: input.status
-			};
-
-			await stageMutation(
-				{
-					id: `media:${newMedia.id}`,
-					kind: 'UPSERT_MEDIA',
-					queuedAtIso: nowIso,
-					payload: newMedia
-				},
-				async () => {
-					await db.media.put(newMedia);
-				}
-			);
-
-			return newMedia;
+			return upsertMediaInternal(input);
 		},
 
 		async update(input: UpdateMediaInput): Promise<void> {
-			const existing = await db.media.get(input.mediaId);
-			const { nowIso, base } = buildTrackedItemMeta({
-				id: input.mediaId,
-				title: input.title,
-				startedJalali: input.startedJalali,
-				finishedJalali: input.finishedJalali,
-				isCompleted: input.status === 'completed',
-				rating: input.rating,
-				notes: input.notes,
-				existingCreatedAtIso: existing?.createdAtIso
-			});
-			const updated: MediaEntity = {
-				...base,
-				category: input.category,
-				status: input.status
-			};
-
-			await stageMutation(
-				{
-					id: `media:${input.mediaId}`,
-					kind: 'UPSERT_MEDIA',
-					queuedAtIso: nowIso,
-					payload: updated
-				},
-				async () => {
-					await db.media.put(updated);
-				}
-			);
+			await upsertMediaInternal(input);
 		},
 
 		async updateStatus(mediaId: string, status: MediaStatus): Promise<void> {
@@ -789,19 +788,7 @@ export function useLocalRepository() {
 	}
 
 	async function applyServerWorkspace(ws: LocalWorkspaceSnapshot): Promise<void> {
-		await db.transaction('rw', [
-			db.habits,
-			db.dailyEntries,
-			db.habitLogs,
-			db.cadencePlans,
-			db.books,
-			db.media,
-			db.notes,
-			db.calendarEvents,
-			db.lifecycleEvents,
-			db.reflectionTags,
-			db.syncOutbox
-		], async () => {
+		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
 			const pending = await db.syncOutbox.toArray();
 			const pendingIds = new Set(pending.map((m) => m.id));
 			const pendingDailyDates = new Set(
@@ -932,21 +919,7 @@ export function useLocalRepository() {
 				ws.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
 			);
 
-			if (ws.availableTags && ws.availableTags.length > 0) {
-				const existingTags = await db.reflectionTags.toArray();
-				const existingByLabel = new Map(existingTags.map((t) => [t.label, t]));
-				const uniqueLabels = Array.from(new Set(ws.availableTags));
-				const tagRecords = uniqueLabels.map((label, idx) => {
-					const matched = existingByLabel.get(label);
-					return {
-						id: matched?.id ?? `tag:${label}`,
-						label,
-						sortOrder: idx + 1
-					};
-				});
-				await db.reflectionTags.clear();
-				await db.reflectionTags.bulkPut(tagRecords);
-			}
+			await syncReflectionTagsToLocal(ws.availableTags);
 
 			// Reconcile cleared daily entries and logs
 			const serverEntryDates = new Set(ws.entries.map((e) => e.dateIso));
@@ -961,23 +934,16 @@ export function useLocalRepository() {
 			const localEntryMap = new Map(
 				(await db.dailyEntries.toArray()).map((e) => [e.dateIso, e])
 			);
-			const entriesToPut: LocalDailyEntryRecord[] = [];
-			for (const e of ws.entries) {
-				const localEntry = localEntryMap.get(e.dateIso);
-				if (
-					!pendingDailyDates.has(e.dateIso) &&
-					isServerRecordNewerOrEqual(e.updatedAtIso, localEntry?.updatedAtIso)
-				) {
-					entriesToPut.push({
-						dateIso: e.dateIso,
-						dayStatus: e.dayStatus,
-						reflectionNote: e.reflectionNote,
-						journalText: e.journalText ?? null,
-						tags: [...e.tags],
-						updatedAtIso: e.updatedAtIso
-					});
-				}
-			}
+			const entriesToPut = ws.entries
+				.filter(
+					(e) =>
+						!pendingDailyDates.has(e.dateIso) &&
+						isServerRecordNewerOrEqual(
+							e.updatedAtIso,
+							localEntryMap.get(e.dateIso)?.updatedAtIso
+						)
+				)
+				.map(mapServerEntryToLocal);
 			if (entriesToPut.length > 0) {
 				await db.dailyEntries.bulkPut(entriesToPut);
 			}
@@ -992,31 +958,19 @@ export function useLocalRepository() {
 				await db.habitLogs.bulkDelete(logsToDelete);
 			}
 
-			const logsToPut: LocalHabitLogRecord[] = [];
-			for (const l of ws.logs) {
-				const logId = l.id || `log:${l.dateIso}:${l.habitId}`;
-				const localLog = localLogMap.get(logId);
-				if (
-					!pendingDailyDates.has(l.dateIso) &&
-					isServerRecordNewerOrEqual(l.updatedAtIso, localLog?.updatedAtIso)
-				) {
-					logsToPut.push({
-						id: logId,
-						dateIso: l.dateIso,
-						habitId: l.habitId,
-						habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-						achievedTier: l.achievedTier,
-						achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-						habitSnapshotJson: l.habitSnapshotJson ?? null,
-						completedIntervals: l.completedIntervals ?? null,
-						actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-						totalActualMinutes: l.totalActualMinutes ?? null,
-						plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
-						plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
-						updatedAtIso: l.updatedAtIso || new Date().toISOString()
-					});
-				}
-			}
+			const fallbackNowIso = new Date().toISOString();
+			const logsToPut = ws.logs
+				.filter((l) => {
+					const logId = l.id || `log:${l.dateIso}:${l.habitId}`;
+					return (
+						!pendingDailyDates.has(l.dateIso) &&
+						isServerRecordNewerOrEqual(
+							l.updatedAtIso,
+							localLogMap.get(logId)?.updatedAtIso
+						)
+					);
+				})
+				.map((l) => mapServerLogToLocal(l, fallbackNowIso));
 			if (logsToPut.length > 0) {
 				await db.habitLogs.bulkPut(logsToPut);
 			}
@@ -1024,22 +978,7 @@ export function useLocalRepository() {
 	}
 
 	async function applyDeltaWorkspace(delta: DeltaWorkspaceSnapshot): Promise<void> {
-		await db.transaction(
-			'rw',
-			[
-				db.habits,
-				db.dailyEntries,
-				db.habitLogs,
-				db.cadencePlans,
-				db.books,
-				db.media,
-				db.notes,
-				db.calendarEvents,
-				db.lifecycleEvents,
-				db.reflectionTags,
-				db.syncOutbox
-			],
-			async () => {
+		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
 				const pending = await db.syncOutbox.toArray();
 				const pendingIds = new Set(pending.map((m) => m.id));
 				const pendingDailyDates = new Set(
@@ -1133,83 +1072,25 @@ export function useLocalRepository() {
 					await db.dailyEntries.bulkPut(
 						delta.entries
 							.filter((e) => !pendingDailyDates.has(e.dateIso))
-							.map((e) => ({
-								dateIso: e.dateIso,
-								dayStatus: e.dayStatus,
-								reflectionNote: e.reflectionNote,
-								journalText: e.journalText ?? null,
-								tags: [...e.tags],
-								updatedAtIso: e.updatedAtIso
-							}))
+							.map(mapServerEntryToLocal)
 					);
 				}
 				if (delta.logs.length > 0) {
+					const fallbackNowIso = new Date().toISOString();
 					await db.habitLogs.bulkPut(
 						delta.logs
 							.filter((l) => !pendingDailyDates.has(l.dateIso))
-							.map((l) => ({
-								id: l.id || `log:${l.dateIso}:${l.habitId}`,
-								dateIso: l.dateIso,
-								habitId: l.habitId,
-								habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-								achievedTier: l.achievedTier,
-								achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-								habitSnapshotJson: l.habitSnapshotJson ?? null,
-								completedIntervals: l.completedIntervals ?? null,
-								actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-								totalActualMinutes: l.totalActualMinutes ?? null,
-								plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
-								plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
-								updatedAtIso: l.updatedAtIso || new Date().toISOString()
-							}))
+							.map((l) => mapServerLogToLocal(l, fallbackNowIso))
 					);
 				}
-				if (delta.availableTags && delta.availableTags.length > 0) {
-					const existingTags = await db.reflectionTags.toArray();
-					const existingByLabel = new Map(existingTags.map((t) => [t.label, t]));
-					const uniqueLabels = Array.from(new Set(delta.availableTags));
-					const tagRecords = uniqueLabels.map((label, idx) => {
-						const matched = existingByLabel.get(label);
-						return {
-							id: matched?.id ?? `tag:${label}`,
-							label,
-							sortOrder: idx + 1
-						};
-					});
-					await db.reflectionTags.clear();
-					await db.reflectionTags.bulkPut(tagRecords);
-				}
+				await syncReflectionTagsToLocal(delta.availableTags);
 			}
 		);
 	}
 
 	async function clearLocalData(): Promise<void> {
-		await db.transaction('rw', [
-			db.habits,
-			db.dailyEntries,
-			db.habitLogs,
-			db.cadencePlans,
-			db.books,
-			db.media,
-			db.notes,
-			db.calendarEvents,
-			db.lifecycleEvents,
-			db.reflectionTags,
-			db.syncOutbox,
-			db.syncMeta
-		], async () => {
-			await db.habits.clear();
-			await db.dailyEntries.clear();
-			await db.habitLogs.clear();
-			await db.cadencePlans.clear();
-			await db.books.clear();
-			await db.media.clear();
-			await db.notes.clear();
-			await db.calendarEvents.clear();
-			await db.lifecycleEvents.clear();
-			await db.reflectionTags.clear();
-			await db.syncOutbox.clear();
-			await db.syncMeta.clear();
+		await db.transaction('rw', db.clearableTables, async () => {
+			await Promise.all(db.clearableTables.map((table) => table.clear()));
 		});
 	}
 

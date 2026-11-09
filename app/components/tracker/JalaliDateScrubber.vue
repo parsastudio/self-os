@@ -3,11 +3,10 @@ import {
 	buildRecentCalendarDays,
 	formatJalaliHuman,
 	shiftIsoDate,
-	toPersianDigits,
-	type CalendarScrubberDay
+	toPersianDigits
 } from '~/domain/calendar';
 import { getDayStatusMeta } from '~/domain/constants';
-import type { DayStatusColor } from '~/domain/schemas';
+import type { CalendarScrubberDay, DayStatusColor } from '~/domain/schemas';
 import { Check, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-vue-next';
 
 interface Props {

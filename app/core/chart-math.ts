@@ -1,7 +1,5 @@
 import type { HabitDailyPoint, RenderedChartBar } from '~/domain/schemas';
 
-export type { RenderedChartBar };
-
 export const CHART_DIMENSIONS = {
 	SVG_WIDTH: 860,
 	SVG_HEIGHT: 250,

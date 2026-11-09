@@ -20,17 +20,23 @@ import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/constants';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
+const WORKSPACE_TABLES = [
+	habitLogs,
+	dailyEntries,
+	cadencePlans,
+	habitLifecycleEvents,
+	reflectionTags,
+	habits,
+	books,
+	mediaLogs,
+	calendarEvents,
+	notes
+] as const;
+
 async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
-	await tx.delete(habitLogs);
-	await tx.delete(dailyEntries);
-	await tx.delete(cadencePlans);
-	await tx.delete(habitLifecycleEvents);
-	await tx.delete(reflectionTags);
-	await tx.delete(habits);
-	await tx.delete(books);
-	await tx.delete(mediaLogs);
-	await tx.delete(calendarEvents);
-	await tx.delete(notes);
+	for (const table of WORKSPACE_TABLES) {
+		await tx.delete(table);
+	}
 }
 
 function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
@@ -61,85 +67,50 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 	const prefixPattern = `${DEMO_ID_PREFIX}%`;
 	const tagPattern = `%${DEMO_ENTRY_TAG}%`;
 
+	const demoCleanupTargets: ReadonlyArray<{
+		table: PgTable;
+		idCol: PgColumn;
+		matchCol: PgColumn;
+		pattern: string;
+	}> = [
+		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.id, pattern: prefixPattern },
+		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.habitId, pattern: prefixPattern },
+		{ table: dailyEntries, idCol: dailyEntries.id, matchCol: dailyEntries.id, pattern: prefixPattern },
+		{ table: dailyEntries, idCol: dailyEntries.id, matchCol: dailyEntries.tagsJson, pattern: tagPattern },
+		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.id, pattern: prefixPattern },
+		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.habitId, pattern: prefixPattern },
+		{
+			table: habitLifecycleEvents,
+			idCol: habitLifecycleEvents.id,
+			matchCol: habitLifecycleEvents.id,
+			pattern: prefixPattern
+		},
+		{
+			table: habitLifecycleEvents,
+			idCol: habitLifecycleEvents.id,
+			matchCol: habitLifecycleEvents.habitId,
+			pattern: prefixPattern
+		},
+		{ table: habits, idCol: habits.id, matchCol: habits.id, pattern: prefixPattern },
+		{ table: books, idCol: books.id, matchCol: books.id, pattern: prefixPattern },
+		{ table: mediaLogs, idCol: mediaLogs.id, matchCol: mediaLogs.id, pattern: prefixPattern },
+		{ table: notes, idCol: notes.id, matchCol: notes.id, pattern: prefixPattern },
+		{
+			table: calendarEvents,
+			idCol: calendarEvents.id,
+			matchCol: calendarEvents.id,
+			pattern: prefixPattern
+		}
+	];
+
 	await db.transaction(async (tx) => {
-		removed += (
-			await tx
-				.delete(habitLogs)
-				.where(like(habitLogs.id, prefixPattern))
-				.returning({ id: habitLogs.id })
-		).length;
-		removed += (
-			await tx
-				.delete(habitLogs)
-				.where(like(habitLogs.habitId, prefixPattern))
-				.returning({ id: habitLogs.id })
-		).length;
-		removed += (
-			await tx
-				.delete(dailyEntries)
-				.where(like(dailyEntries.id, prefixPattern))
-				.returning({ id: dailyEntries.id })
-		).length;
-		removed += (
-			await tx
-				.delete(dailyEntries)
-				.where(like(dailyEntries.tagsJson, tagPattern))
-				.returning({ id: dailyEntries.id })
-		).length;
-		removed += (
-			await tx
-				.delete(cadencePlans)
-				.where(like(cadencePlans.id, prefixPattern))
-				.returning({ id: cadencePlans.id })
-		).length;
-		removed += (
-			await tx
-				.delete(cadencePlans)
-				.where(like(cadencePlans.habitId, prefixPattern))
-				.returning({ id: cadencePlans.id })
-		).length;
-		removed += (
-			await tx
-				.delete(habitLifecycleEvents)
-				.where(like(habitLifecycleEvents.id, prefixPattern))
-				.returning({ id: habitLifecycleEvents.id })
-		).length;
-		removed += (
-			await tx
-				.delete(habitLifecycleEvents)
-				.where(like(habitLifecycleEvents.habitId, prefixPattern))
-				.returning({ id: habitLifecycleEvents.id })
-		).length;
-		removed += (
-			await tx
-				.delete(habits)
-				.where(like(habits.id, prefixPattern))
-				.returning({ id: habits.id })
-		).length;
-		removed += (
-			await tx
-				.delete(books)
-				.where(like(books.id, prefixPattern))
-				.returning({ id: books.id })
-		).length;
-		removed += (
-			await tx
-				.delete(mediaLogs)
-				.where(like(mediaLogs.id, prefixPattern))
-				.returning({ id: mediaLogs.id })
-		).length;
-		removed += (
-			await tx
-				.delete(notes)
-				.where(like(notes.id, prefixPattern))
-				.returning({ id: notes.id })
-		).length;
-		removed += (
-			await tx
-				.delete(calendarEvents)
-				.where(like(calendarEvents.id, prefixPattern))
-				.returning({ id: calendarEvents.id })
-		).length;
+		for (const target of demoCleanupTargets) {
+			const deletedRows = await tx
+				.delete(target.table)
+				.where(like(target.matchCol, target.pattern))
+				.returning({ id: target.idCol });
+			removed += deletedRows.length;
+		}
 	});
 
 	await bumpServerStructuralVersion();

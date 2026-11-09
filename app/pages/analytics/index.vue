@@ -120,12 +120,7 @@ function selectHabitAndScroll(habitId: string) {
 			<div class="h-80 animate-pulse rounded-3xl border border-border bg-surface"></div>
 		</div>
 
-		<div
-			v-else-if="analyticsError"
-			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
-		>
-			<p class="text-sm font-extrabold text-failed">{{ analyticsError }}</p>
-		</div>
+		<UiErrorStateCard v-else-if="analyticsError" :message="analyticsError" />
 
 		<div v-else-if="habits.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center">
 			<h2 class="text-base font-extrabold text-fg">هنوز طرحی در سیستم تعریف نشده است</h2>
@@ -155,18 +150,12 @@ function selectHabitAndScroll(habitId: string) {
 			</div>
 
 			<template #error="{ error, clearError }">
-				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
-					<p class="text-sm font-extrabold text-failed">
-						{{ error?.message || 'خطا در محاسبه و ترسیم نمودارهای آماری' }}
-					</p>
-					<button
-						type="button"
-						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
-						@click="clearError()"
-					>
-						تلاش مجدد
-					</button>
-				</div>
+				<UiErrorStateCard
+					:message="error?.message"
+					fallback-message="خطا در محاسبه و ترسیم نمودارهای آماری"
+					retryable
+					@retry="clearError()"
+				/>
 			</template>
 		</NuxtErrorBoundary>
 	</div>

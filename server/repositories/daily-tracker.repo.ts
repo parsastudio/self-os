@@ -228,7 +228,6 @@ export async function saveDailyEntryAndLogs(
 
 export async function saveCadencePlansForDate(
 	input: SaveCadencePlanBatch,
-	_preloadedHabitMap?: Map<string, HabitEntity>,
 	txExecutor?: DbExecutor
 ): Promise<void> {
 	await ensureDatabaseReady();

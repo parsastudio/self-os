@@ -10,6 +10,7 @@ import type {
 	CreateBookInput,
 	UpdateBookInput
 } from '~/domain/schemas';
+import { sortArchiveItems } from '~/utils/archive-sort';
 import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -44,24 +45,7 @@ const filteredBooks = computed(() => {
 		return true;
 	});
 
-	return [...filtered].sort((a, b) => {
-		if (sortBy.value === 'rating_desc') {
-			const rDiff = (b.rating ?? 0) - (a.rating ?? 0);
-			if (rDiff !== 0) return rDiff;
-			return b.createdAtIso > a.createdAtIso ? 1 : b.createdAtIso < a.createdAtIso ? -1 : 0;
-		}
-		if (sortBy.value === 'newest') {
-			const dateA = a.finishedAtIso || a.startedAtIso || a.createdAtIso;
-			const dateB = b.finishedAtIso || b.startedAtIso || b.createdAtIso;
-			return dateB > dateA ? 1 : dateB < dateA ? -1 : 0;
-		}
-		if (sortBy.value === 'oldest') {
-			const dateA = a.finishedAtIso || a.startedAtIso || a.createdAtIso;
-			const dateB = b.finishedAtIso || b.startedAtIso || b.createdAtIso;
-			return dateA > dateB ? 1 : dateA < dateB ? -1 : 0;
-		}
-		return a.title.localeCompare(b.title, 'fa');
-	});
+	return sortArchiveItems(filtered, sortBy.value);
 });
 
 const existingSuggestions = computed(() => {
@@ -133,12 +117,7 @@ async function handleDeleteBook(bookId: string) {
 			<div v-for="idx in 4" :key="idx" class="h-20 animate-pulse rounded-2xl border border-border bg-surface"></div>
 		</div>
 
-		<div
-			v-else-if="booksError"
-			class="rounded-3xl border border-failed-border bg-surface p-8 text-center shadow-(--shadow-soft)"
-		>
-			<p class="text-sm font-extrabold text-failed">{{ booksError }}</p>
-		</div>
+		<UiErrorStateCard v-else-if="booksError" :message="booksError" />
 
 		<div
 			v-else-if="books.length === 0"
@@ -176,18 +155,12 @@ async function handleDeleteBook(bookId: string) {
 			</div>
 
 			<template #error="{ error, clearError }">
-				<div class="rounded-3xl border border-failed-border bg-surface p-6 text-center shadow-(--shadow-soft)">
-					<p class="text-sm font-extrabold text-failed">
-						{{ error?.message || 'خطا در نمایش فهرست کتاب‌ها' }}
-					</p>
-					<button
-						type="button"
-						class="mt-3 h-10 rounded-xl bg-accent px-5 text-xs font-extrabold text-accent-fg"
-						@click="clearError()"
-					>
-						تلاش مجدد
-					</button>
-				</div>
+				<UiErrorStateCard
+					:message="error?.message"
+					fallback-message="خطا در نمایش فهرست کتاب‌ها"
+					retryable
+					@retry="clearError()"
+				/>
 			</template>
 		</NuxtErrorBoundary>
 

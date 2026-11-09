@@ -83,28 +83,22 @@ function handleSubmit() {
 	}
 	validationError.value = null;
 
-	if (props.editingBook) {
-		emit('submit', {
-			bookId: props.editingBook.id,
-			title: title.value.trim(),
-			author: author.value.trim() || undefined,
-			status: selectedStatus.value,
-			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: effectiveFinishedJalali || undefined,
-			rating: selectedRating.value,
-			notes: notes.value.trim() || undefined
-		});
-	} else {
-		emit('submit', {
-			title: title.value.trim(),
-			author: author.value.trim() || undefined,
-			status: selectedStatus.value,
-			startedJalali: startedJalali.value.trim() || undefined,
-			finishedJalali: effectiveFinishedJalali || undefined,
-			rating: selectedRating.value,
-			notes: notes.value.trim() || undefined
-		});
-	}
+	const basePayload: CreateBookInput = {
+		title: title.value.trim(),
+		author: author.value.trim() || undefined,
+		status: selectedStatus.value,
+		startedJalali: startedJalali.value.trim() || undefined,
+		finishedJalali: effectiveFinishedJalali || undefined,
+		rating: selectedRating.value,
+		notes: notes.value.trim() || undefined
+	};
+
+	emit(
+		'submit',
+		props.editingBook
+			? { ...basePayload, bookId: props.editingBook.id }
+			: basePayload
+	);
 }
 </script>
 

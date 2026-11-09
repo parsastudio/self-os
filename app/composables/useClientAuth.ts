@@ -1,4 +1,5 @@
-import { getAppDatabase, type LocalAuthRecord } from '~/composables/useAppDatabase';
+import { getAppDatabase } from '~/composables/useAppDatabase';
+import type { LocalAuthRecord } from '~/domain/schemas';
 
 const PBKDF2_V2_PREFIX = 'pbkdf2_v2:';
 const PBKDF2_V2_ITERATIONS = 600000;

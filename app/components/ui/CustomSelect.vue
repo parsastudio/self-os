@@ -2,8 +2,6 @@
 import { Check, ChevronDown } from 'lucide-vue-next';
 import type { SelectOption } from '~/domain/schemas';
 
-export type { SelectOption };
-
 interface Props {
 	id?: string;
 	name?: string;

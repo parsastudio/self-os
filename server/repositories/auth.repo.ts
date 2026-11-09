@@ -1,6 +1,13 @@
 import crypto from 'node:crypto';
 import { eq, inArray, lt, notInArray } from 'drizzle-orm';
-import { getRequestHeader, getRequestProtocol, type H3Event } from 'h3';
+import {
+	deleteCookie,
+	getCookie,
+	getRequestHeader,
+	getRequestProtocol,
+	setCookie,
+	type H3Event
+} from 'h3';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import { appAuth, authSessions } from '~~/server/database/schema';
 
@@ -62,18 +69,13 @@ function runScryptAsync(
 	password: string,
 	saltBuffer: Buffer,
 	keylen: number,
-	options?: crypto.ScryptOptions
+	options: crypto.ScryptOptions = {}
 ): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
-		const callback = (err: Error | null, derivedKey: Buffer) => {
+		crypto.scrypt(password, saltBuffer, keylen, options, (err, derivedKey) => {
 			if (err) reject(err);
 			else resolve(derivedKey);
-		};
-		if (options) {
-			crypto.scrypt(password, saltBuffer, keylen, options, callback);
-		} else {
-			crypto.scrypt(password, saltBuffer, keylen, callback);
-		}
+		});
 	});
 }
 
@@ -337,4 +339,35 @@ export async function revokeAuthSession(rawToken: string): Promise<void> {
 	await ensureDatabaseReady();
 	const { allCandidateIds } = getCandidateSessionIds(rawToken);
 	await db.delete(authSessions).where(inArray(authSessions.id, allCandidateIds));
+}
+
+export async function resolveEventAuthSession(
+	event: H3Event,
+	forceRefreshCookie = false
+): Promise<{
+	isPasswordConfigured: boolean;
+	isAuthenticated: boolean;
+	sessionToken: string | null;
+}> {
+	const passwordConfigured = await isPasswordConfigured();
+	const rawToken = getCookie(event, SESSION_COOKIE_NAME) || null;
+	let isAuthenticated = false;
+	const isSecure = resolveIsSecureCookie(event);
+
+	if (passwordConfigured && rawToken) {
+		const sessionStatus = await validateAndExtendSession(rawToken, forceRefreshCookie);
+		isAuthenticated = sessionStatus.valid;
+
+		if (sessionStatus.valid && (forceRefreshCookie || sessionStatus.shouldRefreshCookie)) {
+			setCookie(event, SESSION_COOKIE_NAME, rawToken, getSessionCookieOptions(isSecure));
+		} else if (!sessionStatus.valid) {
+			deleteCookie(event, SESSION_COOKIE_NAME, { path: '/' });
+		}
+	}
+
+	return {
+		isPasswordConfigured: passwordConfigured,
+		isAuthenticated,
+		sessionToken: rawToken
+	};
 }

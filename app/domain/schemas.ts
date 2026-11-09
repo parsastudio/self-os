@@ -377,27 +377,13 @@ export const ChangePasswordInputSchema = z
 		message: 'رمز عبور جدید و تکرار آن یکسان نیستند',
 		path: ['confirmNewPassword']
 	});
-export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
 
 export const DemoSeedActionSchema = z.object({
 	action: z.enum(['inject', 'remove'])
 });
-export type DemoSeedActionInput = z.infer<typeof DemoSeedActionSchema>;
 
 export const BackupRestoreModeSchema = z.enum(['merge', 'replace']);
 export type BackupRestoreMode = z.infer<typeof BackupRestoreModeSchema>;
-
-export const BackupImportRequestSchema = z.union([
-	z.object({
-		mode: BackupRestoreModeSchema.default('merge'),
-		payload: DatabaseBackupPayloadSchema
-	}),
-	DatabaseBackupPayloadSchema.transform((payload) => ({
-		mode: 'merge' as const,
-		payload
-	}))
-]);
-export type BackupImportRequest = z.infer<typeof BackupImportRequestSchema>;
 
 export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 	z.object({
@@ -494,39 +480,43 @@ export const SyncRequestPayloadSchema = z.object({
 });
 export type SyncRequestPayload = z.infer<typeof SyncRequestPayloadSchema>;
 
+export const LocalDailyEntryRecordSchema = z.object({
+	dateIso: z.string(),
+	dayStatus: DayStatusColorSchema,
+	reflectionNote: z.string(),
+	journalText: z.string().nullable(),
+	tags: z.array(z.string()),
+	updatedAtIso: z.string()
+});
+export type LocalDailyEntryRecord = z.infer<typeof LocalDailyEntryRecordSchema>;
+
+export const WorkspaceEntryItemSchema = LocalDailyEntryRecordSchema.extend({
+	id: z.string()
+});
+
+export const WorkspaceLogItemSchema = z.object({
+	id: z.string(),
+	dateIso: z.string(),
+	habitId: z.string(),
+	habitTitleSnapshot: z.string().nullable(),
+	achievedTier: z.number().nullable(),
+	achievedRuleSnapshot: z.string().nullable(),
+	habitSnapshotJson: z.string().nullable(),
+	completedIntervals: z.number().nullable(),
+	actualMinutesPerInterval: z.number().nullable(),
+	totalActualMinutes: z.number().nullable(),
+	plannedIntervalsSnapshot: z.number().nullable(),
+	plannedMinutesSnapshot: z.number().nullable(),
+	updatedAtIso: z.string().nullable()
+});
+
 export const LocalWorkspaceSnapshotSchema = z.object({
 	versionIso: z.string(),
 	syncedAtIso: z.string(),
 	habits: z.array(HabitEntitySchema),
 	availableTags: z.array(z.string()),
-	entries: z.array(
-		z.object({
-			id: z.string(),
-			dateIso: z.string(),
-			dayStatus: DayStatusColorSchema,
-			reflectionNote: z.string(),
-			journalText: z.string().nullable(),
-			tags: z.array(z.string()),
-			updatedAtIso: z.string()
-		})
-	),
-	logs: z.array(
-		z.object({
-			id: z.string(),
-			dateIso: z.string(),
-			habitId: z.string(),
-			habitTitleSnapshot: z.string().nullable(),
-			achievedTier: z.number().nullable(),
-			achievedRuleSnapshot: z.string().nullable(),
-			habitSnapshotJson: z.string().nullable(),
-			completedIntervals: z.number().nullable(),
-			actualMinutesPerInterval: z.number().nullable(),
-			totalActualMinutes: z.number().nullable(),
-			plannedIntervalsSnapshot: z.number().nullable(),
-			plannedMinutesSnapshot: z.number().nullable(),
-			updatedAtIso: z.string().nullable()
-		})
-	),
+	entries: z.array(WorkspaceEntryItemSchema),
+	logs: z.array(WorkspaceLogItemSchema),
 	cadencePlans: z.array(CadencePlanEntitySchema),
 	books: z.array(BookEntitySchema),
 	media: z.array(MediaEntitySchema),
@@ -677,16 +667,6 @@ export const RawCalendarDayEntrySchema = z.object({
 	tagsJson: z.string().optional()
 });
 export type RawCalendarDayEntry = z.infer<typeof RawCalendarDayEntrySchema>;
-
-export const LocalDailyEntryRecordSchema = z.object({
-	dateIso: z.string(),
-	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string(),
-	journalText: z.string().nullable(),
-	tags: z.array(z.string()),
-	updatedAtIso: z.string()
-});
-export type LocalDailyEntryRecord = z.infer<typeof LocalDailyEntryRecordSchema>;
 
 export const LocalHabitLogRecordSchema = HabitLogItemInputSchema.extend({
 	id: z.string(),
@@ -968,26 +948,7 @@ export const DatabaseBackupPayloadSchema = z.object({
 				})
 			)
 			.max(50000),
-		habitLogs: z
-			.array(
-				z.object({
-					id: z.string(),
-					dateIso: z.string(),
-					habitId: z.string(),
-					habitTitleSnapshot: z.string().nullable(),
-					achievedTier: z.number().nullable(),
-					achievedRuleSnapshot: z.string().nullable(),
-					habitSnapshotJson: z.string().nullable(),
-					completedIntervals: z.number().nullable(),
-					actualMinutesPerInterval: z.number().nullable(),
-					totalActualMinutes: z.number().nullable(),
-					plannedIntervalsSnapshot: z.number().nullable(),
-					plannedMinutesSnapshot: z.number().nullable(),
-					updatedAtIso: z.string().nullable()
-				})
-			)
-			.max(200000),
-		cadencePlans: z.array(CadencePlanEntitySchema).max(50000),
+		habitLogs: z.array(WorkspaceLogItemSchema).max(200000),		cadencePlans: z.array(CadencePlanEntitySchema).max(50000),
 		books: z.array(BookEntitySchema).max(10000),
 		media: z.array(MediaEntitySchema).max(10000),
 		notes: z.array(NoteEntitySchema).max(10000),
@@ -1005,6 +966,17 @@ export const DatabaseBackupPayloadSchema = z.object({
 	})
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
+
+export const BackupImportRequestSchema = z.union([
+	z.object({
+		mode: BackupRestoreModeSchema.default('merge'),
+		payload: DatabaseBackupPayloadSchema
+	}),
+	DatabaseBackupPayloadSchema.transform((payload) => ({
+		mode: 'merge' as const,
+		payload
+	}))
+]);
 
 export const ExistingWorkspaceDataSchema = DatabaseBackupPayloadSchema.shape.data;
 export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;
@@ -1072,5 +1044,3 @@ export function extractApiErrorInfo(
 	}
 	return { statusCode: 500, message: fallbackMessage };
 }
-
-export { parseTagsJson } from '~/domain/tags';
