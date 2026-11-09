@@ -1,3 +1,4 @@
+import type { Table } from 'dexie';
 import type { PersonalOSDatabase } from '~/composables/useAppDatabase';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { buildDemoSeedDataset } from '~/core/demo-seed';
@@ -315,10 +316,11 @@ export function createLocalBackupOperations(
 
 	async function removeDemoSeed(): Promise<void> {
 		const deleteMatchingById = async <T extends { id: string }>(
-			table: { toArray: () => Promise<T[]>; bulkDelete: (keys: string[]) => Promise<void> },
+			table: Table<T, string>,
 			predicate: (row: T) => boolean = (row) => isDemoRecordId(row.id)
 		) => {
-			const keys = (await table.toArray()).filter(predicate).map((r) => r.id);
+			const rows = await table.toArray();
+			const keys = rows.filter(predicate).map((r) => r.id);
 			if (keys.length > 0) await table.bulkDelete(keys);
 		};
 

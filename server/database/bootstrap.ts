@@ -171,7 +171,7 @@ const BOOTSTRAP_DDL_SQL = `
 export async function ensurePostgreSqlSchemaBootstrapped(
 	sqlClient: ReturnType<typeof postgres>
 ): Promise<void> {
-	const checkRows = await sqlClient<{ reg: string | null }[]>`
+	const checkRows = await sqlClient<{ reg: string | null; habits_reg: string | null }[]>`
 		SELECT to_regclass('public.sync_state') AS reg,
 		       to_regclass('public.habits') AS habits_reg
 	`;
