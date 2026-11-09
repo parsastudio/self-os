@@ -4,17 +4,7 @@ import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { CreateHabitInput, HabitEntity, MutateHabitStructureInput } from '~/domain/schemas';
 import ArchitectHabitCard from '~/components/architect/ArchitectHabitCard.vue';
-		<!-- مودال درج و ویرایش طرح -->
-		<LazyArchitectHabitUpsertModal
-			v-if="activeModal"
-import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
-=======
 import ArchivedHabitsSection from '~/components/architect/ArchivedHabitsSection.vue';
-import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
-=======
-		<!-- مودال درج و ویرایش طرح -->
-		<LazyArchitectHabitUpsertModal
-			v-if="activeModal"
 import { BarChart3, GitCommitHorizontal, Plus } from 'lucide-vue-next';
 
 const router = useRouter();

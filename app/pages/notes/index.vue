@@ -5,15 +5,7 @@ import { useLocalRepository } from '~/composables/useLocalRepository';
 import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
-		<LazyNotesNoteUpsertModal
-			v-if="isModalOpen"
-import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
-=======
 import NoteItemCard from '~/components/notes/NoteItemCard.vue';
-import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
-=======
-		<LazyNotesNoteUpsertModal
-			v-if="isModalOpen"
 import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 
 const db = useAppDatabase();

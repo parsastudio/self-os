@@ -167,3 +167,4 @@ function toggleHabitExpanded(habitId: string) {
 			</div>
 		</div>
 	</BaseModal>
+</template>

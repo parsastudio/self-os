@@ -4,15 +4,7 @@ import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
-		<LazyBooksBookUpsertModal
-			v-if="isModalOpen"
-import { BookOpen, Plus } from 'lucide-vue-next';
-=======
 import BookItemCard from '~/components/books/BookItemCard.vue';
-import { BookOpen, Plus } from 'lucide-vue-next';
-=======
-		<LazyBooksBookUpsertModal
-			v-if="isModalOpen"
 import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
