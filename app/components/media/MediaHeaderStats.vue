@@ -2,7 +2,6 @@
 import { toPersianDigits } from '~/domain/calendar';
 import { MEDIA_CATEGORY_OPTIONS } from '~/domain/constants';
 import type { MediaCategory, MediaSortBy, MediaStatusFilter } from '~/domain/schemas';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { Clapperboard, Plus } from 'lucide-vue-next';
 
 interface Props {
@@ -84,7 +83,7 @@ const sortOptions: ReadonlyArray<{ value: MediaSortBy; label: string }> = [
 				</div>
 
 				<div class="w-full sm:w-40">
-					<CustomSelect
+					<UiCustomSelect
 						:model-value="sortBy"
 						:options="sortOptions"
 						trigger-class="h-10 text-xs font-extrabold text-fg"

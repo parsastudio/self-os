@@ -1,8 +1,3 @@
-<script lang="ts">
-let activeModalCount = 0;
-let savedBodyOverflow = '';
-</script>
-
 <script setup lang="ts">
 import { X } from 'lucide-vue-next';
 
@@ -29,20 +24,36 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 }
 
-onMounted(() => {
-	if (activeModalCount === 0) {
-		savedBodyOverflow = document.body.style.overflow;
+function lockBodyScroll() {
+	if (!import.meta.client) return;
+	const currentCount = Number(document.body.dataset.modalCount || '0');
+	if (currentCount === 0) {
+		document.body.dataset.prevOverflow = document.body.style.overflow || '';
 		document.body.style.overflow = 'hidden';
 	}
-	activeModalCount++;
+	document.body.dataset.modalCount = String(currentCount + 1);
+}
+
+function unlockBodyScroll() {
+	if (!import.meta.client) return;
+	const currentCount = Number(document.body.dataset.modalCount || '0');
+	const nextCount = Math.max(0, currentCount - 1);
+	if (nextCount === 0) {
+		document.body.style.overflow = document.body.dataset.prevOverflow || '';
+		delete document.body.dataset.modalCount;
+		delete document.body.dataset.prevOverflow;
+	} else {
+		document.body.dataset.modalCount = String(nextCount);
+	}
+}
+
+onMounted(() => {
+	lockBodyScroll();
 	window.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
-	activeModalCount = Math.max(0, activeModalCount - 1);
-	if (activeModalCount === 0) {
-		document.body.style.overflow = savedBodyOverflow;
-	}
+	unlockBodyScroll();
 	window.removeEventListener('keydown', handleKeydown);
 });
 </script>

@@ -78,6 +78,17 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
 			if (activeDraftDateIso !== dateIso.value) {
+				if (isDirty.value && !pendingSavePayload) {
+					pendingSavePayload = {
+						dateIso: activeDraftDateIso,
+						dayStatus: computedDayStatus.value,
+						reflectionNote: reflectionNote.value,
+						journalText: journalText.value.trim() || null,
+						tags: [...selectedTags.value],
+						updatedAtIso: new Date().toISOString(),
+						logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
+					};
+				}
 				if (pendingSavePayload) {
 					void flushPendingSave();
 				}

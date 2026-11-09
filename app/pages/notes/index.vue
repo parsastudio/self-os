@@ -5,7 +5,6 @@ import { useLocalRepository } from '~/composables/useLocalRepository';
 import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
 import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
-import NoteItemCard from '~/components/notes/NoteItemCard.vue';
 import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -273,7 +272,7 @@ async function handleDeleteNote(noteId: string) {
 
 		<NuxtErrorBoundary v-else>
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-				<NoteItemCard
+				<NotesNoteItemCard
 					v-for="note in filteredNotes"
 					:key="note.id"
 					:note="note"

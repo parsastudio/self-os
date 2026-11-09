@@ -19,6 +19,14 @@ const filteredEvents = computed(() =>
 		? events.value
 		: events.value.filter((e) => e.eventType === selectedFilter.value)
 );
+
+const enrichedEvents = computed(() =>
+	filteredEvents.value.map((ev) => ({
+		...ev,
+		humanDateLabel: formatJalaliHuman(ev.effectiveDateIso).fullLabel,
+		diffs: extractLifecycleRuleDiffs(ev.previousStateJson, ev.newStateJson)
+	}))
+);
 </script>
 
 <template>
@@ -61,13 +69,13 @@ const filteredEvents = computed(() =>
 			<p class="text-sm font-extrabold text-failed">{{ eventsError }}</p>
 		</div>
 
-		<div v-else-if="filteredEvents.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center text-xs font-bold text-fg-muted">
+		<div v-else-if="enrichedEvents.length === 0" class="rounded-3xl border border-dashed border-border bg-surface p-12 text-center text-xs font-bold text-fg-muted">
 			رویدادی متناسب با این فیلتر یافت نشد.
 		</div>
 
 		<NuxtErrorBoundary v-else>
 			<div class="relative space-y-4 before:absolute before:top-4 before:right-5 before:bottom-4 before:w-0.5 before:bg-border">
-				<div v-for="ev in filteredEvents" :key="ev.id" class="relative pr-12">
+				<div v-for="ev in enrichedEvents" :key="ev.id" class="relative pr-12">
 					<div class="absolute top-4 right-3.5 h-3.5 w-3.5 rounded-full border-2 border-accent bg-surface"></div>
 
 					<div class="rounded-2xl border border-border bg-surface p-5 shadow-(--shadow-soft) transition hover:border-border-strong">
@@ -82,7 +90,7 @@ const filteredEvents = computed(() =>
 								<h3 class="text-sm font-extrabold text-fg">{{ ev.habitTitleSnapshot }}</h3>
 							</div>
 
-							<span class="text-xs font-medium text-fg-muted">{{ formatJalaliHuman(ev.effectiveDateIso).fullLabel }}</span>
+							<span class="text-xs font-medium text-fg-muted">{{ ev.humanDateLabel }}</span>
 						</div>
 
 						<p
@@ -93,9 +101,9 @@ const filteredEvents = computed(() =>
 						</p>
 
 						<!-- جزئیات تغییرات و مقادیر قبلی/جدید (Diff View) -->
-						<div v-if="extractLifecycleRuleDiffs(ev.previousStateJson, ev.newStateJson).length > 0" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+						<div v-if="ev.diffs.length > 0" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
 							<div
-								v-for="diff in extractLifecycleRuleDiffs(ev.previousStateJson, ev.newStateJson)"
+								v-for="diff in ev.diffs"
 								:key="diff.fieldLabel"
 								class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-elevated px-3 py-2 text-xs"
 							>

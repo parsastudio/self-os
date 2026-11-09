@@ -3,9 +3,12 @@ import { BookHeart } from 'lucide-vue-next';
 
 interface Props {
 	modelValue: string;
+	dayLabel?: string;
 }
 
-defineProps<Props>();
+withDefaults(defineProps<Props>(), {
+	dayLabel: 'این روز'
+});
 
 const emit = defineEmits<{
 	(e: 'update:modelValue', value: string): void;
@@ -21,7 +24,7 @@ const emit = defineEmits<{
 		<div class="mb-3 flex items-center justify-between gap-2">
 			<label for="daily-journal-input" class="flex items-center gap-2 text-sm font-black text-fg">
 				<BookHeart class="h-4 w-4 text-accent-text" />
-				<span>خاطره و روایت امروز</span>
+				<span>خاطره و روایت {{ dayLabel }}</span>
 			</label>
 			<button
 				type="button"

@@ -1,20 +1,16 @@
 <script setup lang="ts">
 import { useDailyTracker } from '~/composables/useDailyTracker';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { computeUpcomingEventsBanner } from '~/core/calendar-engine';
-import { getTodayIso, getYesterdayIso, shiftIsoDate, toPersianDigits } from '~/domain/calendar';
+import { formatJalaliHuman, shiftIsoDate, toPersianDigits } from '~/domain/calendar';
 import type { HabitTimeSlot, HabitTreeNode } from '~/domain/schemas';
-import JalaliDateScrubber from '~/components/tracker/JalaliDateScrubber.vue';
-import UpcomingEventsBanner from '~/components/tracker/UpcomingEventsBanner.vue';
-import TrackerActionToolbar from '~/components/tracker/TrackerActionToolbar.vue';
-import CadenceHabitCard from '~/components/tracker/CadenceHabitCard.vue';
-import TieredHabitCard from '~/components/tracker/TieredHabitCard.vue';
-import DailyJournalSection from '~/components/tracker/DailyJournalSection.vue';
 import { Moon, Sun, Sunrise } from 'lucide-vue-next';
 
 const route = useRoute();
 const router = useRouter();
 const localRepo = useLocalRepository();
+const { todayIso, yesterdayIso } = useLiveTodayIso();
 
 async function handleToggleCalendarEvent(eventId: string, isCompleted: boolean) {
 	await localRepo.calendar.toggleComplete(eventId, isCompleted);
@@ -25,7 +21,12 @@ const currentDateIso = computed(() => {
 	if (param && /^\d{4}-\d{2}-\d{2}$/.test(param)) {
 		return param;
 	}
-	return getYesterdayIso();
+	return yesterdayIso.value;
+});
+
+const currentDayRelativeLabel = computed(() => {
+	const human = formatJalaliHuman(currentDateIso.value, todayIso.value);
+	return human.relativeBadge || `روز ${human.weekday}`;
 });
 
 const tracker = useDailyTracker(currentDateIso);
@@ -86,7 +87,7 @@ const bannerCalculation = computed(() =>
 	computeUpcomingEventsBanner({
 		allEvents: tracker.calendarEvents.value,
 		referenceDateIso: currentDateIso.value,
-		todayIso: getTodayIso(),
+		todayIso: todayIso.value,
 		horizonDays: 7
 	})
 );
@@ -129,7 +130,7 @@ const groupedTieredSections = computed(() => {
 
 <template>
 	<div class="space-y-6 pb-12">
-		<JalaliDateScrubber
+		<TrackerJalaliDateScrubber
 			:current-date-iso="currentDateIso"
 			:recent-entries="tracker.allEntries.value"
 			:live-day-status="tracker.computedDayStatus.value"
@@ -141,7 +142,7 @@ const groupedTieredSections = computed(() => {
 			@retry-save="() => tracker.flushPendingSave(true)"
 		/>
 
-		<UpcomingEventsBanner
+		<TrackerUpcomingEventsBanner
 			:upcoming-items="upcomingBannerItems"
 			:selected-day-events="activeSelectedDayEvents"
 			:current-date-iso="currentDateIso"
@@ -196,7 +197,7 @@ const groupedTieredSections = computed(() => {
 
 			<!-- بخش عادات ریتمی تکرارشونده -->
 			<div v-if="tracker.tree.value.cadenceHabits.length > 0" class="space-y-4">
-				<CadenceHabitCard
+				<TrackerCadenceHabitCard
 					v-for="habit in tracker.tree.value.cadenceHabits"
 					:key="habit.id"
 					:habit="habit"
@@ -219,7 +220,7 @@ const groupedTieredSections = computed(() => {
 					</div>
 
 					<div class="space-y-2.5">
-						<TieredHabitCard
+						<TrackerTieredHabitCard
 							v-for="node in section.nodes"
 							:key="node.id"
 							:node="node"
@@ -233,8 +234,9 @@ const groupedTieredSections = computed(() => {
 			</div>
 
 			<!-- بخش خاطره‌نگاری و روایت روزانه -->
-			<DailyJournalSection
+			<TrackerDailyJournalSection
 				v-model="tracker.journalText.value"
+				:day-label="currentDayRelativeLabel"
 				@change="tracker.scheduleAutoSave(750)"
 				@open-memories="router.push('/memories')"
 			/>

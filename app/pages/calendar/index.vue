@@ -1,26 +1,24 @@
 <script setup lang="ts">
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { assembleJalaliMonthArchive } from '~/core/calendar-engine';
 import {
 	JALALI_MONTH_NAMES,
 	getJalaliMonthLength,
-	getTodayIso,
 	isoToJalaliParts,
 	jalaliPartsToIso,
 	toPersianDigits
 } from '~/domain/calendar';
 import type { CreateCalendarEventInput } from '~/domain/schemas';
-import CalendarMonthGrid from '~/components/calendar/CalendarMonthGrid.vue';
-import CalendarDayInspector from '~/components/calendar/CalendarDayInspector.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { BookHeart, Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 
 const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
+const { todayIso } = useLiveTodayIso();
 const isSubmittingCalendarEvent = ref(false);
 
 async function handleCreateEvent(payload: CreateCalendarEventInput) {
@@ -41,7 +39,6 @@ async function handleDeleteEvent(eventId: string) {
 	await localRepo.calendar.delete(eventId);
 }
 
-const todayIso = computed(() => getTodayIso());
 const todayParts = computed(() => isoToJalaliParts(todayIso.value));
 
 const requestedDate = computed(() => {
@@ -94,8 +91,34 @@ const monthLogs = useDexieLiveQuery(
 	monthIsoBounds
 );
 const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
-const allBooks = useDexieLiveQuery(() => db.books.toArray(), []);
-const allMedia = useDexieLiveQuery(() => db.media.toArray(), []);
+const monthBooks = useDexieLiveQuery(
+	() => {
+		const { startIso, endIso } = monthIsoBounds.value;
+		return db.books
+			.filter((b) => {
+				const f = b.finishedAtIso;
+				const s = b.startedAtIso;
+				return Boolean((f && f >= startIso && f <= endIso) || (s && s >= startIso && s <= endIso));
+			})
+			.toArray();
+	},
+	[],
+	monthIsoBounds
+);
+const monthMedia = useDexieLiveQuery(
+	() => {
+		const { startIso, endIso } = monthIsoBounds.value;
+		return db.media
+			.filter((m) => {
+				const f = m.finishedAtIso;
+				const s = m.startedAtIso;
+				return Boolean((f && f >= startIso && f <= endIso) || (s && s >= startIso && s <= endIso));
+			})
+			.toArray();
+	},
+	[],
+	monthIsoBounds
+);
 
 const isCalendarLoading = computed(
 	() =>
@@ -136,8 +159,8 @@ const archiveData = computed(() =>
 		entriesInMonth: monthEntries.value,
 		logsInMonth: monthLogs.value,
 		eventsInMonth: allEvents.value,
-		booksInMonth: allBooks.value,
-		mediaInMonth: allMedia.value
+		booksInMonth: monthBooks.value,
+		mediaInMonth: monthMedia.value
 	})
 );
 
@@ -213,7 +236,7 @@ function goToToday() {
 						</button>
 
 						<div class="w-32 sm:w-36">
-							<CustomSelect
+							<UiCustomSelect
 								:model-value="currentMonth"
 								:options="monthOptions"
 								trigger-class="h-11 text-fg"
@@ -222,7 +245,7 @@ function goToToday() {
 						</div>
 
 						<div class="w-24 sm:w-28">
-							<CustomSelect
+							<UiCustomSelect
 								:model-value="currentYear"
 								:options="yearOptions"
 								trigger-class="h-11 font-mono text-fg"

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { NoteEntity, UpsertNoteInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
 import { Tag } from 'lucide-vue-next';
 
 interface Props {
@@ -37,7 +36,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="editingNote ? 'ویرایش یادداشت' : 'افزودن یادداشت جدید'" @close="emit('close')">
+	<UiBaseModal :title="editingNote ? 'ویرایش یادداشت' : 'افزودن یادداشت جدید'" @close="emit('close')">
 		<form class="space-y-4 overflow-y-auto p-5 sm:p-6" @submit.prevent="handleSubmit">
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-center">
 				<div class="flex-1">
@@ -99,5 +98,5 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>

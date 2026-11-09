@@ -1,20 +1,15 @@
 <script setup lang="ts">
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import { buildFullAnalyticsReport } from '~/core/analytics-engine';
-import { getTodayIso, getYesterdayIso, shiftIsoDate } from '~/domain/calendar';
 import type { AnalyticsTimeRange } from '~/domain/schemas';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
-import AnalyticsSummaryCards from '~/components/analytics/AnalyticsSummaryCards.vue';
-import HabitTrendChart from '~/components/analytics/HabitTrendChart.vue';
-import HabitHeatmapMatrix from '~/components/analytics/HabitHeatmapMatrix.vue';
-import HabitEvolutionTimeline from '~/components/analytics/HabitEvolutionTimeline.vue';
-import HabitsComparisonTable from '~/components/analytics/HabitsComparisonTable.vue';
 import { BarChart3 } from 'lucide-vue-next';
 
 const route = useRoute();
 const router = useRouter();
 const db = useAppDatabase();
+const { yesterdayIso } = useLiveTodayIso();
 
 const selectedRange = computed<AnalyticsTimeRange>(() => {
 	const r = route.query.range as AnalyticsTimeRange | undefined;
@@ -22,31 +17,10 @@ const selectedRange = computed<AnalyticsTimeRange>(() => {
 	return '30d';
 });
 
-const queryLowerBoundIso = computed<string | null>(() => {
-	if (selectedRange.value === 'all') return null;
-	const lookbackDays =
-		selectedRange.value === '7d' ? 35 : selectedRange.value === '30d' ? 60 : 120;
-	return shiftIsoDate(getTodayIso(), -lookbackDays);
-});
-
 const habits = useDexieLiveQuery(() => db.habits.orderBy('sortOrder').toArray(), []);
 const isHabitsLoading = habits.isLoading;
-const rawEntries = useDexieLiveQuery(
-	() =>
-		queryLowerBoundIso.value
-			? db.dailyEntries.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
-			: db.dailyEntries.toArray(),
-	[],
-	queryLowerBoundIso
-);
-const rawLogs = useDexieLiveQuery(
-	() =>
-		queryLowerBoundIso.value
-			? db.habitLogs.where('dateIso').aboveOrEqual(queryLowerBoundIso.value).toArray()
-			: db.habitLogs.toArray(),
-	[],
-	queryLowerBoundIso
-);
+const rawEntries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
+const rawLogs = useDexieLiveQuery(() => db.habitLogs.toArray(), []);
 const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 const analyticsError = computed(
@@ -79,7 +53,7 @@ const report = computed(() =>
 		lifecycleEvents: lifecycleEvents.value,
 		selectedHabitId: selectedHabitId.value,
 		range: selectedRange.value,
-		fallbackEndDateIso: getYesterdayIso()
+		fallbackEndDateIso: yesterdayIso.value
 	})
 );
 
@@ -115,7 +89,7 @@ function selectHabitAndScroll(habitId: string) {
 
 				<div class="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center">
 					<div v-if="habitSelectOptions.length > 0" class="w-full sm:w-64">
-						<CustomSelect
+						<UiCustomSelect
 							:model-value="selectedHabitId"
 							:options="habitSelectOptions"
 							trigger-class="h-11 text-fg"
@@ -164,16 +138,16 @@ function selectHabitAndScroll(habitId: string) {
 			<div class="space-y-6">
 				<AnalyticsSummaryCards :report="report.selectedHabitReport" />
 
-				<HabitTrendChart :report="report.selectedHabitReport" />
+				<AnalyticsHabitTrendChart :report="report.selectedHabitReport" />
 
-				<HabitHeatmapMatrix :report="report.selectedHabitReport" />
+				<AnalyticsHabitHeatmapMatrix :report="report.selectedHabitReport" />
 
-				<HabitEvolutionTimeline
+				<AnalyticsHabitEvolutionTimeline
 					:habit-title="report.selectedHabitReport.habit.title"
 					:evolution-timeline="report.selectedHabitReport.evolutionTimeline"
 				/>
 
-				<HabitsComparisonTable
+				<AnalyticsHabitsComparisonTable
 					:rows="report.comparisonRows"
 					:selected-habit-id="selectedHabitId"
 					@select-habit="selectHabitAndScroll"

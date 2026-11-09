@@ -143,7 +143,7 @@ const activeNotesBadgeCount = computed(
 		<div v-if="showTomorrowDrawer && cadenceHabits.length > 0" class="mt-4 space-y-4 border-t border-border pt-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<h3 class="text-sm font-black text-fg">
-					هدف فردا ({{ tomorrowHuman.fullLabel }})
+					هدف روز بعد ({{ tomorrowHuman.fullLabel }})
 				</h3>
 
 				<button
@@ -152,7 +152,7 @@ const activeNotesBadgeCount = computed(
 					@click="emit('copyTodayToTomorrow')"
 				>
 					<Copy class="h-3.5 w-3.5 text-accent-text" />
-					<span>کپی از امروز</span>
+					<span>کپی از این روز</span>
 				</button>
 			</div>
 
@@ -169,9 +169,10 @@ const activeNotesBadgeCount = computed(
 							:value="tomorrowPlans[habit.id]?.plannedMinutesPerInterval"
 							type="number"
 							min="0"
+							max="1440"
 							step="1"
 							class="h-10 w-20 rounded-xl border border-border bg-surface px-3 text-center font-mono text-base font-black text-fg focus:border-border-strong focus:outline-none"
-							@input="emit('updateTomorrowPlan', habit.id, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0))"
+							@input="emit('updateTomorrowPlan', habit.id, Math.min(1440, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0)))"
 						/>
 						<span class="text-xs font-bold text-fg-secondary">دقیقه</span>
 					</label>

@@ -2,8 +2,6 @@
 import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, BOOK_STATUS_OPTIONS } from '~/domain/constants';
 import type { BookEntity, BookStatus, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { BookOpen, History } from 'lucide-vue-next';
 
 interface Props {
@@ -96,7 +94,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="editingBook ? 'ویرایش اطلاعات کتاب' : 'افزودن کتاب جدید'" @close="emit('close')">
+	<UiBaseModal :title="editingBook ? 'ویرایش اطلاعات کتاب' : 'افزودن کتاب جدید'" @close="emit('close')">
 		<template #headerIcon>
 			<BookOpen class="h-4.5 w-4.5" />
 		</template>
@@ -151,7 +149,7 @@ function handleSubmit() {
 			<div class="grid grid-cols-2 gap-3">
 				<div>
 					<label for="bk-status" class="mb-1.5 block text-xs font-bold text-fg-secondary">وضعیت</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="bk-status"
 						v-model="selectedStatus"
 						:options="BOOK_STATUS_OPTIONS"
@@ -160,7 +158,7 @@ function handleSubmit() {
 				</div>
 				<div>
 					<label for="bk-rating" class="mb-1.5 block text-xs font-bold text-fg-secondary">امتیاز</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="bk-rating"
 						v-model="selectedRating"
 						:options="BOOK_RATING_OPTIONS"
@@ -223,5 +221,5 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>

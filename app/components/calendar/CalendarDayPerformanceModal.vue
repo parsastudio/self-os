@@ -2,7 +2,6 @@
 import { toPersianDigits } from '~/domain/calendar';
 import { getTierBadgeMeta, TIER_SCORES } from '~/domain/constants';
 import type { DayHabitPerformanceItem } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
 import { ChevronDown, ChevronUp, Clock } from 'lucide-vue-next';
 
 interface Props {
@@ -27,7 +26,7 @@ function toggleHabitExpanded(habitId: string) {
 </script>
 
 <template>
-	<BaseModal
+	<UiBaseModal
 		title="جزئیات عملکرد طرح‌ها"
 		:subtitle="fullHumanLabel"
 		max-width-class="max-w-xl"
@@ -165,5 +164,5 @@ function toggleHabitExpanded(habitId: string) {
 				</div>
 			</div>
 		</div>
-	</BaseModal>
+	</UiBaseModal>
 </template>

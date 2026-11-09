@@ -1,9 +1,8 @@
 <script setup lang="ts">
+import { useLiveTodayIso } from '~/composables/useLiveTodayIso';
 import {
 	buildRecentCalendarDays,
 	formatJalaliHuman,
-	getTodayIso,
-	getYesterdayIso,
 	shiftIsoDate,
 	toPersianDigits,
 	type CalendarScrubberDay
@@ -39,9 +38,8 @@ const emit = defineEmits<{
 	(e: 'retrySave'): void;
 }>();
 
-const human = computed(() => formatJalaliHuman(props.currentDateIso));
-const todayIso = computed(() => getTodayIso());
-const yesterdayIso = computed(() => getYesterdayIso());
+const { todayIso, yesterdayIso } = useLiveTodayIso();
+const human = computed(() => formatJalaliHuman(props.currentDateIso, todayIso.value));
 const prevDayIso = computed(() => shiftIsoDate(props.currentDateIso, -1));
 const nextDayIso = computed(() => shiftIsoDate(props.currentDateIso, 1));
 

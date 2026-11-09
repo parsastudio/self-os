@@ -2,9 +2,13 @@
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
-import type { BookEntity, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
-import BooksHeaderStats from '~/components/books/BooksHeaderStats.vue';
-import BookItemCard from '~/components/books/BookItemCard.vue';
+import type {
+	BookEntity,
+	BookSortBy,
+	BookStatusFilter,
+	CreateBookInput,
+	UpdateBookInput
+} from '~/domain/schemas';
 import { BookOpen, Plus } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -14,12 +18,49 @@ const books = useDexieLiveQuery(() => db.books.orderBy('createdAtIso').reverse()
 const isBooksLoading = books.isLoading;
 const booksError = books.error;
 
+const searchQuery = ref('');
+const statusFilter = ref<BookStatusFilter>('ALL');
+const sortBy = ref<BookSortBy>('newest');
 const isModalOpen = ref(false);
 const isSubmittingBook = ref(false);
 const editingBook = ref<BookEntity | null>(null);
 
 const completedCount = computed(() => books.value.filter((b) => b.status === 'completed').length);
 const readingCount = computed(() => books.value.filter((b) => b.status === 'reading').length);
+const onHoldCount = computed(() => books.value.filter((b) => b.status === 'on_hold').length);
+
+const filteredBooks = computed(() => {
+	const q = searchQuery.value.trim().toLowerCase();
+	const filtered = books.value.filter((b) => {
+		if (statusFilter.value === 'READING' && b.status !== 'reading') return false;
+		if (statusFilter.value === 'COMPLETED' && b.status !== 'completed') return false;
+		if (statusFilter.value === 'ON_HOLD' && b.status !== 'on_hold') return false;
+		if (q) {
+			const haystack = `${b.title} ${b.author ?? ''} ${b.notes ?? ''}`.toLowerCase();
+			if (!haystack.includes(q)) return false;
+		}
+		return true;
+	});
+
+	return [...filtered].sort((a, b) => {
+		if (sortBy.value === 'rating_desc') {
+			const rDiff = (b.rating ?? 0) - (a.rating ?? 0);
+			if (rDiff !== 0) return rDiff;
+			return b.createdAtIso > a.createdAtIso ? 1 : b.createdAtIso < a.createdAtIso ? -1 : 0;
+		}
+		if (sortBy.value === 'newest') {
+			const dateA = a.finishedAtIso || a.startedAtIso || a.createdAtIso;
+			const dateB = b.finishedAtIso || b.startedAtIso || b.createdAtIso;
+			return dateB > dateA ? 1 : dateB < dateA ? -1 : 0;
+		}
+		if (sortBy.value === 'oldest') {
+			const dateA = a.finishedAtIso || a.startedAtIso || a.createdAtIso;
+			const dateB = b.finishedAtIso || b.startedAtIso || b.createdAtIso;
+			return dateA > dateB ? 1 : dateA < dateB ? -1 : 0;
+		}
+		return a.title.localeCompare(b.title, 'fa');
+	});
+});
 
 const existingSuggestions = computed(() => {
 	const map = new Map<string, string | null>();
@@ -71,10 +112,18 @@ async function handleDeleteBook(bookId: string) {
 </script>
 
 <template>
-	<div class="space-y-8 pb-16">
+	<div class="space-y-6 pb-16">
 		<BooksHeaderStats
+			:total-count="books.length"
 			:completed-count="completedCount"
 			:reading-count="readingCount"
+			:on-hold-count="onHoldCount"
+			:search-query="searchQuery"
+			:status-filter="statusFilter"
+			:sort-by="sortBy"
+			@update:search-query="searchQuery = $event"
+			@update:status-filter="statusFilter = $event"
+			@update:sort-by="sortBy = $event"
 			@open-create="openCreateModal"
 		/>
 
@@ -108,10 +157,14 @@ async function handleDeleteBook(bookId: string) {
 			</button>
 		</div>
 
+		<div v-else-if="filteredBooks.length === 0" class="rounded-3xl border border-border bg-surface p-10 text-center text-sm font-semibold text-fg-muted">
+			کتابی با این فیلتر یا عبارت جستجو یافت نشد.
+		</div>
+
 		<NuxtErrorBoundary v-else>
 			<div class="space-y-2.5">
-				<BookItemCard
-					v-for="book in books"
+				<BooksBookItemCard
+					v-for="book in filteredBooks"
 					:key="book.id"
 					:book="book"
 					@edit="openEditModal"

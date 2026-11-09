@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { CADENCE_DEFAULTS } from '~/domain/constants';
 import type { CreateHabitInput, HabitEntity, HabitStatus, HabitTimeSlot, MutateHabitStructureInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 
 type FormStructureKind = 'tiered' | 'composite' | 'interval_cadence';
 
@@ -180,7 +178,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="modalTitle" max-width-class="max-w-xl" @close="emit('close')">
+	<UiBaseModal :title="modalTitle" max-width-class="max-w-xl" @close="emit('close')">
 		<form class="space-y-4 overflow-y-auto p-4 sm:space-y-5 sm:p-8" @submit.prevent="handleSubmit">
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
@@ -208,7 +206,7 @@ function handleSubmit() {
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div v-if="!selectedParentId">
 					<label for="h-kind" class="mb-1.5 block text-sm font-bold text-fg">نوع طرح</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-kind"
 						v-model="structureKind"
 						:disabled="hasSubHabits"
@@ -219,7 +217,7 @@ function handleSubmit() {
 
 				<div v-if="structureKind === 'tiered'">
 					<label for="h-parent" class="mb-1.5 block text-sm font-bold text-fg">جایگاه در ساختار</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-parent"
 						v-model="selectedParentId"
 						:options="parentOptions"
@@ -229,7 +227,7 @@ function handleSubmit() {
 
 				<div v-if="structureKind !== 'interval_cadence' && !selectedParentId">
 					<label for="h-timeslot" class="mb-1.5 block text-sm font-bold text-fg">بازهٔ زمانی در روز</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-timeslot"
 						v-model="selectedTimeSlot"
 						:options="timeSlotOptions"
@@ -239,7 +237,7 @@ function handleSubmit() {
 
 				<div v-if="mode === 'edit' && editingHabit">
 					<label for="h-status" class="mb-1.5 block text-sm font-bold text-fg">وضعیت طرح</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="h-status"
 						v-model="selectedStatus"
 						:options="statusOptions"
@@ -306,6 +304,7 @@ function handleSubmit() {
 							v-model.number="defaultMinutesPerInterval"
 							type="number"
 							min="0"
+							max="1440"
 							step="1"
 							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
 						/>
@@ -317,6 +316,7 @@ function handleSubmit() {
 							v-model.number="cadenceWindowMinutes"
 							type="number"
 							:min="CADENCE_DEFAULTS.MIN_WINDOW_MINUTES"
+							max="1440"
 							step="5"
 							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
 						/>
@@ -373,5 +373,5 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>

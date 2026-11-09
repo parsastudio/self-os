@@ -2,8 +2,6 @@
 import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, MEDIA_CATEGORY_OPTIONS, MEDIA_STATUS_OPTIONS } from '~/domain/constants';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaStatus, UpdateMediaInput } from '~/domain/schemas';
-import BaseModal from '~/components/ui/BaseModal.vue';
-import CustomSelect from '~/components/ui/CustomSelect.vue';
 import { Clapperboard, History } from 'lucide-vue-next';
 
 interface Props {
@@ -99,7 +97,7 @@ function handleSubmit() {
 </script>
 
 <template>
-	<BaseModal :title="editingMedia ? 'ویرایش اطلاعات اثر' : 'ثبت اثر جدید'" @close="emit('close')">
+	<UiBaseModal :title="editingMedia ? 'ویرایش اطلاعات اثر' : 'ثبت اثر جدید'" @close="emit('close')">
 		<template #headerIcon>
 			<Clapperboard class="h-4.5 w-4.5" />
 		</template>
@@ -181,7 +179,7 @@ function handleSubmit() {
 				</div>
 				<div>
 					<label for="md-rating" class="mb-1.5 block text-xs font-bold text-fg-secondary">امتیاز</label>
-					<CustomSelect
+					<UiCustomSelect
 						id="md-rating"
 						v-model="selectedRating"
 						:options="BOOK_RATING_OPTIONS"
@@ -245,5 +243,5 @@ function handleSubmit() {
 				</button>
 			</div>
 		</form>
-	</BaseModal>
+	</UiBaseModal>
 </template>

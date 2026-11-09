@@ -31,6 +31,12 @@ export type LifecycleEventType = z.infer<typeof LifecycleEventTypeSchema>;
 export const BookStatusSchema = z.enum(['reading', 'completed', 'on_hold']);
 export type BookStatus = z.infer<typeof BookStatusSchema>;
 
+export const BookStatusFilterSchema = z.enum(['ALL', 'READING', 'COMPLETED', 'ON_HOLD']);
+export type BookStatusFilter = z.infer<typeof BookStatusFilterSchema>;
+
+export const BookSortBySchema = z.enum(['newest', 'rating_desc', 'oldest', 'title_asc']);
+export type BookSortBy = z.infer<typeof BookSortBySchema>;
+
 export const MediaCategorySchema = z.enum(['movie', 'series', 'anime', 'animation']);
 export type MediaCategory = z.infer<typeof MediaCategorySchema>;
 
