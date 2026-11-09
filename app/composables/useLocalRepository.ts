@@ -9,6 +9,7 @@ import {
 	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import {
+	compareTimestampsIso,
 	generateId,
 	getTodayIso,
 	isoToJalaliParts,
@@ -22,6 +23,7 @@ import type {
 	CreateCalendarEventInput,
 	CreateHabitInput,
 	CreateMediaInput,
+	DeltaWorkspaceSnapshot,
 	HabitEntity,
 	LifecycleEventEntity,
 	LocalWorkspaceSnapshot,
@@ -779,7 +781,7 @@ export function useLocalRepository() {
 		await db.transaction('rw', db.syncOutbox, async () => {
 			for (const item of applied) {
 				const existing = await db.syncOutbox.get(item.id);
-				if (existing && existing.queuedAtIso <= item.queuedAtIso) {
+				if (existing && compareTimestampsIso(existing.queuedAtIso, item.queuedAtIso) <= 0) {
 					await db.syncOutbox.delete(item.id);
 				}
 			}
@@ -869,7 +871,7 @@ export function useLocalRepository() {
 			): boolean => {
 				if (!localIso) return true;
 				if (!serverIso) return false;
-				return serverIso >= localIso;
+				return compareTimestampsIso(serverIso, localIso) >= 0;
 			};
 
 			const localHabitMap = new Map((await db.habits.toArray()).map((h) => [h.id, h]));
@@ -1021,6 +1023,166 @@ export function useLocalRepository() {
 		});
 	}
 
+	async function applyDeltaWorkspace(delta: DeltaWorkspaceSnapshot): Promise<void> {
+		await db.transaction(
+			'rw',
+			[
+				db.habits,
+				db.dailyEntries,
+				db.habitLogs,
+				db.cadencePlans,
+				db.books,
+				db.media,
+				db.notes,
+				db.calendarEvents,
+				db.lifecycleEvents,
+				db.reflectionTags,
+				db.syncOutbox
+			],
+			async () => {
+				const pending = await db.syncOutbox.toArray();
+				const pendingIds = new Set(pending.map((m) => m.id));
+				const pendingDailyDates = new Set(
+					pending
+						.filter((m) => m.kind === 'SAVE_DAILY_ENTRY')
+						.map((m) => m.payload.dateIso)
+				);
+				const pendingCadenceDates = new Set(
+					pending
+						.filter((m) => m.kind === 'SAVE_CADENCE_PLAN')
+						.map((m) => m.payload.targetDateIso)
+				);
+
+				if (delta.deletedHabitIds.length > 0) {
+					await db.habits.bulkDelete(
+						delta.deletedHabitIds.filter((id) => !pendingIds.has(`habit:${id}`))
+					);
+				}
+				if (delta.deletedEntryDates.length > 0) {
+					await db.dailyEntries.bulkDelete(
+						delta.deletedEntryDates.filter((dateIso) => !pendingDailyDates.has(dateIso))
+					);
+				}
+				if (delta.deletedLogIds.length > 0) {
+					await db.habitLogs.bulkDelete(delta.deletedLogIds);
+				}
+				if (delta.deletedPlanIds.length > 0) {
+					await db.cadencePlans.bulkDelete(delta.deletedPlanIds);
+				}
+				if (delta.deletedBookIds.length > 0) {
+					await db.books.bulkDelete(
+						delta.deletedBookIds.filter((id) => !pendingIds.has(`book:${id}`))
+					);
+				}
+				if (delta.deletedMediaIds.length > 0) {
+					await db.media.bulkDelete(
+						delta.deletedMediaIds.filter((id) => !pendingIds.has(`media:${id}`))
+					);
+				}
+				if (delta.deletedNoteIds.length > 0) {
+					await db.notes.bulkDelete(
+						delta.deletedNoteIds.filter((id) => !pendingIds.has(`note:${id}`))
+					);
+				}
+				if (delta.deletedEventIds.length > 0) {
+					await db.calendarEvents.bulkDelete(
+						delta.deletedEventIds.filter((id) => !pendingIds.has(`event:${id}`))
+					);
+				}
+
+				if (delta.habits.length > 0) {
+					await db.habits.bulkPut(
+						delta.habits.filter((h) => !pendingIds.has(`habit:${h.id}`))
+					);
+				}
+				if (delta.cadencePlans.length > 0) {
+					await db.cadencePlans.bulkPut(
+						delta.cadencePlans.filter(
+							(c) =>
+								!pendingIds.has(`cadence:${c.dateIso}`) &&
+								!pendingCadenceDates.has(c.dateIso)
+						)
+					);
+				}
+				if (delta.books.length > 0) {
+					await db.books.bulkPut(
+						delta.books.filter((b) => !pendingIds.has(`book:${b.id}`))
+					);
+				}
+				if (delta.media.length > 0) {
+					await db.media.bulkPut(
+						delta.media.filter((m) => !pendingIds.has(`media:${m.id}`))
+					);
+				}
+				if (delta.notes.length > 0) {
+					await db.notes.bulkPut(
+						delta.notes.filter((n) => !pendingIds.has(`note:${n.id}`))
+					);
+				}
+				if (delta.calendarEvents.length > 0) {
+					await db.calendarEvents.bulkPut(
+						delta.calendarEvents.filter((ev) => !pendingIds.has(`event:${ev.id}`))
+					);
+				}
+				if (delta.lifecycleEvents.length > 0) {
+					await db.lifecycleEvents.bulkPut(
+						delta.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
+					);
+				}
+				if (delta.entries.length > 0) {
+					await db.dailyEntries.bulkPut(
+						delta.entries
+							.filter((e) => !pendingDailyDates.has(e.dateIso))
+							.map((e) => ({
+								dateIso: e.dateIso,
+								dayStatus: e.dayStatus,
+								reflectionNote: e.reflectionNote,
+								journalText: e.journalText ?? null,
+								tags: [...e.tags],
+								updatedAtIso: e.updatedAtIso
+							}))
+					);
+				}
+				if (delta.logs.length > 0) {
+					await db.habitLogs.bulkPut(
+						delta.logs
+							.filter((l) => !pendingDailyDates.has(l.dateIso))
+							.map((l) => ({
+								id: l.id || `log:${l.dateIso}:${l.habitId}`,
+								dateIso: l.dateIso,
+								habitId: l.habitId,
+								habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+								achievedTier: l.achievedTier,
+								achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+								habitSnapshotJson: l.habitSnapshotJson ?? null,
+								completedIntervals: l.completedIntervals ?? null,
+								actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
+								totalActualMinutes: l.totalActualMinutes ?? null,
+								plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
+								plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
+								updatedAtIso: l.updatedAtIso || new Date().toISOString()
+							}))
+					);
+				}
+				if (delta.availableTags && delta.availableTags.length > 0) {
+					const existingTags = await db.reflectionTags.toArray();
+					const existingByLabel = new Map(existingTags.map((t) => [t.label, t]));
+					const uniqueLabels = Array.from(new Set(delta.availableTags));
+					const tagRecords = uniqueLabels.map((label, idx) => {
+						const matched = existingByLabel.get(label);
+						return {
+							id: matched?.id ?? `tag:${label}`,
+							label,
+							sortOrder: idx + 1
+						};
+					});
+					await db.reflectionTags.clear();
+					await db.reflectionTags.bulkPut(tagRecords);
+				}
+			}
+		);
+	}
+
 	async function clearLocalData(): Promise<void> {
 		await db.transaction('rw', [
 			db.habits,
@@ -1069,6 +1231,7 @@ export function useLocalRepository() {
 		getPendingMutations,
 		removeAppliedMutations,
 		applyServerWorkspace,
+		applyDeltaWorkspace,
 		exportBackupPayload: backupOps.exportBackupPayload,
 		restoreBackupPayload: backupOps.restoreBackupPayload,
 		injectDemoSeed: backupOps.injectDemoSeed,

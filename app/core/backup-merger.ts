@@ -1,3 +1,4 @@
+import { compareTimestampsIso } from '~/domain/calendar';
 import type {
 	BackupDailyEntryRow,
 	BackupHabitLogRow,
@@ -32,7 +33,7 @@ function isIncomingNewer(
 ): boolean {
 	if (!incomingIso) return false;
 	if (!existingIso) return true;
-	return incomingIso > existingIso;
+	return compareTimestampsIso(incomingIso, existingIso) > 0;
 }
 
 export function computeSmartBackupMerge(

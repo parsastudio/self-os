@@ -88,6 +88,8 @@ export function useSyncEngine() {
 
 			if (data.fullWorkspace) {
 				await localRepo.applyServerWorkspace(data.fullWorkspace);
+			} else if (data.deltaWorkspace) {
+				await localRepo.applyDeltaWorkspace(data.deltaWorkspace);
 			}
 
 			knownServerVersionIso.value = data.serverVersionIso;
@@ -266,6 +268,19 @@ export function useSyncEngine() {
 			clearTimeout(retryTimer);
 			retryTimer = null;
 		}
+		if (periodicPollTimer) {
+			clearInterval(periodicPollTimer);
+			periodicPollTimer = null;
+		}
+		if (unsubscribeMutationStaged) {
+			unsubscribeMutationStaged();
+			unsubscribeMutationStaged = null;
+		}
+		if (boundListenersCleanup) {
+			boundListenersCleanup();
+			boundListenersCleanup = null;
+		}
+		isInitialized = false;
 		isSyncInFlight = false;
 		hasQueuedSyncDuringFlight = false;
 		retryAttempt = 0;

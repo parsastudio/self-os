@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, like, sql } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	books,
@@ -21,34 +21,26 @@ import {
 	saveCadencePlansForDate,
 	saveDailyEntryAndLogs
 } from '~~/server/repositories/daily-tracker.repo';
+import { compareTimestampsIso, normalizeTimestampIso } from '~/domain/calendar';
 import { parseTagsJson } from '~/domain/tags';
 import type {
+	DeltaWorkspaceSnapshot,
 	LocalWorkspaceSnapshot,
 	ServerSyncResponse,
 	SyncRequestPayload
 } from '~/domain/schemas';
 
 const SYNC_STATE_SINGLETON_ID = 'singleton';
-let lastStructuralMutationIso = '1970-01-01T00:00:00.000Z';
 
-function resolveNextStructuralVersionIso(candidateIso?: string): string {
-	const nowMs = Date.now();
-	const candidateMs = candidateIso ? Date.parse(candidateIso) : nowMs;
-	const lastMs = Date.parse(lastStructuralMutationIso) || 0;
-	const nextMs = Math.max(
-		nowMs,
-		Number.isNaN(candidateMs) ? nowMs : candidateMs,
-		lastMs + 1
-	);
-	return new Date(nextMs).toISOString();
+function resolveSafeIso(candidateIso?: string): string {
+	return normalizeTimestampIso(candidateIso, new Date().toISOString()) ?? new Date().toISOString();
 }
 
 export async function bumpServerStructuralVersion(
 	iso?: string,
 	txExecutor?: DbExecutor
 ): Promise<void> {
-	const effectiveIso = resolveNextStructuralVersionIso(iso);
-	lastStructuralMutationIso = effectiveIso;
+	const effectiveIso = resolveSafeIso(iso);
 	await ensureDatabaseReady();
 	const executor = txExecutor ?? db;
 	await executor
@@ -63,6 +55,40 @@ export async function bumpServerStructuralVersion(
 				structuralVersionIso: sql`GREATEST(${syncState.structuralVersionIso}, excluded.structural_version_iso)`
 			}
 		});
+}
+
+export async function recordServerDeletionTombstones(
+	tombstoneIds: string[],
+	deletedAtIso: string,
+	txExecutor?: DbExecutor
+): Promise<void> {
+	if (tombstoneIds.length === 0) return;
+	const effectiveIso = resolveSafeIso(deletedAtIso);
+	await ensureDatabaseReady();
+	const executor = txExecutor ?? db;
+	const rows = tombstoneIds.map((id) => ({
+		id,
+		structuralVersionIso: effectiveIso
+	}));
+	await executor
+		.insert(syncState)
+		.values(rows)
+		.onConflictDoUpdate({
+			target: syncState.id,
+			set: {
+				structuralVersionIso: sql`GREATEST(${syncState.structuralVersionIso}, excluded.structural_version_iso)`
+			}
+		});
+}
+
+async function getFullResetVersionIso(): Promise<string> {
+	await ensureDatabaseReady();
+	const rows = await db
+		.select()
+		.from(syncState)
+		.where(eq(syncState.id, SYNC_STATE_SINGLETON_ID))
+		.limit(1);
+	return rows[0]?.structuralVersionIso || '1970-01-01T00:00:00.000Z';
 }
 
 export async function getServerMaxVersionIso(): Promise<string> {
@@ -91,8 +117,7 @@ export async function getServerMaxVersionIso(): Promise<string> {
 		) AS combined_timestamps
 	`);
 
-	const dbMax = rows[0]?.max_iso || '1970-01-01T00:00:00.000Z';
-	return dbMax > lastStructuralMutationIso ? dbMax : lastStructuralMutationIso;
+	return rows[0]?.max_iso || '1970-01-01T00:00:00.000Z';
 }
 
 export async function processClientSyncRequest(
@@ -100,23 +125,35 @@ export async function processClientSyncRequest(
 	appVersion = '0.0.1'
 ): Promise<ServerSyncResponse> {
 	await ensureDatabaseReady();
+	const normalizedKnownIso = normalizeTimestampIso(input.knownServerVersionIso);
 	const versionBeforeMutations = await getServerMaxVersionIso();
-	if (versionBeforeMutations > lastStructuralMutationIso) {
-		lastStructuralMutationIso = versionBeforeMutations;
-	}
 	const hadRemoteUpdatesBeforePush = Boolean(
-		input.knownServerVersionIso && versionBeforeMutations > input.knownServerVersionIso
+		normalizedKnownIso && compareTimestampsIso(versionBeforeMutations, normalizedKnownIso) > 0
 	);
 
 	const appliedMutationIds: string[] = [];
 
 	if (input.mutations.length > 0) {
 		const sortedMutations = [...input.mutations].sort((a, b) =>
-			a.queuedAtIso > b.queuedAtIso ? 1 : a.queuedAtIso < b.queuedAtIso ? -1 : 0
+			compareTimestampsIso(a.queuedAtIso, b.queuedAtIso)
 		);
 
 		const allHabitsList = await getAllHabits();
 		const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
+
+		const existingTombstoneRows = await db
+			.select()
+			.from(syncState)
+			.where(like(syncState.id, 'del:%'));
+		const tombstoneMap = new Map(
+			existingTombstoneRows.map((r) => [r.id, r.structuralVersionIso])
+		);
+
+		const isBlockedByNewerTombstone = (tombstoneKey: string, mutationIso: string): boolean => {
+			const deletedAtIso = tombstoneMap.get(tombstoneKey);
+			if (!deletedAtIso) return false;
+			return compareTimestampsIso(deletedAtIso, mutationIso) > 0;
+		};
 
 		const nowMs = Date.now();
 		await db.transaction(async (tx) => {
@@ -127,82 +164,162 @@ export async function processClientSyncRequest(
 				} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
 					await saveCadencePlansForDate(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'UPSERT_BOOK') {
-					const payload = {
-						...mutation.payload,
-						updatedAtIso: clampClientTimestampIso(
-							mutation.payload.updatedAtIso ?? safeQueuedIso,
-							nowMs
-						)
-					};
-					await tx
-						.insert(books)
-						.values(payload)
-						.onConflictDoUpdate({
-							target: books.id,
-							set: payload,
-							setWhere: sql`${books.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${books.updatedAtIso}`
-						});
+					const effectiveIso = clampClientTimestampIso(
+						mutation.payload.updatedAtIso ?? safeQueuedIso,
+						nowMs
+					);
+					const tombstoneKey = `del:book:${mutation.payload.id}`;
+					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
+						const payload = {
+							...mutation.payload,
+							updatedAtIso: effectiveIso
+						};
+						await tx
+							.insert(books)
+							.values(payload)
+							.onConflictDoUpdate({
+								target: books.id,
+								set: payload,
+								setWhere: sql`${books.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${books.updatedAtIso}`
+							});
+						if (tombstoneMap.has(tombstoneKey)) {
+							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
+							tombstoneMap.delete(tombstoneKey);
+						}
+					}
 				} else if (mutation.kind === 'DELETE_BOOK') {
-					await tx.delete(books).where(eq(books.id, mutation.payload.bookId));
-					await bumpServerStructuralVersion(safeQueuedIso, tx);
+					const tombstoneKey = `del:book:${mutation.payload.bookId}`;
+					const existingBook = await tx
+						.select({ updatedAtIso: books.updatedAtIso })
+						.from(books)
+						.where(eq(books.id, mutation.payload.bookId))
+						.limit(1);
+					if (
+						!existingBook[0]?.updatedAtIso ||
+						compareTimestampsIso(safeQueuedIso, existingBook[0].updatedAtIso) >= 0
+					) {
+						await tx.delete(books).where(eq(books.id, mutation.payload.bookId));
+						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
+						tombstoneMap.set(tombstoneKey, safeQueuedIso);
+					}
 				} else if (mutation.kind === 'UPSERT_MEDIA') {
-					const payload = {
-						...mutation.payload,
-						updatedAtIso: clampClientTimestampIso(
-							mutation.payload.updatedAtIso ?? safeQueuedIso,
-							nowMs
-						)
-					};
-					await tx
-						.insert(mediaLogs)
-						.values(payload)
-						.onConflictDoUpdate({
-							target: mediaLogs.id,
-							set: payload,
-							setWhere: sql`${mediaLogs.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${mediaLogs.updatedAtIso}`
-						});
+					const effectiveIso = clampClientTimestampIso(
+						mutation.payload.updatedAtIso ?? safeQueuedIso,
+						nowMs
+					);
+					const tombstoneKey = `del:media:${mutation.payload.id}`;
+					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
+						const payload = {
+							...mutation.payload,
+							updatedAtIso: effectiveIso
+						};
+						await tx
+							.insert(mediaLogs)
+							.values(payload)
+							.onConflictDoUpdate({
+								target: mediaLogs.id,
+								set: payload,
+								setWhere: sql`${mediaLogs.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${mediaLogs.updatedAtIso}`
+							});
+						if (tombstoneMap.has(tombstoneKey)) {
+							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
+							tombstoneMap.delete(tombstoneKey);
+						}
+					}
 				} else if (mutation.kind === 'DELETE_MEDIA') {
-					await tx
-						.delete(mediaLogs)
-						.where(eq(mediaLogs.id, mutation.payload.mediaId));
-					await bumpServerStructuralVersion(safeQueuedIso, tx);
+					const tombstoneKey = `del:media:${mutation.payload.mediaId}`;
+					const existingMedia = await tx
+						.select({ updatedAtIso: mediaLogs.updatedAtIso })
+						.from(mediaLogs)
+						.where(eq(mediaLogs.id, mutation.payload.mediaId))
+						.limit(1);
+					if (
+						!existingMedia[0]?.updatedAtIso ||
+						compareTimestampsIso(safeQueuedIso, existingMedia[0].updatedAtIso) >= 0
+					) {
+						await tx
+							.delete(mediaLogs)
+							.where(eq(mediaLogs.id, mutation.payload.mediaId));
+						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
+						tombstoneMap.set(tombstoneKey, safeQueuedIso);
+					}
 				} else if (mutation.kind === 'UPSERT_NOTE') {
-					const payload = {
-						...mutation.payload,
-						updatedAtIso: clampClientTimestampIso(mutation.payload.updatedAtIso, nowMs)
-					};
-					await tx
-						.insert(notes)
-						.values(payload)
-						.onConflictDoUpdate({
-							target: notes.id,
-							set: payload,
-							setWhere: sql`excluded.updated_at_iso >= ${notes.updatedAtIso}`
-						});
+					const effectiveIso = clampClientTimestampIso(mutation.payload.updatedAtIso, nowMs);
+					const tombstoneKey = `del:note:${mutation.payload.id}`;
+					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
+						const payload = {
+							...mutation.payload,
+							updatedAtIso: effectiveIso
+						};
+						await tx
+							.insert(notes)
+							.values(payload)
+							.onConflictDoUpdate({
+								target: notes.id,
+								set: payload,
+								setWhere: sql`excluded.updated_at_iso >= ${notes.updatedAtIso}`
+							});
+						if (tombstoneMap.has(tombstoneKey)) {
+							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
+							tombstoneMap.delete(tombstoneKey);
+						}
+					}
 				} else if (mutation.kind === 'DELETE_NOTE') {
-					await tx.delete(notes).where(eq(notes.id, mutation.payload.noteId));
-					await bumpServerStructuralVersion(safeQueuedIso, tx);
+					const tombstoneKey = `del:note:${mutation.payload.noteId}`;
+					const existingNote = await tx
+						.select({ updatedAtIso: notes.updatedAtIso })
+						.from(notes)
+						.where(eq(notes.id, mutation.payload.noteId))
+						.limit(1);
+					if (
+						!existingNote[0]?.updatedAtIso ||
+						compareTimestampsIso(safeQueuedIso, existingNote[0].updatedAtIso) >= 0
+					) {
+						await tx.delete(notes).where(eq(notes.id, mutation.payload.noteId));
+						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
+						tombstoneMap.set(tombstoneKey, safeQueuedIso);
+					}
 				} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
-					const payload = {
-						...mutation.payload,
-						updatedAtIso: clampClientTimestampIso(
-							mutation.payload.updatedAtIso ?? safeQueuedIso,
-							nowMs
-						)
-					};
-					await tx
-						.insert(calendarEvents)
-						.values(payload)
-						.onConflictDoUpdate({
-							target: calendarEvents.id,
-							set: payload,
-							setWhere: sql`${calendarEvents.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${calendarEvents.updatedAtIso}`
-						});
+					const effectiveIso = clampClientTimestampIso(
+						mutation.payload.updatedAtIso ?? safeQueuedIso,
+						nowMs
+					);
+					const tombstoneKey = `del:event:${mutation.payload.id}`;
+					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
+						const payload = {
+							...mutation.payload,
+							updatedAtIso: effectiveIso
+						};
+						await tx
+							.insert(calendarEvents)
+							.values(payload)
+							.onConflictDoUpdate({
+								target: calendarEvents.id,
+								set: payload,
+								setWhere: sql`${calendarEvents.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${calendarEvents.updatedAtIso}`
+							});
+						if (tombstoneMap.has(tombstoneKey)) {
+							await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
+							tombstoneMap.delete(tombstoneKey);
+						}
+					}
 				} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
-					await tx
-						.delete(calendarEvents)
-						.where(eq(calendarEvents.id, mutation.payload.eventId));
-					await bumpServerStructuralVersion(safeQueuedIso, tx);
+					const tombstoneKey = `del:event:${mutation.payload.eventId}`;
+					const existingEvent = await tx
+						.select({ updatedAtIso: calendarEvents.updatedAtIso })
+						.from(calendarEvents)
+						.where(eq(calendarEvents.id, mutation.payload.eventId))
+						.limit(1);
+					if (
+						!existingEvent[0]?.updatedAtIso ||
+						compareTimestampsIso(safeQueuedIso, existingEvent[0].updatedAtIso) >= 0
+					) {
+						await tx
+							.delete(calendarEvents)
+							.where(eq(calendarEvents.id, mutation.payload.eventId));
+						await recordServerDeletionTombstones([tombstoneKey], safeQueuedIso, tx);
+						tombstoneMap.set(tombstoneKey, safeQueuedIso);
+					}
 				} else if (mutation.kind === 'UPSERT_HABIT') {
 					const payload = {
 						...mutation.payload,
@@ -233,18 +350,18 @@ export async function processClientSyncRequest(
 							set: payload
 						});
 				} else if (mutation.kind === 'UPSERT_REFLECTION_TAGS') {
-					for (const tagItem of mutation.payload) {
+					if (mutation.payload.length > 0) {
 						await tx
 							.insert(reflectionTags)
-							.values(tagItem)
+							.values(mutation.payload)
 							.onConflictDoUpdate({
 								target: reflectionTags.label,
 								set: {
-									sortOrder: tagItem.sortOrder
+									sortOrder: sql`excluded.sort_order`
 								}
 							});
+						await bumpServerStructuralVersion(safeQueuedIso, tx);
 					}
-					await bumpServerStructuralVersion(safeQueuedIso, tx);
 				}
 				appliedMutationIds.push(mutation.id);
 			}
@@ -253,10 +370,9 @@ export async function processClientSyncRequest(
 
 	const serverVersionIso = await getServerMaxVersionIso();
 	const serverTimeIso = new Date().toISOString();
-	const shouldSendFullWorkspace =
-		!input.knownServerVersionIso || hadRemoteUpdatesBeforePush;
+	const shouldSendWorkspaceChanges = !normalizedKnownIso || hadRemoteUpdatesBeforePush;
 
-	if (!shouldSendFullWorkspace) {
+	if (!shouldSendWorkspaceChanges) {
 		return {
 			ok: true,
 			appliedMutationIds,
@@ -264,6 +380,158 @@ export async function processClientSyncRequest(
 			appBuildVersion: appVersion,
 			hasRemoteUpdates: false,
 			serverTimeIso
+		};
+	}
+
+	const fullResetVersionIso = await getFullResetVersionIso();
+	const canUseDeltaSync = Boolean(
+		normalizedKnownIso && compareTimestampsIso(normalizedKnownIso, fullResetVersionIso) >= 0
+	);
+
+	if (canUseDeltaSync && normalizedKnownIso) {
+		const [
+			changedEntriesRaw,
+			changedLogsRaw,
+			changedHabits,
+			availableTags,
+			changedCadencePlans,
+			changedBooks,
+			changedMedia,
+			changedNotes,
+			changedCalendarEvents,
+			changedLifecycleEvents,
+			tombstoneRows
+		] = await Promise.all([
+			db
+				.select()
+				.from(dailyEntries)
+				.where(gt(dailyEntries.updatedAtIso, normalizedKnownIso))
+				.orderBy(desc(dailyEntries.dateIso)),
+			db
+				.select()
+				.from(habitLogs)
+				.where(gt(habitLogs.updatedAtIso, normalizedKnownIso))
+				.orderBy(desc(habitLogs.dateIso)),
+			db
+				.select()
+				.from(habits)
+				.where(gt(habits.updatedAtIso, normalizedKnownIso))
+				.orderBy(asc(habits.sortOrder)),
+			getReflectionTags(),
+			db
+				.select()
+				.from(cadencePlans)
+				.where(gt(cadencePlans.updatedAtIso, normalizedKnownIso))
+				.orderBy(asc(cadencePlans.dateIso)),
+			db
+				.select()
+				.from(books)
+				.where(gt(books.updatedAtIso, normalizedKnownIso))
+				.orderBy(desc(books.createdAtIso)),
+			db
+				.select()
+				.from(mediaLogs)
+				.where(gt(mediaLogs.updatedAtIso, normalizedKnownIso))
+				.orderBy(desc(mediaLogs.createdAtIso)),
+			db
+				.select()
+				.from(notes)
+				.where(gt(notes.updatedAtIso, normalizedKnownIso))
+				.orderBy(desc(notes.isPinned), desc(notes.updatedAtIso)),
+			db
+				.select()
+				.from(calendarEvents)
+				.where(gt(calendarEvents.updatedAtIso, normalizedKnownIso))
+				.orderBy(desc(calendarEvents.createdAtIso)),
+			db
+				.select()
+				.from(habitLifecycleEvents)
+				.where(gt(habitLifecycleEvents.createdAtIso, normalizedKnownIso))
+				.orderBy(desc(habitLifecycleEvents.createdAtIso)),
+			db
+				.select()
+				.from(syncState)
+				.where(
+					and(
+						like(syncState.id, 'del:%'),
+						gt(syncState.structuralVersionIso, normalizedKnownIso)
+					)
+				)
+		]);
+
+		const deletedHabitIds: string[] = [];
+		const deletedEntryDates: string[] = [];
+		const deletedLogIds: string[] = [];
+		const deletedPlanIds: string[] = [];
+		const deletedBookIds: string[] = [];
+		const deletedMediaIds: string[] = [];
+		const deletedNoteIds: string[] = [];
+		const deletedEventIds: string[] = [];
+
+		for (const t of tombstoneRows) {
+			if (t.id.startsWith('del:habit:')) deletedHabitIds.push(t.id.slice('del:habit:'.length));
+			else if (t.id.startsWith('del:entry:')) deletedEntryDates.push(t.id.slice('del:entry:'.length));
+			else if (t.id.startsWith('del:log:')) deletedLogIds.push(t.id.slice('del:log:'.length));
+			else if (t.id.startsWith('del:plan:')) deletedPlanIds.push(t.id.slice('del:plan:'.length));
+			else if (t.id.startsWith('del:book:')) deletedBookIds.push(t.id.slice('del:book:'.length));
+			else if (t.id.startsWith('del:media:')) deletedMediaIds.push(t.id.slice('del:media:'.length));
+			else if (t.id.startsWith('del:note:')) deletedNoteIds.push(t.id.slice('del:note:'.length));
+			else if (t.id.startsWith('del:event:')) deletedEventIds.push(t.id.slice('del:event:'.length));
+		}
+
+		const deltaWorkspace: DeltaWorkspaceSnapshot = {
+			versionIso: serverVersionIso,
+			syncedAtIso: serverTimeIso,
+			habits: changedHabits,
+			availableTags,
+			entries: changedEntriesRaw.map((e) => ({
+				id: e.id,
+				dateIso: e.dateIso,
+				dayStatus: e.dayStatus,
+				reflectionNote: e.reflectionNote,
+				journalText: e.journalText ?? null,
+				tags: parseTagsJson(e.tagsJson),
+				updatedAtIso: e.updatedAtIso
+			})),
+			logs: changedLogsRaw.map((l) => ({
+				id: l.id,
+				dateIso: l.dateIso,
+				habitId: l.habitId,
+				habitTitleSnapshot: l.habitTitleSnapshot,
+				achievedTier: l.achievedTier,
+				achievedRuleSnapshot: l.achievedRuleSnapshot,
+				habitSnapshotJson: l.habitSnapshotJson ?? null,
+				completedIntervals: l.completedIntervals,
+				actualMinutesPerInterval: l.actualMinutesPerInterval,
+				totalActualMinutes: l.totalActualMinutes,
+				plannedIntervalsSnapshot: l.plannedIntervalsSnapshot,
+				plannedMinutesSnapshot: l.plannedMinutesSnapshot,
+				updatedAtIso: l.updatedAtIso ?? null
+			})),
+			cadencePlans: changedCadencePlans,
+			books: changedBooks,
+			media: changedMedia,
+			notes: changedNotes,
+			calendarEvents: changedCalendarEvents,
+			lifecycleEvents: changedLifecycleEvents,
+			deletedHabitIds,
+			deletedEntryDates,
+			deletedLogIds,
+			deletedPlanIds,
+			deletedBookIds,
+			deletedMediaIds,
+			deletedNoteIds,
+			deletedEventIds
+		};
+
+		return {
+			ok: true,
+			appliedMutationIds,
+			serverVersionIso,
+			appBuildVersion: appVersion,
+			hasRemoteUpdates: hadRemoteUpdatesBeforePush,
+			serverTimeIso,
+			deltaWorkspace
 		};
 	}
 

@@ -28,6 +28,7 @@ export function useDexieLiveQuery<T>(
 	}
 
 	let subscription: Subscription | null = null;
+	let hasResolvedInitial = false;
 
 	function cleanup() {
 		if (subscription) {
@@ -38,13 +39,16 @@ export function useDexieLiveQuery<T>(
 
 	function subscribeQuery() {
 		cleanup();
-		isLoading.value = true;
+		if (!hasResolvedInitial) {
+			isLoading.value = true;
+		}
 		error.value = null;
 		try {
 			const observable: Observable<T> = liveQuery(querier);
 			subscription = observable.subscribe({
 				next: (val) => {
 					state.value = val;
+					hasResolvedInitial = true;
 					error.value = null;
 					isLoading.value = false;
 				},

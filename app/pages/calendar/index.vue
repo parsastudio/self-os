@@ -92,29 +92,35 @@ const monthLogs = useDexieLiveQuery(
 );
 const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
 const monthBooks = useDexieLiveQuery(
-	() => {
+	async () => {
 		const { startIso, endIso } = monthIsoBounds.value;
-		return db.books
-			.filter((b) => {
-				const f = b.finishedAtIso;
-				const s = b.startedAtIso;
-				return Boolean((f && f >= startIso && f <= endIso) || (s && s >= startIso && s <= endIso));
-			})
-			.toArray();
+		const [finishedList, startedList] = await Promise.all([
+			db.books.where('finishedAtIso').between(startIso, endIso, true, true).toArray(),
+			db.books.where('startedAtIso').between(startIso, endIso, true, true).toArray()
+		]);
+		const byId = new Map(finishedList.map((b) => [b.id, b]));
+		for (const b of startedList) {
+			byId.set(b.id, b);
+		}
+		return Array.from(byId.values());
 	},
 	[],
 	monthIsoBounds
 );
 const monthMedia = useDexieLiveQuery(
-	() => {
+	async () => {
 		const { startIso, endIso } = monthIsoBounds.value;
-		return db.media
-			.filter((m) => {
-				const f = m.finishedAtIso;
-				const s = m.startedAtIso;
-				return Boolean((f && f >= startIso && f <= endIso) || (s && s >= startIso && s <= endIso));
-			})
-			.toArray();
+		const [finishedList, startedFallbackList] = await Promise.all([
+			db.media.where('finishedAtIso').between(startIso, endIso, true, true).toArray(),
+			db.media
+				.filter((m) => Boolean(!m.finishedAtIso && m.startedAtIso && m.startedAtIso >= startIso && m.startedAtIso <= endIso))
+				.toArray()
+		]);
+		const byId = new Map(finishedList.map((m) => [m.id, m]));
+		for (const m of startedFallbackList) {
+			byId.set(m.id, m);
+		}
+		return Array.from(byId.values());
 	},
 	[],
 	monthIsoBounds

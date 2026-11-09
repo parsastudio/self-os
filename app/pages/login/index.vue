@@ -323,9 +323,9 @@ async function handleSetup() {
 						v-model="password"
 						type="password"
 						required
-						minlength="4"
+						minlength="8"
 						dir="ltr"
-						placeholder="حداقل ۴ کاراکتر"
+						placeholder="حداقل ۸ کاراکتر"
 						class="h-12 w-full rounded-2xl border border-border bg-elevated px-4 text-center font-mono text-sm font-bold text-fg focus:border-border-strong focus:outline-none"
 					/>
 				</div>
@@ -337,7 +337,7 @@ async function handleSetup() {
 						v-model="confirmPassword"
 						type="password"
 						required
-						minlength="4"
+						minlength="8"
 						dir="ltr"
 						placeholder="تکرار رمز عبور"
 						class="h-12 w-full rounded-2xl border border-border bg-elevated px-4 text-center font-mono text-sm font-bold text-fg focus:border-border-strong focus:outline-none"

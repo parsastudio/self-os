@@ -90,6 +90,33 @@ export function toPersianDigits(input: string | number): string {
 		.replace(/[٠-٩]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)] ?? d);
 }
 
+export function normalizeTimestampIso(
+	iso: string | null | undefined,
+	fallbackIso?: string
+): string | null {
+	if (!iso) return fallbackIso ?? null;
+	const ms = Date.parse(iso);
+	if (Number.isNaN(ms)) return fallbackIso ?? null;
+	return new Date(ms).toISOString();
+}
+
+export function compareTimestampsIso(
+	a: string | null | undefined,
+	b: string | null | undefined
+): number {
+	const msA = a ? Date.parse(a) : Number.NaN;
+	const msB = b ? Date.parse(b) : Number.NaN;
+	const validA = !Number.isNaN(msA);
+	const validB = !Number.isNaN(msB);
+
+	if (validA && validB) {
+		return msA === msB ? 0 : msA > msB ? 1 : -1;
+	}
+	if (validA && !validB) return 1;
+	if (!validA && validB) return -1;
+	return 0;
+}
+
 export function dateToIso(date: Date): string {
 	const y = date.getUTCFullYear();
 	const m = padZero(date.getUTCMonth() + 1);

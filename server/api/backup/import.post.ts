@@ -1,10 +1,10 @@
 import { defineEventHandler, readBody, createError } from 'h3';
-import { DatabaseBackupPayloadSchema } from '~/domain/schemas';
+import { BackupImportRequestSchema } from '~/domain/schemas';
 import { importDatabaseFromJson } from '~~/server/repositories/backup.repo';
 
 export default defineEventHandler(async (event) => {
 	const body = await readBody(event);
-	const parsed = DatabaseBackupPayloadSchema.safeParse(body);
+	const parsed = BackupImportRequestSchema.safeParse(body);
 	if (!parsed.success) {
 		throw createError({
 			statusCode: 400,
@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
 		});
 	}
 
-	const result = await importDatabaseFromJson(parsed.data, 'merge');
+	const result = await importDatabaseFromJson(parsed.data.payload, parsed.data.mode);
 	return {
 		success: true,
 		importedCount: result.importedRecordsCount,

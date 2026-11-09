@@ -79,10 +79,25 @@ export function createLocalBackupOperations(
 	}
 
 	async function restoreBackupPayload(
-		payload: DatabaseBackupPayload
+		payload: DatabaseBackupPayload,
+		options?: { mode?: 'merge' | 'replace'; skipOutboxStaging?: boolean }
 	): Promise<{ addedOrUpdatedCount: number; skippedDuplicatesCount: number }> {
+		const mode = options?.mode ?? 'merge';
+		const skipOutboxStaging = Boolean(options?.skipOutboxStaging);
 		const nowIso = new Date().toISOString();
-		const currentSnapshot = await exportBackupPayload();
+		const emptyData: DatabaseBackupPayload['data'] = {
+			habits: [],
+			dailyEntries: [],
+			habitLogs: [],
+			cadencePlans: [],
+			books: [],
+			media: [],
+			notes: [],
+			calendarEvents: [],
+			lifecycleEvents: [],
+			reflectionTags: []
+		};
+		const currentSnapshot = mode === 'replace' ? { data: emptyData } : await exportBackupPayload();
 		const merged = computeSmartBackupMerge(currentSnapshot.data, payload.data);
 
 		await db.transaction(
@@ -101,6 +116,20 @@ export function createLocalBackupOperations(
 				db.syncOutbox
 			],
 			async () => {
+				if (mode === 'replace') {
+					await db.habits.clear();
+					await db.dailyEntries.clear();
+					await db.habitLogs.clear();
+					await db.cadencePlans.clear();
+					await db.books.clear();
+					await db.media.clear();
+					await db.notes.clear();
+					await db.calendarEvents.clear();
+					await db.lifecycleEvents.clear();
+					await db.reflectionTags.clear();
+					await db.syncOutbox.clear();
+				}
+
 				const stagedMutations: SyncOutboxMutation[] = [];
 
 				if (merged.habitsToUpsert.length > 0) {
@@ -250,13 +279,15 @@ export function createLocalBackupOperations(
 						payload: clonePlain(merged.reflectionTagsToUpsert)
 					});
 				}
-				if (stagedMutations.length > 0) {
+				if (!skipOutboxStaging && stagedMutations.length > 0) {
 					await db.syncOutbox.bulkPut(stagedMutations);
 				}
 			}
 		);
 
-		notifyMutationsStaged();
+		if (!skipOutboxStaging) {
+			notifyMutationsStaged();
+		}
 
 		return {
 			addedOrUpdatedCount: merged.addedOrUpdatedCount,
@@ -341,7 +372,11 @@ export function createLocalBackupOperations(
 				if (demoLogIds.length > 0) await db.habitLogs.bulkDelete(demoLogIds);
 
 				const demoEntryDates = (await db.dailyEntries.toArray())
-					.filter((e) => e.tags.includes(DEMO_ENTRY_TAG))
+					.filter(
+						(e) =>
+							e.tags.includes(DEMO_ENTRY_TAG) ||
+							e.reflectionNote === 'ثبت آزمایشی جهت بررسی نمودارها'
+					)
 					.map((e) => e.dateIso);
 				if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
 

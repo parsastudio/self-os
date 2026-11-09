@@ -145,27 +145,29 @@ export type HabitLogItemInput = z.infer<typeof HabitLogItemInputSchema>;
 export const SaveDailyEntryInputSchema = z.object({
 	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string().default(''),
-	journalText: z.string().nullable().optional(),
-	tags: z.array(z.string()).default([]),
+	reflectionNote: z.string().max(10000).default(''),
+	journalText: z.string().max(100000).nullable().optional(),
+	tags: z.array(z.string().max(120)).max(100).default([]),
 	updatedAtIso: z.string().optional(),
-	logs: z.array(HabitLogItemInputSchema)
+	logs: z.array(HabitLogItemInputSchema).max(500)
 });
 export type SaveDailyEntryInput = z.infer<typeof SaveDailyEntryInputSchema>;
 
 export const SaveCadencePlanBatchSchema = z.object({
 	targetDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-	reason: z.string().optional(),
+	reason: z.string().max(1000).optional(),
 	updatedAtIso: z.string().optional(),
-	items: z.array(
-		z.object({
-			habitId: z.string(),
-			plannedIntervals: z.number().int().min(0).max(96),
-			plannedMinutesPerInterval: z.number().min(0).max(1440),
-			cadenceWindowMinutes: z.number().int().min(15).max(1440),
-			updatedAtIso: z.string().optional()
-		})
-	)
+	items: z
+		.array(
+			z.object({
+				habitId: z.string(),
+				plannedIntervals: z.number().int().min(0).max(96),
+				plannedMinutesPerInterval: z.number().min(0).max(1440),
+				cadenceWindowMinutes: z.number().int().min(15).max(1440),
+				updatedAtIso: z.string().optional()
+			})
+		)
+		.max(500)
 });
 export type SaveCadencePlanBatch = z.infer<typeof SaveCadencePlanBatchSchema>;
 
@@ -335,11 +337,11 @@ export const SetupPasswordInputSchema = z
 	.object({
 		password: z
 			.string()
-			.min(4, 'رمز عبور باید حداقل ۴ کاراکتر باشد')
+			.min(8, 'رمز عبور باید حداقل ۸ کاراکتر باشد')
 			.max(256, 'رمز عبور بیش از حد طولانی است'),
 		confirmPassword: z
 			.string()
-			.min(4, 'تکرار رمز عبور الزامی است')
+			.min(8, 'تکرار رمز عبور الزامی است')
 			.max(256, 'تکرار رمز عبور بیش از حد طولانی است'),
 		website: z.string().max(256).optional()
 	})
@@ -364,11 +366,11 @@ export const ChangePasswordInputSchema = z
 			.max(256, 'رمز عبور فعلی بیش از حد طولانی است'),
 		newPassword: z
 			.string()
-			.min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد')
+			.min(8, 'رمز عبور جدید باید حداقل ۸ کاراکتر باشد')
 			.max(256, 'رمز عبور جدید بیش از حد طولانی است'),
 		confirmNewPassword: z
 			.string()
-			.min(4, 'تکرار رمز عبور جدید الزامی است')
+			.min(8, 'تکرار رمز عبور جدید الزامی است')
 			.max(256, 'تکرار رمز عبور جدید بیش از حد طولانی است')
 	})
 	.refine((data) => data.newPassword === data.confirmNewPassword, {
@@ -381,6 +383,21 @@ export const DemoSeedActionSchema = z.object({
 	action: z.enum(['inject', 'remove'])
 });
 export type DemoSeedActionInput = z.infer<typeof DemoSeedActionSchema>;
+
+export const BackupRestoreModeSchema = z.enum(['merge', 'replace']);
+export type BackupRestoreMode = z.infer<typeof BackupRestoreModeSchema>;
+
+export const BackupImportRequestSchema = z.union([
+	z.object({
+		mode: BackupRestoreModeSchema.default('merge'),
+		payload: DatabaseBackupPayloadSchema
+	}),
+	DatabaseBackupPayloadSchema.transform((payload) => ({
+		mode: 'merge' as const,
+		payload
+	}))
+]);
+export type BackupImportRequest = z.infer<typeof BackupImportRequestSchema>;
 
 export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 	z.object({
@@ -471,9 +488,9 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 export type SyncOutboxMutation = z.infer<typeof SyncOutboxMutationSchema>;
 
 export const SyncRequestPayloadSchema = z.object({
-	clientId: z.string().default('default-client'),
-	knownServerVersionIso: z.string().nullable().default(null),
-	mutations: z.array(SyncOutboxMutationSchema).default([])
+	clientId: z.string().max(128).default('default-client'),
+	knownServerVersionIso: z.string().max(64).nullable().default(null),
+	mutations: z.array(SyncOutboxMutationSchema).max(5000).default([])
 });
 export type SyncRequestPayload = z.infer<typeof SyncRequestPayloadSchema>;
 
@@ -519,6 +536,18 @@ export const LocalWorkspaceSnapshotSchema = z.object({
 });
 export type LocalWorkspaceSnapshot = z.infer<typeof LocalWorkspaceSnapshotSchema>;
 
+export const DeltaWorkspaceSnapshotSchema = LocalWorkspaceSnapshotSchema.extend({
+	deletedHabitIds: z.array(z.string()).default([]),
+	deletedEntryDates: z.array(z.string()).default([]),
+	deletedLogIds: z.array(z.string()).default([]),
+	deletedPlanIds: z.array(z.string()).default([]),
+	deletedBookIds: z.array(z.string()).default([]),
+	deletedMediaIds: z.array(z.string()).default([]),
+	deletedNoteIds: z.array(z.string()).default([]),
+	deletedEventIds: z.array(z.string()).default([])
+});
+export type DeltaWorkspaceSnapshot = z.infer<typeof DeltaWorkspaceSnapshotSchema>;
+
 export const ServerSyncResponseSchema = z.object({
 	ok: z.boolean(),
 	error: z.string().optional(),
@@ -527,7 +556,8 @@ export const ServerSyncResponseSchema = z.object({
 	appBuildVersion: z.string().optional(),
 	hasRemoteUpdates: z.boolean(),
 	serverTimeIso: z.string(),
-	fullWorkspace: LocalWorkspaceSnapshotSchema.optional()
+	fullWorkspace: LocalWorkspaceSnapshotSchema.optional(),
+	deltaWorkspace: DeltaWorkspaceSnapshotSchema.optional()
 });
 export type ServerSyncResponse = z.infer<typeof ServerSyncResponseSchema>;
 
@@ -747,6 +777,7 @@ export const LocalAuthRecordSchema = z.object({
 	expiresAtIso: z.string(),
 	verifierSaltHex: z.string(),
 	passwordVerifierHex: z.string(),
+	sessionSignatureHex: z.string().optional(),
 	updatedAtIso: z.string()
 });
 export type LocalAuthRecord = z.infer<typeof LocalAuthRecordSchema>;
@@ -920,51 +951,57 @@ export type FullAnalyticsReport = z.infer<typeof FullAnalyticsReportSchema>;
 export const DatabaseBackupPayloadSchema = z.object({
 	version: z.literal(1),
 	appName: z.literal('new-life'),
-	exportedAtIso: z.string(),
-	jalaliDate: z.string(),
+	exportedAtIso: z.string().max(64),
+	jalaliDate: z.string().max(32),
 	data: z.object({
-		habits: z.array(HabitEntitySchema),
-		dailyEntries: z.array(
-			z.object({
-				id: z.string(),
-				dateIso: z.string(),
-				dayStatus: DayStatusColorSchema,
-				reflectionNote: z.string(),
-				journalText: z.string().nullable(),
-				tagsJson: z.string(),
-				updatedAtIso: z.string()
-			})
-		),
-		habitLogs: z.array(
-			z.object({
-				id: z.string(),
-				dateIso: z.string(),
-				habitId: z.string(),
-				habitTitleSnapshot: z.string().nullable(),
-				achievedTier: z.number().nullable(),
-				achievedRuleSnapshot: z.string().nullable(),
-				habitSnapshotJson: z.string().nullable(),
-				completedIntervals: z.number().nullable(),
-				actualMinutesPerInterval: z.number().nullable(),
-				totalActualMinutes: z.number().nullable(),
-				plannedIntervalsSnapshot: z.number().nullable(),
-				plannedMinutesSnapshot: z.number().nullable(),
-				updatedAtIso: z.string().nullable()
-			})
-		),
-		cadencePlans: z.array(CadencePlanEntitySchema),
-		books: z.array(BookEntitySchema),
-		media: z.array(MediaEntitySchema),
-		notes: z.array(NoteEntitySchema),
-		calendarEvents: z.array(CalendarEventEntitySchema),
-		lifecycleEvents: z.array(LifecycleEventEntitySchema),
-		reflectionTags: z.array(
-			z.object({
-				id: z.string(),
-				label: z.string(),
-				sortOrder: z.number()
-			})
-		)
+		habits: z.array(HabitEntitySchema).max(5000),
+		dailyEntries: z
+			.array(
+				z.object({
+					id: z.string(),
+					dateIso: z.string(),
+					dayStatus: DayStatusColorSchema,
+					reflectionNote: z.string().max(10000),
+					journalText: z.string().max(100000).nullable(),
+					tagsJson: z.string().max(10000),
+					updatedAtIso: z.string()
+				})
+			)
+			.max(50000),
+		habitLogs: z
+			.array(
+				z.object({
+					id: z.string(),
+					dateIso: z.string(),
+					habitId: z.string(),
+					habitTitleSnapshot: z.string().nullable(),
+					achievedTier: z.number().nullable(),
+					achievedRuleSnapshot: z.string().nullable(),
+					habitSnapshotJson: z.string().nullable(),
+					completedIntervals: z.number().nullable(),
+					actualMinutesPerInterval: z.number().nullable(),
+					totalActualMinutes: z.number().nullable(),
+					plannedIntervalsSnapshot: z.number().nullable(),
+					plannedMinutesSnapshot: z.number().nullable(),
+					updatedAtIso: z.string().nullable()
+				})
+			)
+			.max(200000),
+		cadencePlans: z.array(CadencePlanEntitySchema).max(50000),
+		books: z.array(BookEntitySchema).max(10000),
+		media: z.array(MediaEntitySchema).max(10000),
+		notes: z.array(NoteEntitySchema).max(10000),
+		calendarEvents: z.array(CalendarEventEntitySchema).max(10000),
+		lifecycleEvents: z.array(LifecycleEventEntitySchema).max(50000),
+		reflectionTags: z
+			.array(
+				z.object({
+					id: z.string(),
+					label: z.string().max(120),
+					sortOrder: z.number()
+				})
+			)
+			.max(1000)
 	})
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;

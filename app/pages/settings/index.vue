@@ -7,7 +7,11 @@ import { useTheme } from '~/composables/useTheme';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { toPersianDigits } from '~/domain/calendar';
 import { isDemoRecordId } from '~/domain/constants';
-import { DatabaseBackupPayloadSchema, extractApiErrorInfo } from '~/domain/schemas';
+import {
+	type BackupRestoreMode,
+	DatabaseBackupPayloadSchema,
+	extractApiErrorInfo
+} from '~/domain/schemas';
 import {
 	AlertTriangle,
 	Check,
@@ -40,6 +44,7 @@ const isStatsLoading = computed(() => habits.isLoading.value || entries.isLoadin
 const statsError = computed(() => habits.error.value || entries.error.value);
 
 const selectedFile = ref<File | null>(null);
+const backupRestoreMode = ref<BackupRestoreMode>('merge');
 const currentPassword = ref('');
 const newPassword = ref('');
 const confirmNewPassword = ref('');
@@ -164,20 +169,48 @@ async function importBackup() {
 			return;
 		}
 
-		const mergeResult = await localRepo.restoreBackupPayload(parsed.data);
+		const mode = backupRestoreMode.value;
+		let addedCount = 0;
+		let skippedCount = 0;
 
 		if (navigator.onLine) {
+			const serverRes = await $fetch<{
+				success: boolean;
+				importedCount: number;
+				skippedCount: number;
+			}>('/api/backup/import', {
+				method: 'POST',
+				body: {
+					mode,
+					payload: parsed.data
+				}
+			});
+			const localRes = await localRepo.restoreBackupPayload(parsed.data, {
+				mode,
+				skipOutboxStaging: true
+			});
+			addedCount = serverRes.importedCount ?? localRes.addedOrUpdatedCount;
+			skippedCount = serverRes.skippedCount ?? localRes.skippedDuplicatesCount;
 			void syncEngine.syncNow({ checkRemoteUpdates: true });
+		} else {
+			const localRes = await localRepo.restoreBackupPayload(parsed.data, {
+				mode,
+				skipOutboxStaging: false
+			});
+			addedCount = localRes.addedOrUpdatedCount;
+			skippedCount = localRes.skippedDuplicatesCount;
 		}
 
-		const addedLabel = toPersianDigits(mergeResult.addedOrUpdatedCount);
-		const skippedLabel = toPersianDigits(mergeResult.skippedDuplicatesCount);
+		const addedLabel = toPersianDigits(addedCount);
+		const skippedLabel = toPersianDigits(skippedCount);
 		importMessage.value = {
 			type: 'success',
 			text:
-				mergeResult.skippedDuplicatesCount > 0
-					? `${addedLabel} رکورد جدید اضافه/به‌روزرسانی شد (${skippedLabel} مورد تکراری نادیده گرفته شد).`
-					: `${addedLabel} رکورد با موفقیت به داده‌های فعلی اضافه شد.`
+				mode === 'replace'
+					? `دیتابیس با موفقیت جایگزین شد (${addedLabel} رکورد بازیابی شد).`
+					: skippedCount > 0
+						? `${addedLabel} رکورد جدید اضافه/به‌روزرسانی شد (${skippedLabel} مورد تکراری نادیده گرفته شد).`
+						: `${addedLabel} رکورد با موفقیت به داده‌های فعلی اضافه شد.`
 		};
 		selectedFile.value = null;
 	} catch {
@@ -405,6 +438,33 @@ async function handleLogout(forceOfflineLogout = false) {
 					</div>
 
 					<div class="mt-4 space-y-3">
+						<div class="grid grid-cols-2 gap-1 rounded-xl border border-border bg-surface p-1">
+							<button
+								type="button"
+								class="h-8 rounded-lg text-[11px] font-extrabold transition"
+								:class="
+									backupRestoreMode === 'merge'
+										? 'border border-accent-border bg-accent-soft text-accent-text shadow-2xs'
+										: 'text-fg-secondary hover:text-fg'
+								"
+								@click="backupRestoreMode = 'merge'"
+							>
+								ادغام هوشمند
+							</button>
+							<button
+								type="button"
+								class="h-8 rounded-lg text-[11px] font-extrabold transition"
+								:class="
+									backupRestoreMode === 'replace'
+										? 'border border-gold-border bg-gold-soft text-gold-text shadow-2xs'
+										: 'text-fg-secondary hover:text-fg'
+								"
+								@click="backupRestoreMode = 'replace'"
+							>
+								جایگزینی کامل
+							</button>
+						</div>
+
 						<label class="flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border border-dashed border-border bg-surface px-4 text-xs font-bold text-fg-secondary transition hover:border-border-strong hover:text-fg">
 							<span class="truncate">{{ selectedFile ? selectedFile.name : 'انتخاب فایل پشتیبان...' }}</span>
 							<input type="file" accept=".json,application/json" class="hidden" @change="handleFileSelected" />
@@ -417,7 +477,15 @@ async function handleLogout(forceOfflineLogout = false) {
 							@click="importBackup"
 						>
 							<HardDriveUpload class="h-4 w-4" />
-							<span>{{ isImporting ? 'در حال بررسی و ادغام...' : 'ادغام داده‌های جدید' }}</span>
+							<span>
+								{{
+									isImporting
+										? 'در حال پردازش فایل...'
+										: backupRestoreMode === 'replace'
+											? 'جایگزینی کل دیتابیس با بکاپ'
+											: 'ادغام داده‌های جدید'
+								}}
+							</span>
 						</button>
 					</div>
 				</div>
@@ -497,9 +565,9 @@ async function handleLogout(forceOfflineLogout = false) {
 							v-model="newPassword"
 							type="password"
 							required
-							minlength="4"
+							minlength="8"
 							dir="ltr"
-							placeholder="حداقل ۴ کاراکتر"
+							placeholder="حداقل ۸ کاراکتر"
 							class="h-11 w-full rounded-xl border border-border bg-elevated px-3 text-center font-mono text-xs font-bold text-fg placeholder:font-sans placeholder:font-normal placeholder:text-fg-muted focus:border-border-strong focus:outline-none"
 						/>
 					</div>
@@ -511,7 +579,7 @@ async function handleLogout(forceOfflineLogout = false) {
 							v-model="confirmNewPassword"
 							type="password"
 							required
-							minlength="4"
+							minlength="8"
 							dir="ltr"
 							placeholder="تکرار رمز جدید"
 							class="h-11 w-full rounded-xl border border-border bg-elevated px-3 text-center font-mono text-xs font-bold text-fg placeholder:font-sans placeholder:font-normal placeholder:text-fg-muted focus:border-border-strong focus:outline-none"

@@ -12,7 +12,8 @@ import {
 	habits,
 	mediaLogs,
 	notes,
-	reflectionTags
+	reflectionTags,
+	syncState
 } from '~~/server/database/schema';
 import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
@@ -49,6 +50,7 @@ export async function clearAllDatabaseRecords(): Promise<void> {
 	await ensureDatabaseReady();
 	await db.transaction(async (tx) => {
 		await truncateAllWorkspaceTables(tx);
+		await tx.delete(syncState).where(like(syncState.id, 'del:%'));
 		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
 }
@@ -92,8 +94,20 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 		).length;
 		removed += (
 			await tx
+				.delete(cadencePlans)
+				.where(like(cadencePlans.habitId, prefixPattern))
+				.returning({ id: cadencePlans.id })
+		).length;
+		removed += (
+			await tx
 				.delete(habitLifecycleEvents)
 				.where(like(habitLifecycleEvents.id, prefixPattern))
+				.returning({ id: habitLifecycleEvents.id })
+		).length;
+		removed += (
+			await tx
+				.delete(habitLifecycleEvents)
+				.where(like(habitLifecycleEvents.habitId, prefixPattern))
 				.returning({ id: habitLifecycleEvents.id })
 		).length;
 		removed += (
@@ -144,6 +158,7 @@ export async function importDatabaseFromJson(
 	await db.transaction(async (tx) => {
 		if (mode === 'replace') {
 			await truncateAllWorkspaceTables(tx);
+			await tx.delete(syncState).where(like(syncState.id, 'del:%'));
 		}
 
 		const existingData = {

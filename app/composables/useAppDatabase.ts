@@ -60,6 +60,50 @@ export class PersonalOSDatabase extends Dexie {
 }
 
 let dbInstance: PersonalOSDatabase | null = null;
+let ssrNoopDbProxy: PersonalOSDatabase | null = null;
+
+function createSsrNoopTableProxy(): unknown {
+	const noopAsync = async () => undefined;
+	const noopArrayAsync = async () => [];
+	const chainable: Record<string, unknown> = {
+		toArray: noopArrayAsync,
+		primaryKeys: noopArrayAsync,
+		first: noopAsync,
+		count: async () => 0,
+		delete: async () => 0
+	};
+	chainable.reverse = () => chainable;
+	chainable.limit = () => chainable;
+	chainable.equals = () => chainable;
+	chainable.between = () => chainable;
+	chainable.filter = () => chainable;
+
+	return new Proxy(
+		{},
+		{
+			get(_target, prop) {
+				if (prop === 'get' || prop === 'put' || prop === 'delete' || prop === 'clear') {
+					return noopAsync;
+				}
+				if (prop === 'bulkPut' || prop === 'bulkDelete') {
+					return noopAsync;
+				}
+				if (prop === 'toArray') {
+					return noopArrayAsync;
+				}
+				if (
+					prop === 'orderBy' ||
+					prop === 'where' ||
+					prop === 'filter' ||
+					prop === 'toCollection'
+				) {
+					return () => chainable;
+				}
+				return noopAsync;
+			}
+		}
+	);
+}
 
 export function getAppDatabase(): PersonalOSDatabase | null {
 	if (!import.meta.client) {
@@ -73,8 +117,20 @@ export function getAppDatabase(): PersonalOSDatabase | null {
 
 export function useAppDatabase(): PersonalOSDatabase {
 	const db = getAppDatabase();
-	if (!db) {
-		throw new Error('Database is only accessible on client-side environments.');
+	if (db) {
+		return db;
 	}
-	return db;
+	if (!ssrNoopDbProxy) {
+		const tableProxy = createSsrNoopTableProxy();
+		ssrNoopDbProxy = new Proxy({} as PersonalOSDatabase, {
+			get(_target, prop) {
+				if (prop === 'transaction') {
+					return async (_mode: string, _tables: unknown, scope: () => Promise<unknown>) =>
+						scope();
+				}
+				return tableProxy;
+			}
+		});
+	}
+	return ssrNoopDbProxy;
 }

@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
@@ -7,12 +7,16 @@ import {
 	reflectionTags
 } from '~~/server/database/schema';
 import { getAllHabits } from '~~/server/repositories/habits.repo';
-import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
+import {
+	bumpServerStructuralVersion,
+	recordServerDeletionTombstones
+} from '~~/server/repositories/sync.repo';
 import {
 	isDailyEntryEmpty,
 	resolveDailyHabitLogSnapshot,
 	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
+import { compareTimestampsIso } from '~/domain/calendar';
 import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
 import type {
 	HabitEntity,
@@ -73,17 +77,35 @@ export async function saveDailyEntryAndLogs(
 		const existing = existingRows[0];
 
 		if (isDailyEntryEmpty(input)) {
-			if (existing && input.updatedAtIso && entryUpdatedAtIso < existing.updatedAtIso) {
+			if (
+				existing &&
+				input.updatedAtIso &&
+				compareTimestampsIso(entryUpdatedAtIso, existing.updatedAtIso) < 0
+			) {
 				return;
 			}
+			const existingLogs = await tx
+				.select({ id: habitLogs.id })
+				.from(habitLogs)
+				.where(eq(habitLogs.dateIso, input.dateIso));
 			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
 			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
-			await bumpServerStructuralVersion(nowIso, tx);
+			await recordServerDeletionTombstones(
+				[
+					`del:entry:${input.dateIso}`,
+					...existingLogs.map((l) => `del:log:${l.id}`)
+				],
+				entryUpdatedAtIso,
+				tx
+			);
 			return;
 		}
 
 		if (existing) {
-			if (!input.updatedAtIso || entryUpdatedAtIso >= existing.updatedAtIso) {
+			if (
+				!input.updatedAtIso ||
+				compareTimestampsIso(entryUpdatedAtIso, existing.updatedAtIso) >= 0
+			) {
 				await tx
 					.update(dailyEntries)
 					.set({
@@ -114,10 +136,12 @@ export async function saveDailyEntryAndLogs(
 		const previousLogByHabitId = new Map(previousLogs.map((l) => [l.habitId, l]));
 		const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
 
+		const logIdsToDelete: string[] = [];
+		const logsToUpsert: Array<typeof habitLogs.$inferInsert> = [];
+
 		for (const prevLog of previousLogs) {
 			if (!incomingHabitIds.has(prevLog.habitId)) {
-				await tx.delete(habitLogs).where(eq(habitLogs.id, prevLog.id));
-				await bumpServerStructuralVersion(nowIso, tx);
+				logIdsToDelete.push(prevLog.id);
 			}
 		}
 
@@ -127,8 +151,7 @@ export async function saveDailyEntryAndLogs(
 
 			if (shouldDiscardHabitLogItem(habit, log)) {
 				if (prev) {
-					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
-					await bumpServerStructuralVersion(nowIso, tx);
+					logIdsToDelete.push(prev.id);
 				}
 				continue;
 			}
@@ -139,7 +162,7 @@ export async function saveDailyEntryAndLogs(
 
 			if (
 				prev?.updatedAtIso &&
-				sanitizedLogUpdatedAtIso < prev.updatedAtIso
+				compareTimestampsIso(sanitizedLogUpdatedAtIso, prev.updatedAtIso) < 0
 			) {
 				continue;
 			}
@@ -154,19 +177,43 @@ export async function saveDailyEntryAndLogs(
 				fallbackUpdatedAtIso: nowIso
 			});
 
-			if (prev) {
-				await tx
-					.update(habitLogs)
-					.set(resolvedLogValues)
-					.where(eq(habitLogs.id, prev.id));
-			} else {
-				await tx.insert(habitLogs).values({
-					id: `log:${input.dateIso}:${log.habitId}`,
-					dateIso: input.dateIso,
-					habitId: log.habitId,
-					...resolvedLogValues
+			logsToUpsert.push({
+				id: prev?.id ?? `log:${input.dateIso}:${log.habitId}`,
+				dateIso: input.dateIso,
+				habitId: log.habitId,
+				...resolvedLogValues
+			});
+		}
+
+		if (logIdsToDelete.length > 0) {
+			const uniqueDeleteIds = Array.from(new Set(logIdsToDelete));
+			await tx.delete(habitLogs).where(inArray(habitLogs.id, uniqueDeleteIds));
+			await recordServerDeletionTombstones(
+				uniqueDeleteIds.map((id) => `del:log:${id}`),
+				entryUpdatedAtIso,
+				tx
+			);
+		}
+
+		if (logsToUpsert.length > 0) {
+			await tx
+				.insert(habitLogs)
+				.values(logsToUpsert)
+				.onConflictDoUpdate({
+					target: [habitLogs.dateIso, habitLogs.habitId],
+					set: {
+						habitTitleSnapshot: sql`excluded.habit_title_snapshot`,
+						achievedTier: sql`excluded.achieved_tier`,
+						achievedRuleSnapshot: sql`excluded.achieved_rule_snapshot`,
+						habitSnapshotJson: sql`excluded.habit_snapshot_json`,
+						completedIntervals: sql`excluded.completed_intervals`,
+						actualMinutesPerInterval: sql`excluded.actual_minutes_per_interval`,
+						totalActualMinutes: sql`excluded.total_actual_minutes`,
+						plannedIntervalsSnapshot: sql`excluded.planned_intervals_snapshot`,
+						plannedMinutesSnapshot: sql`excluded.planned_minutes_snapshot`,
+						updatedAtIso: sql`excluded.updated_at_iso`
+					}
 				});
-			}
 		}
 	};
 
@@ -190,58 +237,69 @@ export async function saveCadencePlansForDate(
 	const batchUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
 
 	const applyOperations = async (tx: DbExecutor) => {
+		const existingPlans = await tx
+			.select()
+			.from(cadencePlans)
+			.where(eq(cadencePlans.dateIso, input.targetDateIso));
+		const existingByHabitId = new Map(existingPlans.map((p) => [p.habitId, p]));
+
+		const planIdsToDelete: string[] = [];
+		const plansToUpsert: Array<typeof cadencePlans.$inferInsert> = [];
+
 		for (const item of input.items) {
 			const itemUpdatedAtIso = item.updatedAtIso
 				? clampClientTimestampIso(item.updatedAtIso, nowMs)
 				: batchUpdatedAtIso;
-			const existingRows = await tx
-				.select()
-				.from(cadencePlans)
-				.where(
-					and(
-						eq(cadencePlans.dateIso, input.targetDateIso),
-						eq(cadencePlans.habitId, item.habitId)
-					)
-				)
-				.limit(1);
-			const existing = existingRows[0];
+			const existing = existingByHabitId.get(item.habitId);
 
 			if (
 				existing?.updatedAtIso &&
-				itemUpdatedAtIso < existing.updatedAtIso
+				compareTimestampsIso(itemUpdatedAtIso, existing.updatedAtIso) < 0
 			) {
 				continue;
 			}
 
 			if (item.plannedMinutesPerInterval <= 0) {
 				if (existing) {
-					await tx.delete(cadencePlans).where(eq(cadencePlans.id, existing.id));
-					await bumpServerStructuralVersion(nowIso, tx);
+					planIdsToDelete.push(existing.id);
 				}
 				continue;
 			}
 
-			if (existing) {
-				await tx
-					.update(cadencePlans)
-					.set({
-						plannedIntervals: item.plannedIntervals,
-						plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-						cadenceWindowMinutes: item.cadenceWindowMinutes,
-						updatedAtIso: itemUpdatedAtIso
-					})
-					.where(eq(cadencePlans.id, existing.id));
-			} else {
-				await tx.insert(cadencePlans).values({
-					id: `plan:${input.targetDateIso}:${item.habitId}`,
-					dateIso: input.targetDateIso,
-					habitId: item.habitId,
-					plannedIntervals: item.plannedIntervals,
-					plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-					cadenceWindowMinutes: item.cadenceWindowMinutes,
-					updatedAtIso: itemUpdatedAtIso
+			plansToUpsert.push({
+				id: existing?.id ?? `plan:${input.targetDateIso}:${item.habitId}`,
+				dateIso: input.targetDateIso,
+				habitId: item.habitId,
+				plannedIntervals: item.plannedIntervals,
+				plannedMinutesPerInterval: item.plannedMinutesPerInterval,
+				cadenceWindowMinutes: item.cadenceWindowMinutes,
+				updatedAtIso: itemUpdatedAtIso
+			});
+		}
+
+		if (planIdsToDelete.length > 0) {
+			const uniqueDeleteIds = Array.from(new Set(planIdsToDelete));
+			await tx.delete(cadencePlans).where(inArray(cadencePlans.id, uniqueDeleteIds));
+			await recordServerDeletionTombstones(
+				uniqueDeleteIds.map((id) => `del:plan:${id}`),
+				batchUpdatedAtIso,
+				tx
+			);
+		}
+
+		if (plansToUpsert.length > 0) {
+			await tx
+				.insert(cadencePlans)
+				.values(plansToUpsert)
+				.onConflictDoUpdate({
+					target: [cadencePlans.dateIso, cadencePlans.habitId],
+					set: {
+						plannedIntervals: sql`excluded.planned_intervals`,
+						plannedMinutesPerInterval: sql`excluded.planned_minutes_per_interval`,
+						cadenceWindowMinutes: sql`excluded.cadence_window_minutes`,
+						updatedAtIso: sql`excluded.updated_at_iso`
+					}
 				});
-			}
 		}
 	};
 

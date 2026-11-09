@@ -63,6 +63,49 @@ function timingSafeEqual(a: string, b: string): boolean {
 	return diff === 0;
 }
 
+async function computeSessionSignatureHex(params: {
+	verifierHexWithPrefix: string;
+	verifierSaltHex: string;
+	expiresAtIso: string;
+}): Promise<string> {
+	const enc = new TextEncoder();
+	const rawVerifier = params.verifierHexWithPrefix.startsWith(PBKDF2_V2_PREFIX)
+		? params.verifierHexWithPrefix.slice(PBKDF2_V2_PREFIX.length)
+		: params.verifierHexWithPrefix;
+
+	const hmacKey = await crypto.subtle.importKey(
+		'raw',
+		enc.encode(rawVerifier),
+		{ name: 'HMAC', hash: 'SHA-256' },
+		false,
+		['sign']
+	);
+
+	const payload = `session:v2:${params.verifierSaltHex}:${params.expiresAtIso}`;
+	const sigBuffer = await crypto.subtle.sign('HMAC', hmacKey, enc.encode(payload));
+	return bytesToHex(new Uint8Array(sigBuffer));
+}
+
+async function verifyOfflineRecordIntegrity(record: LocalAuthRecord): Promise<boolean> {
+	if (
+		!record.isAuthenticated ||
+		!record.passwordVerifierHex ||
+		!record.verifierSaltHex ||
+		record.verifierSaltHex.length < 32
+	) {
+		return false;
+	}
+	if (!record.sessionSignatureHex) {
+		return false;
+	}
+	const expectedSig = await computeSessionSignatureHex({
+		verifierHexWithPrefix: record.passwordVerifierHex,
+		verifierSaltHex: record.verifierSaltHex,
+		expiresAtIso: record.expiresAtIso
+	});
+	return timingSafeEqual(record.sessionSignatureHex, expectedSig);
+}
+
 const isAuthenticated = ref(false);
 const isPasswordConfigured = ref(true);
 const isInitialized = ref(false);
@@ -92,11 +135,22 @@ export function useClientAuth() {
 		if (serverAuthenticated === true) {
 			isAuthenticated.value = true;
 			isPasswordConfigured.value = serverPasswordConfigured ?? true;
-			if (record) {
-				record.isAuthenticated = true;
-				record.expiresAtIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-				record.updatedAtIso = nowIso;
-				await db.localAuth.put(record);
+			if (record && record.passwordVerifierHex && record.verifierSaltHex) {
+				const newExpiresIso = new Date(
+					Date.now() + 365 * 24 * 60 * 60 * 1000
+				).toISOString();
+				const sig = await computeSessionSignatureHex({
+					verifierHexWithPrefix: record.passwordVerifierHex,
+					verifierSaltHex: record.verifierSaltHex,
+					expiresAtIso: newExpiresIso
+				});
+				await db.localAuth.put({
+					...record,
+					isAuthenticated: true,
+					expiresAtIso: newExpiresIso,
+					sessionSignatureHex: sig,
+					updatedAtIso: nowIso
+				});
 			}
 			isInitialized.value = true;
 			return {
@@ -107,12 +161,16 @@ export function useClientAuth() {
 
 		if (serverAuthenticated === false && navigator.onLine) {
 			isAuthenticated.value = false;
-			isPasswordConfigured.value = serverPasswordConfigured ?? (record?.isPasswordConfigured ?? true);
+			isPasswordConfigured.value =
+				serverPasswordConfigured ?? (record?.isPasswordConfigured ?? true);
 			if (record) {
-				record.isAuthenticated = false;
-				record.isPasswordConfigured = isPasswordConfigured.value;
-				record.updatedAtIso = nowIso;
-				await db.localAuth.put(record);
+				await db.localAuth.put({
+					...record,
+					isAuthenticated: false,
+					isPasswordConfigured: isPasswordConfigured.value,
+					sessionSignatureHex: undefined,
+					updatedAtIso: nowIso
+				});
 			}
 			isInitialized.value = true;
 			return {
@@ -121,10 +179,24 @@ export function useClientAuth() {
 			};
 		}
 
-		if (record && record.isAuthenticated && record.expiresAtIso > nowIso) {
-			record.expiresAtIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-			record.updatedAtIso = nowIso;
-			await db.localAuth.put(record);
+		if (
+			record &&
+			record.isAuthenticated &&
+			record.expiresAtIso > nowIso &&
+			(await verifyOfflineRecordIntegrity(record))
+		) {
+			const newExpiresIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+			const sig = await computeSessionSignatureHex({
+				verifierHexWithPrefix: record.passwordVerifierHex,
+				verifierSaltHex: record.verifierSaltHex,
+				expiresAtIso: newExpiresIso
+			});
+			await db.localAuth.put({
+				...record,
+				expiresAtIso: newExpiresIso,
+				sessionSignatureHex: sig,
+				updatedAtIso: nowIso
+			});
 
 			isAuthenticated.value = true;
 			isPasswordConfigured.value = record.isPasswordConfigured;
@@ -156,13 +228,22 @@ export function useClientAuth() {
 		const now = new Date();
 		const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
 
+		const expiresAtIso = expiresAt.toISOString();
+		const passwordVerifierHex = `${PBKDF2_V2_PREFIX}${verifierHex}`;
+		const sessionSignatureHex = await computeSessionSignatureHex({
+			verifierHexWithPrefix: passwordVerifierHex,
+			verifierSaltHex: saltHex,
+			expiresAtIso
+		});
+
 		const record: LocalAuthRecord = {
 			key: 'auth:session',
 			isAuthenticated: true,
 			isPasswordConfigured: true,
-			expiresAtIso: expiresAt.toISOString(),
+			expiresAtIso,
 			verifierSaltHex: saltHex,
-			passwordVerifierHex: `${PBKDF2_V2_PREFIX}${verifierHex}`,
+			passwordVerifierHex,
+			sessionSignatureHex,
 			updatedAtIso: now.toISOString()
 		};
 
@@ -214,8 +295,16 @@ export function useClientAuth() {
 			record.passwordVerifierHex = `${PBKDF2_V2_PREFIX}${upgradedVerifier}`;
 		}
 
+		const expiresAtIso = expiresAt.toISOString();
+		const sessionSignatureHex = await computeSessionSignatureHex({
+			verifierHexWithPrefix: record.passwordVerifierHex,
+			verifierSaltHex: record.verifierSaltHex,
+			expiresAtIso
+		});
+
 		record.isAuthenticated = true;
-		record.expiresAtIso = expiresAt.toISOString();
+		record.expiresAtIso = expiresAtIso;
+		record.sessionSignatureHex = sessionSignatureHex;
 		record.updatedAtIso = now.toISOString();
 
 		await db.localAuth.put(record);
