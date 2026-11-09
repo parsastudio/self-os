@@ -39,6 +39,7 @@ const entries = useDexieLiveQuery(() => db.dailyEntries.toArray(), []);
 const isStatsLoading = computed(() => habits.isLoading.value || entries.isLoading.value);
 
 const selectedFile = ref<File | null>(null);
+const currentPassword = ref('');
 const newPassword = ref('');
 const confirmNewPassword = ref('');
 const passwordMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -227,6 +228,10 @@ async function handleClearAllData() {
 }
 
 async function handleChangePassword() {
+	if (!currentPassword.value.trim()) {
+		passwordMessage.value = { type: 'error', text: 'لطفاً رمز عبور فعلی را وارد کنید' };
+		return;
+	}
 	if (newPassword.value !== confirmNewPassword.value) {
 		passwordMessage.value = { type: 'error', text: 'رمز عبور جدید و تکرار آن یکسان نیستند' };
 		return;
@@ -245,6 +250,7 @@ async function handleChangePassword() {
 		await $fetch('/api/auth/change-password', {
 			method: 'POST',
 			body: {
+				currentPassword: currentPassword.value,
 				newPassword: newPassword.value,
 				confirmNewPassword: confirmNewPassword.value
 			}
@@ -252,6 +258,7 @@ async function handleChangePassword() {
 
 		await clientAuth.saveClientCredential(newPassword.value);
 		passwordMessage.value = { type: 'success', text: 'رمز عبور با موفقیت به‌روزرسانی شد.' };
+		currentPassword.value = '';
 		newPassword.value = '';
 		confirmNewPassword.value = '';
 	} catch (err: unknown) {
@@ -464,7 +471,20 @@ async function handleLogout(forceOfflineLogout = false) {
 			<form class="space-y-3.5" @submit.prevent="handleChangePassword">
 				<div class="text-xs font-black text-fg">تغییر رمز عبور اصلی</div>
 
-				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+					<div>
+						<label for="cur-pass" class="mb-1 block text-xs font-bold text-fg-secondary">رمز فعلی</label>
+						<input
+							id="cur-pass"
+							v-model="currentPassword"
+							type="password"
+							required
+							dir="ltr"
+							placeholder="رمز عبور فعلی"
+							class="h-11 w-full rounded-xl border border-border bg-elevated px-3 text-center font-mono text-xs font-bold text-fg placeholder:font-sans placeholder:font-normal placeholder:text-fg-muted focus:border-border-strong focus:outline-none"
+						/>
+					</div>
+
 					<div>
 						<label for="new-pass" class="mb-1 block text-xs font-bold text-fg-secondary">رمز جدید</label>
 						<input

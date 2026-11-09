@@ -321,6 +321,7 @@ export const LoginInputSchema = z.object({
 
 export const ChangePasswordInputSchema = z
 	.object({
+		currentPassword: z.string().min(1, 'وارد کردن رمز عبور فعلی الزامی است'),
 		newPassword: z.string().min(4, 'رمز عبور جدید باید حداقل ۴ کاراکتر باشد'),
 		confirmNewPassword: z.string().min(4, 'تکرار رمز عبور جدید الزامی است')
 	})
@@ -328,6 +329,12 @@ export const ChangePasswordInputSchema = z
 		message: 'رمز عبور جدید و تکرار آن یکسان نیستند',
 		path: ['confirmNewPassword']
 	});
+export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
+
+export const DemoSeedActionSchema = z.object({
+	action: z.enum(['inject', 'remove'])
+});
+export type DemoSeedActionInput = z.infer<typeof DemoSeedActionSchema>;
 
 export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 	z.object({
@@ -712,29 +719,6 @@ export const HabitEvolutionItemSchema = z.object({
 });
 export type HabitEvolutionItem = z.infer<typeof HabitEvolutionItemSchema>;
 
-export const RenderedChartBarSchema = z.object({
-	pt: z.lazy(() => HabitDailyPointSchema),
-	idx: z.number().int(),
-	cx: z.number(),
-	hasVisibleBar: z.boolean(),
-	barX: z.number(),
-	barY: z.number(),
-	barHeight: z.number(),
-	barRx: z.number(),
-	showAxisLabel: z.boolean()
-});
-export type RenderedChartBar = {
-	pt: HabitDailyPoint;
-	idx: number;
-	cx: number;
-	hasVisibleBar: boolean;
-	barX: number;
-	barY: number;
-	barHeight: number;
-	barRx: number;
-	showAxisLabel: boolean;
-};
-
 export const HabitDailyPointSchema = z.object({
 	dateIso: z.string(),
 	jalaliSlash: z.string(),
@@ -753,6 +737,19 @@ export const HabitDailyPointSchema = z.object({
 	lifecycleEventsOnDay: z.array(HabitEvolutionItemSchema)
 });
 export type HabitDailyPoint = z.infer<typeof HabitDailyPointSchema>;
+
+export const RenderedChartBarSchema = z.object({
+	pt: HabitDailyPointSchema,
+	idx: z.number().int(),
+	cx: z.number(),
+	hasVisibleBar: z.boolean(),
+	barX: z.number(),
+	barY: z.number(),
+	barHeight: z.number(),
+	barRx: z.number(),
+	showAxisLabel: z.boolean()
+});
+export type RenderedChartBar = z.infer<typeof RenderedChartBarSchema>;
 
 export const WeekdayPerformanceStatSchema = z.object({
 	weekdayIndex: z.number(),

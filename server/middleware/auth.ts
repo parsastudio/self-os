@@ -44,10 +44,12 @@ export default defineEventHandler(async (event) => {
 	event.context.isPasswordConfigured = passwordConfigured;
 	event.context.sessionToken = rawToken;
 
-	if (passwordConfigured && !isAuthenticated) {
+	if (!passwordConfigured || !isAuthenticated) {
 		throw createError({
 			statusCode: 401,
-			statusMessage: 'ابتدا وارد حساب کاربری شوید'
+			statusMessage: passwordConfigured
+				? 'ابتدا وارد حساب کاربری شوید'
+				: 'ابتدا رمز عبور اولیه سیستم را تنظیم کنید'
 		});
 	}
 });

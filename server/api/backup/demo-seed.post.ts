@@ -1,11 +1,7 @@
 import { defineEventHandler, readBody, createError } from 'h3';
-import { z } from 'zod';
 import { importDatabaseFromJson, removeDemoSeedFromServer } from '../../repositories/backup.repo';
 import { buildDemoSeedDataset } from '~/domain/demo-seed';
-
-const DemoSeedActionSchema = z.object({
-	action: z.enum(['inject', 'remove'])
-});
+import { DemoSeedActionSchema } from '~/domain/schemas';
 
 export default defineEventHandler(async (event) => {
 	const body = await readBody(event);

@@ -1,4 +1,4 @@
-import { defineEventHandler, readBody, setCookie, createError } from 'h3';
+import { defineEventHandler, readBody, setCookie, createError, getRequestHeader, type H3Event } from 'h3';
 import { LoginInputSchema } from '~/domain/schemas';
 import {
 	verifyPassword,
@@ -46,8 +46,29 @@ function pruneExpiredLoginAttempts(now: number): void {
 	}
 }
 
+function resolveClientRateLimitKey(event: H3Event): string {
+	const socketIp = (event.node.req.socket?.remoteAddress || 'local').slice(0, 45);
+	const realIpHeader = getRequestHeader(event, 'x-real-ip')?.trim().slice(0, 45);
+	const forwardedHeader = getRequestHeader(event, 'x-forwarded-for')
+		?.split(',')[0]
+		?.trim()
+		.slice(0, 45);
+
+	const isLocalReverseProxy =
+		socketIp === '127.0.0.1' ||
+		socketIp === '::1' ||
+		socketIp.startsWith('::ffff:127.') ||
+		socketIp.startsWith('::ffff:172.') ||
+		socketIp.startsWith('172.');
+
+	if (isLocalReverseProxy && (realIpHeader || forwardedHeader)) {
+		return `${socketIp}:${realIpHeader || forwardedHeader}`;
+	}
+	return socketIp;
+}
+
 export default defineEventHandler(async (event) => {
-	const ip = getRequestIP(event, { xForwardedFor: true }) || 'unknown';
+	const ip = resolveClientRateLimitKey(event);
 	const now = Date.now();
 	pruneExpiredLoginAttempts(now);
 

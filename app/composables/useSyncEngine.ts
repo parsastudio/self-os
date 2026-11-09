@@ -1,5 +1,7 @@
+import { navigateTo } from '#app';
+import { useClientAuth } from '~/composables/useClientAuth';
 import { onLocalMutationStaged, useLocalRepository } from '~/composables/useLocalRepository';
-import type { ServerSyncResponse, SyncStatusVisual } from '~/domain/schemas';
+import { extractApiErrorInfo, type ServerSyncResponse, type SyncStatusVisual } from '~/domain/schemas';
 
 export type { SyncStatusVisual };
 
@@ -20,6 +22,7 @@ let retryAttempt = 0;
 
 export function useSyncEngine() {
 	const localRepo = useLocalRepository();
+	const clientAuth = useClientAuth();
 
 	async function refreshPendingCount(): Promise<number> {
 		if (!import.meta.client) return 0;
@@ -110,8 +113,25 @@ export function useSyncEngine() {
 			return true;
 		} catch (err) {
 			isSyncInFlight = false;
+			const errorInfo = extractApiErrorInfo(err, 'خطای ارتباط با سرور');
+			if (errorInfo.statusCode === 401 && navigator.onLine) {
+				if (retryTimer) {
+					clearTimeout(retryTimer);
+					retryTimer = null;
+				}
+				status.value = 'error';
+				lastErrorMessage.value = errorInfo.message;
+				await clientAuth.checkAuth(false, true);
+				if (!window.location.pathname.startsWith('/login')) {
+					await navigateTo({
+						path: '/login',
+						query: { redirectTo: window.location.pathname + window.location.search }
+					});
+				}
+				return false;
+			}
 			status.value = navigator.onLine ? 'error' : 'offline';
-			lastErrorMessage.value = err instanceof Error ? err.message : 'خطای ارتباط با سرور';
+			lastErrorMessage.value = errorInfo.message;
 			scheduleRetry();
 			return false;
 		}
