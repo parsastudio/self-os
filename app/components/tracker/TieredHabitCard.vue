@@ -8,6 +8,7 @@ import {
 } from '~/core/habit-engine';
 import { COMPOSITE_FULL_LABEL, TIER_SCORES } from '~/domain/constants';
 import type { HabitLogItemInput, HabitTreeNode } from '~/domain/schemas';
+import { resolveTierButtonWidthClass } from '~/utils/ui-tokens';
 import { Check, ChevronDown, ChevronUp, Minus, X } from 'lucide-vue-next';
 
 interface Props {
@@ -147,7 +148,7 @@ const getTierButtons = buildTierButtonDescriptors;
 						:key="btn.tier"
 						type="button"
 						class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11"
-						:class="[btn.minWidthClass, getOptionStyle(uniformChildrenTier, btn.tier)]"
+						:class="[resolveTierButtonWidthClass(btn.sizeVariant), getOptionStyle(uniformChildrenTier, btn.tier)]"
 						@click.stop="emit('selectGroupTier', node.id, btn.tier)"
 					>
 						{{ btn.label }}
@@ -172,7 +173,7 @@ const getTierButtons = buildTierButtonDescriptors;
 					:key="btn.tier"
 					type="button"
 					class="flex-1 text-xs whitespace-nowrap transition h-10 rounded-xl px-2.5 sm:h-11"
-					:class="[btn.minWidthClass, getOptionStyle(currentTier, btn.tier)]"
+					:class="[resolveTierButtonWidthClass(btn.sizeVariant), getOptionStyle(currentTier, btn.tier)]"
 					@click.stop="emit('selectTier', node.id, btn.tier)"
 				>
 					{{ btn.label }}

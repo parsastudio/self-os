@@ -431,31 +431,31 @@ export function buildTierButtonDescriptors(
 		items.push({
 			tier: TIER_SCORES.SKIPPED,
 			label: 'پیش نیامد',
-			minWidthClass: 'sm:px-3'
+			sizeVariant: 'compact'
 		});
 	}
 	items.push({
 		tier: TIER_SCORES.FAILED,
 		label: 'نشد',
-		minWidthClass: 'sm:min-w-14 sm:px-3.5'
+		sizeVariant: 'narrow'
 	});
 	items.push({
 		tier: TIER_SCORES.BRONZE,
 		label: useBinaryBronzeLabel && supportedMaxTier === TIER_SCORES.BRONZE ? 'انجام شد' : 'برنز',
-		minWidthClass: 'sm:min-w-16 sm:px-3.5'
+		sizeVariant: 'standard'
 	});
 	if (supportedMaxTier >= TIER_SCORES.SILVER) {
 		items.push({
 			tier: TIER_SCORES.SILVER,
 			label: 'نقره',
-			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+			sizeVariant: 'standard'
 		});
 	}
 	if (supportedMaxTier === TIER_SCORES.GOLD) {
 		items.push({
 			tier: TIER_SCORES.GOLD,
 			label: 'طلا',
-			minWidthClass: 'sm:min-w-16 sm:px-3.5'
+			sizeVariant: 'standard'
 		});
 	}
 	return items;
@@ -774,6 +774,16 @@ export function buildUpdatedHabitWithLifecycle(params: {
 	lifecycleEvent: LifecycleEventEntity;
 } {
 	const { current, input, parentTitle, todayIso, nowIso } = params;
+	const isCadence = current.trackingMode === 'interval_cadence';
+
+	const nextMinutesPerInterval =
+		isCadence && input.defaultMinutesPerInterval !== undefined
+			? input.defaultMinutesPerInterval
+			: current.defaultMinutesPerInterval;
+	const nextCadenceWindow =
+		isCadence && input.cadenceWindowMinutes !== undefined
+			? input.cadenceWindowMinutes
+			: current.cadenceWindowMinutes;
 
 	let eventType: LifecycleEventEntity['eventType'] = 'UPDATED_RULES';
 	let summary = `ویرایش شرایط طرح «${input.title}»`;
@@ -790,9 +800,14 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		eventType = input.status === 'archived' ? 'DELETED' : 'STATUS_CHANGED';
 		const statusLabel = STATUS_LABELS_FA[input.status] ?? input.status;
 		summary = `تغییر وضعیت «${input.title}» به ${statusLabel}`;
+	} else if (
+		isCadence &&
+		(nextMinutesPerInterval !== current.defaultMinutesPerInterval ||
+			nextCadenceWindow !== current.cadenceWindowMinutes)
+	) {
+		eventType = 'CADENCE_UPDATED';
+		summary = `تغییر بازه تکرارشونده «${input.title}»`;
 	}
-
-	const isCadence = current.trackingMode === 'interval_cadence';
 
 	const updatedHabit: HabitEntity = {
 		...current,
@@ -808,10 +823,8 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		silverDesc: isCadence ? null : (input.silverDesc?.trim() || null),
 		goldDesc: isCadence ? null : (input.goldDesc?.trim() || null),
 		emergencyMinDesc: isCadence ? (input.emergencyMinDesc?.trim() || null) : null,
-		defaultMinutesPerInterval:
-			isCadence && input.defaultMinutesPerInterval !== undefined
-				? input.defaultMinutesPerInterval
-				: current.defaultMinutesPerInterval,
+		defaultMinutesPerInterval: nextMinutesPerInterval,
+		cadenceWindowMinutes: nextCadenceWindow,
 		updatedAtIso: nowIso
 	};
 

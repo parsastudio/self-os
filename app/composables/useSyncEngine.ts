@@ -19,6 +19,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let periodicPollTimer: ReturnType<typeof setInterval> | null = null;
 let unsubscribeMutationStaged: (() => void) | null = null;
+let boundListenersCleanup: (() => void) | null = null;
 let retryAttempt = 0;
 
 export function useSyncEngine() {
@@ -186,33 +187,37 @@ export function useSyncEngine() {
 			void notifyLocalMutationStaged();
 		});
 
-		window.addEventListener('online', () => {
+		if (boundListenersCleanup) {
+			boundListenersCleanup();
+		}
+
+		const handleOnline = () => {
 			isOnline.value = true;
 			retryAttempt = 0;
 			if (retryTimer) clearTimeout(retryTimer);
 			void syncNow({ checkRemoteUpdates: true });
-		});
+		};
 
-		window.addEventListener('offline', () => {
+		const handleOffline = () => {
 			isOnline.value = false;
 			status.value = 'offline';
 			if (retryTimer) clearTimeout(retryTimer);
-		});
+		};
 
-		document.addEventListener('visibilitychange', () => {
+		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible' && isOnline.value) {
 				retryAttempt = 0;
 				void syncNow({ checkRemoteUpdates: true });
 			}
-		});
+		};
 
-		window.addEventListener('focus', () => {
+		const handleFocus = () => {
 			if (isOnline.value) {
 				void syncNow({ checkRemoteUpdates: true });
 			}
-		});
+		};
 
-		window.addEventListener('pagehide', () => {
+		const handlePageHide = () => {
 			if (debounceTimer) {
 				clearTimeout(debounceTimer);
 				debounceTimer = null;
@@ -220,7 +225,21 @@ export function useSyncEngine() {
 			if (isOnline.value && pendingCount.value > 0 && !isSyncInFlight) {
 				void syncNow({ checkRemoteUpdates: false });
 			}
-		});
+		};
+
+		window.addEventListener('online', handleOnline);
+		window.addEventListener('offline', handleOffline);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('focus', handleFocus);
+		window.addEventListener('pagehide', handlePageHide);
+
+		boundListenersCleanup = () => {
+			window.removeEventListener('online', handleOnline);
+			window.removeEventListener('offline', handleOffline);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('focus', handleFocus);
+			window.removeEventListener('pagehide', handlePageHide);
+		};
 
 		if (periodicPollTimer) {
 			clearInterval(periodicPollTimer);

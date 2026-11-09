@@ -87,10 +87,13 @@ export const HabitTreeNodeSchema = HabitEntitySchema.extend({
 });
 export type HabitTreeNode = z.infer<typeof HabitTreeNodeSchema>;
 
+export const TierButtonSizeVariantSchema = z.enum(['compact', 'narrow', 'standard']);
+export type TierButtonSizeVariant = z.infer<typeof TierButtonSizeVariantSchema>;
+
 export const TierButtonDescriptorSchema = z.object({
 	tier: z.number().int(),
 	label: z.string(),
-	minWidthClass: z.string()
+	sizeVariant: TierButtonSizeVariantSchema
 });
 export type TierButtonDescriptor = z.infer<typeof TierButtonDescriptorSchema>;
 
@@ -197,6 +200,7 @@ export const MutateHabitStructureSchema = z.object({
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
 	defaultMinutesPerInterval: z.number().min(0).optional(),
+	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).optional(),
 	reason: z.string().min(2, 'نوشتن دلیل تغییر برای ثبت در تاریخچه الزامی است')
 });
 export type MutateHabitStructureInput = z.infer<typeof MutateHabitStructureSchema>;

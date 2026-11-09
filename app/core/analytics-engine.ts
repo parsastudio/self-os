@@ -56,9 +56,14 @@ function resolveDateRangeWindow(
 	}
 	for (const h of habits) {
 		const createdDateIso = h.createdAtIso ? h.createdAtIso.slice(0, 10) : '';
-		if (createdDateIso && createdDateIso < minIso) {
-			minIso = createdDateIso;
+		if (createdDateIso) {
+			if (createdDateIso < minIso) minIso = createdDateIso;
+			if (createdDateIso > maxIso) maxIso = createdDateIso;
 		}
+	}
+
+	if (minIso > maxIso) {
+		minIso = maxIso;
 	}
 
 	const endIso = maxIso;
@@ -440,7 +445,12 @@ function computeStreaksFromSeries(
 		const out = pt.outcome;
 		if (out === 'gold' || out === 'silver' || out === 'bronze') {
 			currentStreak++;
-		} else if (out === 'failed') {
+		} else if (out === 'skipped') {
+			continue;
+		} else if (out === 'unlogged' && i === series.length - 1) {
+			// Allow the final day in window to be unlogged if the user hasn't logged it yet
+			continue;
+		} else {
 			break;
 		}
 	}

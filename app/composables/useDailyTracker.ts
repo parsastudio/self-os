@@ -56,6 +56,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let pendingSavePayload: SaveDailyEntryInput | null = null;
 	let activeDraftDateIso = dateIso.value;
+	let inFlightSavePromise: Promise<void> | null = null;
 
 	const isHydratingQueries = computed(
 		() =>
@@ -76,13 +77,15 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	watch(
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
-			if (activeDraftDateIso !== dateIso.value && pendingSavePayload) {
-				void flushPendingSave();
+			if (activeDraftDateIso !== dateIso.value) {
+				if (pendingSavePayload) {
+					void flushPendingSave();
+				}
+				activeDraftDateIso = dateIso.value;
 			}
 			if (isHydratingQueries.value) {
 				return;
 			}
-			activeDraftDateIso = dateIso.value;
 			if (pendingSavePayload && pendingSavePayload.dateIso === dateIso.value) {
 				return;
 			}
@@ -270,26 +273,51 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		}
 	}
 
-	async function flushPendingSave(): Promise<void> {
+	async function flushPendingSave(forceBuildCurrent = false): Promise<void> {
 		if (autoSaveTimer) {
 			clearTimeout(autoSaveTimer);
 			autoSaveTimer = null;
 		}
-		const payloadToSave = pendingSavePayload ?? (dateIso.value ? buildDailyInputObject() : null);
+		const payloadToSave =
+			pendingSavePayload ??
+			(forceBuildCurrent && dateIso.value ? buildDailyInputObject() : null);
 		pendingSavePayload = null;
-		if (!payloadToSave) return;
+		if (!payloadToSave) {
+			if (inFlightSavePromise) {
+				await inFlightSavePromise;
+			}
+			return;
+		}
 
-		saveState.value = 'saving';
-		try {
-			await localRepo.daily.saveDailyEntry(payloadToSave);
-			if (payloadToSave.dateIso === dateIso.value) {
-				isDirty.value = false;
-				saveState.value = 'saved';
+		if (payloadToSave.dateIso === dateIso.value) {
+			saveState.value = 'saving';
+		}
+
+		const runSave = async () => {
+			if (inFlightSavePromise) {
+				await inFlightSavePromise.catch(() => {});
 			}
-		} catch {
-			if (payloadToSave.dateIso === dateIso.value) {
-				saveState.value = 'error';
+			try {
+				await localRepo.daily.saveDailyEntry(payloadToSave);
+				if (
+					payloadToSave.dateIso === dateIso.value &&
+					(!pendingSavePayload || pendingSavePayload.dateIso !== dateIso.value)
+				) {
+					isDirty.value = false;
+					saveState.value = 'saved';
+				}
+			} catch {
+				if (payloadToSave.dateIso === dateIso.value) {
+					saveState.value = 'error';
+				}
 			}
+		};
+
+		const currentPromise = runSave();
+		inFlightSavePromise = currentPromise;
+		await currentPromise;
+		if (inFlightSavePromise === currentPromise) {
+			inFlightSavePromise = null;
 		}
 	}
 

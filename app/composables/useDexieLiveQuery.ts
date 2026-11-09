@@ -1,5 +1,5 @@
 import { liveQuery, type Observable, type Subscription } from 'dexie';
-import { ref, shallowRef, watch, onScopeDispose, type Ref, type ShallowRef, type WatchSource } from 'vue';
+import type { Ref, ShallowRef, WatchSource } from 'vue';
 
 export type DexieLiveQueryRef<T> = ShallowRef<T> & {
 	isLoading: Ref<boolean>;
