@@ -173,7 +173,7 @@ export function getApplicableHabitsForDate(
 				return false;
 			}
 		}
-		if (dateIso && h.createdAtIso.slice(0, 10) > dateIso) {
+		if (dateIso && options?.hasExistingEntry && h.createdAtIso.slice(0, 10) > dateIso) {
 			return false;
 		}
 		return true;
@@ -438,11 +438,7 @@ export function evaluateDayStatusColor(
 			const parent = habitById.get(h.parentId);
 			if ((!parent || parent.status !== 'active') && !isLogged) return false;
 		}
-		const hasChildren = habits.some(
-			(child) =>
-				child.parentId === h.id &&
-				(child.status === 'active' || loggedIds.has(child.id))
-		);
+		const hasChildren = habits.some((child) => child.parentId === h.id);
 		return !hasChildren;
 	});
 

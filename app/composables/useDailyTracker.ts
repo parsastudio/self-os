@@ -1,4 +1,4 @@
-import { ref, computed, watch, type Ref } from 'vue';
+import { ref, computed, watch, onScopeDispose, type Ref } from 'vue';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
@@ -58,6 +58,8 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const isDirty = ref(false);
 
 	let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let pendingSavePayload: SaveDailyEntryInput | null = null;
+	let activeDraftDateIso = dateIso.value;
 
 	const availableTags = computed(() => {
 		if (tagsRecords.value.length > 0) {
@@ -81,12 +83,19 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			tomorrowCadencePlans.isLoading
 		],
 		() => {
+			if (activeDraftDateIso !== dateIso.value && pendingSavePayload) {
+				void flushPendingSave();
+			}
 			if (
 				entry.isLoading.value ||
 				logs.isLoading.value ||
 				dayCadencePlans.isLoading.value ||
 				tomorrowCadencePlans.isLoading.value
 			) {
+				return;
+			}
+			activeDraftDateIso = dateIso.value;
+			if (pendingSavePayload && pendingSavePayload.dateIso === dateIso.value) {
 				return;
 			}
 			reflectionNote.value = entry.value?.reflectionNote ?? '';
@@ -259,6 +268,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	function scheduleAutoSave(delayMs = 0) {
 		isDirty.value = true;
 		saveState.value = 'saving';
+		pendingSavePayload = buildDailyInputObject();
 
 		if (autoSaveTimer) clearTimeout(autoSaveTimer);
 
@@ -277,18 +287,29 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			clearTimeout(autoSaveTimer);
 			autoSaveTimer = null;
 		}
-		if (!dateIso.value) return;
+		const payloadToSave = pendingSavePayload ?? (dateIso.value ? buildDailyInputObject() : null);
+		pendingSavePayload = null;
+		if (!payloadToSave) return;
 
 		saveState.value = 'saving';
 		try {
-			const payload = buildDailyInputObject();
-			await localRepo.daily.saveDailyEntry(payload);
-			isDirty.value = false;
-			saveState.value = 'saved';
+			await localRepo.daily.saveDailyEntry(payloadToSave);
+			if (payloadToSave.dateIso === dateIso.value) {
+				isDirty.value = false;
+				saveState.value = 'saved';
+			}
 		} catch {
-			saveState.value = 'error';
+			if (payloadToSave.dateIso === dateIso.value) {
+				saveState.value = 'error';
+			}
 		}
 	}
+
+	onScopeDispose(() => {
+		if (pendingSavePayload) {
+			void flushPendingSave();
+		}
+	});
 
 	function markAllOptimalFiveSecond() {
 		const nowIso = new Date().toISOString();
@@ -371,7 +392,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 						: Math.min(targetTier, maxChildTier);
 			setTierExplicit(child.id, effectiveTier);
 		}
-		setTierExplicit(parentId, targetTier);
+		setTierExplicit(parentId, null);
 	}
 
 	function clearDay() {

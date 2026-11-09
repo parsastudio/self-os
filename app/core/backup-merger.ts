@@ -388,8 +388,9 @@ export function computeSmartBackupMerge(
 		}
 	}
 
-	// 10. Reflection Tags (Deduplicate by normalized label)
+	// 10. Reflection Tags (Deduplicate by normalized label & avoid ID collisions)
 	const existingTagLabels = new Set(existing.reflectionTags.map((t) => normText(t.label)));
+	const usedTagIds = new Set(existing.reflectionTags.map((t) => t.id));
 	const reflectionTagsToUpsert: BackupReflectionTagRow[] = [];
 
 	for (const incTag of incoming.reflectionTags) {
@@ -397,8 +398,13 @@ export function computeSmartBackupMerge(
 		if (existingTagLabels.has(normLabel)) {
 			skippedDuplicatesCount++;
 		} else {
-			reflectionTagsToUpsert.push(incTag);
+			const safeId = usedTagIds.has(incTag.id) ? `tag:${normLabel}` : incTag.id;
+			reflectionTagsToUpsert.push({
+				...incTag,
+				id: safeId
+			});
 			existingTagLabels.add(normLabel);
+			usedTagIds.add(safeId);
 		}
 	}
 

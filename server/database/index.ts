@@ -173,6 +173,11 @@ async function bootstrapPostgreSqlSchema(): Promise<void> {
 			last_seen_at_iso TEXT NOT NULL
 		);
 
+		CREATE TABLE IF NOT EXISTS sync_state (
+			id TEXT PRIMARY KEY,
+			structural_version_iso TEXT NOT NULL
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_habits_parent_id ON habits(parent_id);
 		CREATE INDEX IF NOT EXISTS idx_habits_updated_at ON habits(updated_at_iso);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_cadence_plans_date_habit ON cadence_plans(date_iso, habit_id);

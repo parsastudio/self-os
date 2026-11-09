@@ -118,6 +118,14 @@ export function useLocalRepository() {
 
 				const allHabits = await db.habits.toArray();
 				const habitMap = new Map(allHabits.map((h) => [h.id, h]));
+				const existingDayLogs = await db.habitLogs.where('dateIso').equals(input.dateIso).toArray();
+				const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
+
+				for (const existingLog of existingDayLogs) {
+					if (!incomingHabitIds.has(existingLog.habitId)) {
+						await db.habitLogs.delete(existingLog.id);
+					}
+				}
 
 				for (const log of input.logs) {
 					const habit = habitMap.get(log.habitId);
@@ -754,6 +762,11 @@ export function useLocalRepository() {
 					.filter((m) => m.kind === 'SAVE_DAILY_ENTRY')
 					.map((m) => m.payload.dateIso)
 			);
+			const pendingCadenceDates = new Set(
+				pending
+					.filter((m) => m.kind === 'SAVE_CADENCE_PLAN')
+					.map((m) => m.payload.targetDateIso)
+			);
 
 			// Reconcile remote deletions for collections where items can be hard-deleted
 			const serverBookIds = new Set(ws.books.map((b) => b.id));
@@ -783,6 +796,13 @@ export function useLocalRepository() {
 				(id) => !serverEventIds.has(id) && !pendingIds.has(`event:${id}`)
 			);
 			if (eventsToDelete.length > 0) await db.calendarEvents.bulkDelete(eventsToDelete);
+
+			const serverPlanIds = new Set(ws.cadencePlans.map((c) => c.id));
+			const allLocalPlans = await db.cadencePlans.toArray();
+			const plansToDelete = allLocalPlans
+				.filter((p) => !serverPlanIds.has(p.id) && !pendingCadenceDates.has(p.dateIso))
+				.map((p) => p.id);
+			if (plansToDelete.length > 0) await db.cadencePlans.bulkDelete(plansToDelete);
 
 			// Upsert non-pending server entities
 			await db.habits.bulkPut(ws.habits.filter((h) => !pendingIds.has(`habit:${h.id}`)));
@@ -982,10 +1002,21 @@ export function useLocalRepository() {
 			db.notes,
 			db.calendarEvents,
 			db.lifecycleEvents,
-			db.reflectionTags
+			db.reflectionTags,
+			db.syncOutbox
 		], async () => {
+			const stagedMutations: SyncOutboxMutation[] = [];
+
 			if (merged.habitsToUpsert.length > 0) {
 				await db.habits.bulkPut(merged.habitsToUpsert);
+				for (const h of merged.habitsToUpsert) {
+					stagedMutations.push({
+						id: `habit:${h.id}`,
+						kind: 'UPSERT_HABIT',
+						queuedAtIso: nowIso,
+						payload: clonePlain(h)
+					});
+				}
 			}
 			if (merged.dailyEntriesToUpsert.length > 0) {
 				await db.dailyEntries.bulkPut(
@@ -1007,28 +1038,119 @@ export function useLocalRepository() {
 					}))
 				);
 			}
+			if (merged.dailyEntriesToUpsert.length > 0 || merged.habitLogsToUpsert.length > 0) {
+				const affectedDates = new Set<string>([
+					...merged.dailyEntriesToUpsert.map((e) => e.dateIso),
+					...merged.habitLogsToUpsert.map((l) => l.dateIso)
+				]);
+				for (const dateIso of affectedDates) {
+					const entryRec = await db.dailyEntries.get(dateIso);
+					const dayLogs = await db.habitLogs.where('dateIso').equals(dateIso).toArray();
+					if (entryRec) {
+						stagedMutations.push({
+							id: `daily:${dateIso}`,
+							kind: 'SAVE_DAILY_ENTRY',
+							queuedAtIso: nowIso,
+							payload: clonePlain({
+								dateIso,
+								dayStatus: entryRec.dayStatus,
+								reflectionNote: entryRec.reflectionNote,
+								journalText: entryRec.journalText,
+								tags: entryRec.tags,
+								updatedAtIso: entryRec.updatedAtIso,
+								logs: dayLogs
+							})
+						});
+					}
+				}
+			}
 			if (merged.cadencePlansToUpsert.length > 0) {
 				await db.cadencePlans.bulkPut(merged.cadencePlansToUpsert);
+				const affectedPlanDates = new Set(merged.cadencePlansToUpsert.map((p) => p.dateIso));
+				for (const targetDateIso of affectedPlanDates) {
+					const plansOnDate = await db.cadencePlans.where('dateIso').equals(targetDateIso).toArray();
+					stagedMutations.push({
+						id: `cadence:${targetDateIso}`,
+						kind: 'SAVE_CADENCE_PLAN',
+						queuedAtIso: nowIso,
+						payload: clonePlain({
+							targetDateIso,
+							items: plansOnDate.map((p) => ({
+								habitId: p.habitId,
+								plannedIntervals: p.plannedIntervals,
+								plannedMinutesPerInterval: p.plannedMinutesPerInterval,
+								cadenceWindowMinutes: p.cadenceWindowMinutes
+							}))
+						})
+					});
+				}
 			}
 			if (merged.booksToUpsert.length > 0) {
 				await db.books.bulkPut(merged.booksToUpsert);
+				for (const b of merged.booksToUpsert) {
+					stagedMutations.push({
+						id: `book:${b.id}`,
+						kind: 'UPSERT_BOOK',
+						queuedAtIso: nowIso,
+						payload: clonePlain(b)
+					});
+				}
 			}
 			if (merged.mediaToUpsert.length > 0) {
 				await db.media.bulkPut(merged.mediaToUpsert);
+				for (const m of merged.mediaToUpsert) {
+					stagedMutations.push({
+						id: `media:${m.id}`,
+						kind: 'UPSERT_MEDIA',
+						queuedAtIso: nowIso,
+						payload: clonePlain(m)
+					});
+				}
 			}
 			if (merged.notesToUpsert.length > 0) {
 				await db.notes.bulkPut(merged.notesToUpsert);
+				for (const n of merged.notesToUpsert) {
+					stagedMutations.push({
+						id: `note:${n.id}`,
+						kind: 'UPSERT_NOTE',
+						queuedAtIso: nowIso,
+						payload: clonePlain(n)
+					});
+				}
 			}
 			if (merged.calendarEventsToUpsert.length > 0) {
 				await db.calendarEvents.bulkPut(merged.calendarEventsToUpsert);
+				for (const ev of merged.calendarEventsToUpsert) {
+					stagedMutations.push({
+						id: `event:${ev.id}`,
+						kind: 'UPSERT_CALENDAR_EVENT',
+						queuedAtIso: nowIso,
+						payload: clonePlain(ev)
+					});
+				}
 			}
 			if (merged.lifecycleEventsToUpsert.length > 0) {
 				await db.lifecycleEvents.bulkPut(merged.lifecycleEventsToUpsert);
+				for (const lc of merged.lifecycleEventsToUpsert) {
+					stagedMutations.push({
+						id: `lifecycle:${lc.id}`,
+						kind: 'ADD_LIFECYCLE_EVENT',
+						queuedAtIso: nowIso,
+						payload: clonePlain(lc)
+					});
+				}
 			}
 			if (merged.reflectionTagsToUpsert.length > 0) {
 				await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
 			}
+			if (stagedMutations.length > 0) {
+				await db.syncOutbox.bulkPut(stagedMutations);
+			}
 		});
+
+		for (const listener of mutationStagedListeners) {
+			listener();
+		}
 
 		return {
 			addedOrUpdatedCount: merged.addedOrUpdatedCount,

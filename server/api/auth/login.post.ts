@@ -32,7 +32,14 @@ function pruneExpiredLoginAttempts(now: number): void {
 		}
 	}
 	if (failedLoginAttemptsByIp.size > MAX_TRACKED_IPS) {
-		const oldestKey = failedLoginAttemptsByIp.keys().next().value;
+		let oldestKey: string | null = null;
+		let oldestTimestamp = Infinity;
+		for (const [key, entry] of failedLoginAttemptsByIp.entries()) {
+			if (entry.lastAttemptMs < oldestTimestamp) {
+				oldestTimestamp = entry.lastAttemptMs;
+				oldestKey = key;
+			}
+		}
 		if (oldestKey) {
 			failedLoginAttemptsByIp.delete(oldestKey);
 		}

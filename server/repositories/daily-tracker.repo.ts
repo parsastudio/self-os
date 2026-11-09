@@ -86,7 +86,7 @@ export async function saveDailyEntryAndLogs(
 		if (isDailyEntryEmpty(input)) {
 			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
 			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
-			bumpServerStructuralVersion(entryUpdatedAtIso);
+			await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
 			return;
 		}
 
@@ -95,6 +95,14 @@ export async function saveDailyEntryAndLogs(
 			.from(habitLogs)
 			.where(eq(habitLogs.dateIso, input.dateIso));
 		const previousLogByHabitId = new Map(previousLogs.map((l) => [l.habitId, l]));
+		const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
+
+		for (const prevLog of previousLogs) {
+			if (!incomingHabitIds.has(prevLog.habitId)) {
+				await tx.delete(habitLogs).where(eq(habitLogs.id, prevLog.id));
+				await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
+			}
+		}
 
 		for (const log of input.logs) {
 			const habit = habitMap.get(log.habitId);
@@ -113,7 +121,7 @@ export async function saveDailyEntryAndLogs(
 			if (isUnloggedTiered || isUnscheduledAndUnloggedCadence) {
 				if (prev) {
 					await tx.delete(habitLogs).where(eq(habitLogs.id, prev.id));
-					bumpServerStructuralVersion(entryUpdatedAtIso);
+					await bumpServerStructuralVersion(entryUpdatedAtIso, tx);
 				}
 				continue;
 			}
@@ -223,7 +231,7 @@ export async function saveCadencePlansForDate(
 			if (item.plannedMinutesPerInterval <= 0) {
 				if (existing) {
 					await tx.delete(cadencePlans).where(eq(cadencePlans.id, existing.id));
-					bumpServerStructuralVersion(nowIso);
+					await bumpServerStructuralVersion(nowIso, tx);
 				}
 				continue;
 			}

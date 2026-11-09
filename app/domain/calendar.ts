@@ -124,6 +124,37 @@ export function jalaliSlashToIso(jalaliStr: string): string | null {
 	return jalaliPartsToIso({ jy, jm, jd });
 }
 
+export function validateJalaliDateRange(params: {
+	startedJalali?: string | null;
+	finishedJalali?: string | null;
+}): { valid: boolean; error?: string } {
+	const rawStart = params.startedJalali?.trim() ?? '';
+	const rawEnd = params.finishedJalali?.trim() ?? '';
+
+	let startIso: string | null = null;
+	let endIso: string | null = null;
+
+	if (rawStart) {
+		startIso = jalaliSlashToIso(rawStart);
+		if (!startIso) {
+			return { valid: false, error: 'فرمت تاریخ شروع معتبر نیست (مثال: ۱۴۰۴/۰۱/۱۵)' };
+		}
+	}
+
+	if (rawEnd) {
+		endIso = jalaliSlashToIso(rawEnd);
+		if (!endIso) {
+			return { valid: false, error: 'فرمت تاریخ پایان معتبر نیست (مثال: ۱۴۰۴/۰۱/۲۰)' };
+		}
+	}
+
+	if (startIso && endIso && endIso < startIso) {
+		return { valid: false, error: 'تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد' };
+	}
+
+	return { valid: true };
+}
+
 export function resolveCompletedRangeDates(params: {
 	startedJalali?: string | null;
 	finishedJalali?: string | null;

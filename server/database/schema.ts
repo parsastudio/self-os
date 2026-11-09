@@ -239,3 +239,8 @@ export const authSessions = pgTable(
 	},
 	(t) => [index('idx_auth_sessions_expires_at').on(t.expiresAtIso)]
 );
+
+export const syncState = pgTable('sync_state', {
+	id: text('id').primaryKey(),
+	structuralVersionIso: text('structural_version_iso').notNull()
+});

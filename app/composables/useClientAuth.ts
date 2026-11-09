@@ -100,7 +100,10 @@ export function useClientAuth() {
 			isAuthenticated.value = false;
 			isPasswordConfigured.value = serverPasswordConfigured ?? (record?.isPasswordConfigured ?? true);
 			if (record) {
-				await db.localAuth.delete('auth:session');
+				record.isAuthenticated = false;
+				record.isPasswordConfigured = isPasswordConfigured.value;
+				record.updatedAtIso = nowIso;
+				await db.localAuth.put(record);
 			}
 			isInitialized.value = true;
 			return {

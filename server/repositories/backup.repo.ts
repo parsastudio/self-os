@@ -49,9 +49,8 @@ export async function clearAllDatabaseRecords(): Promise<void> {
 	await ensureDatabaseReady();
 	await db.transaction(async (tx) => {
 		await truncateAllWorkspaceTables(tx);
+		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
-
-	bumpServerStructuralVersion();
 }
 
 export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount: number }> {
@@ -129,7 +128,7 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 		).length;
 	});
 
-	bumpServerStructuralVersion();
+	await bumpServerStructuralVersion();
 	return { removedRecordsCount: removed };
 }
 
@@ -185,19 +184,19 @@ export async function importDatabaseFromJson(
 			dailyEntries,
 			dailyEntries.dateIso,
 			merged.dailyEntriesToUpsert,
-			['id', 'dateIso']
+			['dateIso']
 		);
 		await batchUpsertRows(
 			habitLogs,
 			[habitLogs.dateIso, habitLogs.habitId],
 			merged.habitLogsToUpsert,
-			['id']
+			[]
 		);
 		await batchUpsertRows(
 			cadencePlans,
 			[cadencePlans.dateIso, cadencePlans.habitId],
 			merged.cadencePlansToUpsert,
-			['id']
+			[]
 		);
 		await batchUpsertRows(books, books.id, merged.booksToUpsert);
 		await batchUpsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
@@ -212,10 +211,10 @@ export async function importDatabaseFromJson(
 			reflectionTags,
 			reflectionTags.label,
 			merged.reflectionTagsToUpsert,
-			['id', 'label']
+			['label']
 		);
+		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
 
-	bumpServerStructuralVersion();
 	return { importedRecordsCount: totalImported, skippedDuplicatesCount };
 }

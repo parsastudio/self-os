@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { getTodayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
+import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, BOOK_STATUS_OPTIONS } from '~/domain/constants';
 import type { BookEntity, BookStatus, CreateBookInput, UpdateBookInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
@@ -39,6 +39,7 @@ const finishedJalali = ref(
 		: defaultJalaliToday
 );
 const notes = ref(props.editingBook?.notes ?? '');
+const validationError = ref<string | null>(null);
 
 const matchedSuggestion = computed(() =>
 	props.existingSuggestions.find(
@@ -59,6 +60,16 @@ function handleTitleChange(e: Event) {
 
 function handleSubmit() {
 	if (!title.value.trim() || props.isSubmitting) return;
+
+	const rangeCheck = validateJalaliDateRange({
+		startedJalali: startedJalali.value,
+		finishedJalali: finishedJalali.value
+	});
+	if (!rangeCheck.valid) {
+		validationError.value = rangeCheck.error ?? 'تاریخ وارد شده نامعتبر است';
+		return;
+	}
+	validationError.value = null;
 
 	if (props.editingBook) {
 		emit('submit', {
@@ -92,6 +103,13 @@ function handleSubmit() {
 		</template>
 
 		<form class="space-y-4 overflow-y-auto p-5 sm:p-6" @submit.prevent="handleSubmit">
+			<div
+				v-if="validationError"
+				class="rounded-2xl border border-failed-border bg-failed-soft px-4 py-2.5 text-xs font-extrabold text-failed"
+			>
+				{{ validationError }}
+			</div>
+
 			<div>
 				<div class="mb-1.5 flex items-center justify-between">
 					<label for="bk-title" class="block text-xs font-bold text-fg-secondary">نام کتاب</label>

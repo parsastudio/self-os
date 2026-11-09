@@ -51,6 +51,8 @@ const isMutatingDemoSeed = ref(false);
 const isChangingPassword = ref(false);
 const isConfirmingClearAll = ref(false);
 const isClearingAll = ref(false);
+const isLoggingOut = ref(false);
+const isConfirmingOfflineLogout = ref(false);
 
 const activeDemoHabitsCount = computed(
 	() => habits.value.filter((h) => isDemoRecordId(h.id)).length
@@ -267,18 +269,32 @@ async function handleChangePassword() {
 	}
 }
 
-async function handleLogout() {
+async function handleLogout(forceOfflineLogout = false) {
+	if (isLoggingOut.value) return;
+
+	const pendingMutations = await localRepo.getPendingMutations();
+	if (!navigator.onLine && pendingMutations.length > 0 && !forceOfflineLogout) {
+		isConfirmingOfflineLogout.value = true;
+		return;
+	}
+
+	isLoggingOut.value = true;
+	isConfirmingOfflineLogout.value = false;
+
 	try {
 		if (navigator.onLine) {
+			await syncEngine.syncNow({ checkRemoteUpdates: false });
 			await $fetch('/api/auth/logout', { method: 'POST' });
 		}
 	} catch {
-		// ignore
+		// ignore network errors during logout cleanup
+	} finally {
+		syncEngine.reset();
+		await clientAuth.logout();
+		await localRepo.clearLocalData();
+		isLoggingOut.value = false;
+		router.push('/login');
 	}
-	syncEngine.reset();
-	await clientAuth.logout();
-	await localRepo.clearLocalData();
-	router.push('/login');
 }
 </script>
 
@@ -487,14 +503,40 @@ async function handleLogout() {
 				</div>
 			</form>
 
-			<div class="flex items-center justify-end border-t border-border pt-4">
+			<div class="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-end">
+				<div
+					v-if="isConfirmingOfflineLogout"
+					class="flex flex-1 flex-col justify-between gap-2.5 rounded-2xl border border-failed-border bg-failed-soft p-3.5 text-xs font-extrabold text-failed sm:flex-row sm:items-center"
+				>
+					<span>شما آفلاین هستید و تغییرات ارسال‌نشده دارید؛ با خروج از حساب، داده‌های محلی پاک می‌شوند.</span>
+					<div class="flex shrink-0 items-center gap-2">
+						<button
+							type="button"
+							class="h-8 rounded-xl border border-border bg-surface px-3 text-xs font-bold text-fg-secondary hover:text-fg"
+							@click="isConfirmingOfflineLogout = false"
+						>
+							انصراف
+						</button>
+						<button
+							type="button"
+							:disabled="isLoggingOut"
+							class="h-8 rounded-xl bg-failed px-3.5 text-xs font-black text-on-solid"
+							@click="handleLogout(true)"
+						>
+							خروج و پاک‌سازی
+						</button>
+					</div>
+				</div>
+
 				<button
+					v-else
 					type="button"
-					class="flex h-10 items-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-extrabold text-failed transition hover:opacity-90 active:scale-95"
-					@click="handleLogout"
+					:disabled="isLoggingOut"
+					class="flex h-10 items-center justify-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-extrabold text-failed transition hover:opacity-90 active:scale-95 disabled:opacity-50"
+					@click="handleLogout(false)"
 				>
 					<LogOut class="h-4 w-4" />
-					<span>خروج از حساب</span>
+					<span>{{ isLoggingOut ? 'در حال همگام‌سازی و خروج...' : 'خروج از حساب' }}</span>
 				</button>
 			</div>
 		</section>

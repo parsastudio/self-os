@@ -9,8 +9,8 @@ export function detectNoteSmartSignals(text: string): {
 	hasNumber: boolean;
 	firstUrl: string | null;
 } {
+	const linkMatch = text.match(LINK_PATTERN);
 	const normalized = normalizeDigits(text);
-	const linkMatch = normalized.match(LINK_PATTERN);
 	const rawLink = linkMatch ? linkMatch[0].replace(/[.,،؛!؟)+]+$/, '') : null;
 	const candidateUrl = rawLink
 		? /^https?:\/\//i.test(rawLink)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { getTodayIso, isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
+import { getTodayIso, isoToJalaliSlash, toPersianDigits, validateJalaliDateRange } from '~/domain/calendar';
 import { BOOK_RATING_OPTIONS, MEDIA_CATEGORY_OPTIONS, MEDIA_STATUS_OPTIONS } from '~/domain/constants';
 import type { CreateMediaInput, MediaCategory, MediaEntity, MediaStatus, UpdateMediaInput } from '~/domain/schemas';
 import BaseModal from '~/components/ui/BaseModal.vue';
@@ -42,6 +42,7 @@ const finishedJalali = ref(
 			: ''
 );
 const notes = ref(props.editingMedia?.notes ?? '');
+const validationError = ref<string | null>(null);
 
 const matchedSuggestion = computed(() =>
 	props.existingSuggestions.find(
@@ -62,6 +63,16 @@ function handleTitleChange(e: Event) {
 
 function handleSubmit() {
 	if (!title.value.trim() || props.isSubmitting) return;
+
+	const rangeCheck = validateJalaliDateRange({
+		startedJalali: startedJalali.value,
+		finishedJalali: finishedJalali.value
+	});
+	if (!rangeCheck.valid) {
+		validationError.value = rangeCheck.error ?? 'تاریخ وارد شده نامعتبر است';
+		return;
+	}
+	validationError.value = null;
 
 	if (props.editingMedia) {
 		emit('submit', {
@@ -95,6 +106,13 @@ function handleSubmit() {
 		</template>
 
 		<form class="space-y-4 overflow-y-auto p-5 sm:p-6" @submit.prevent="handleSubmit">
+			<div
+				v-if="validationError"
+				class="rounded-2xl border border-failed-border bg-failed-soft px-4 py-2.5 text-xs font-extrabold text-failed"
+			>
+				{{ validationError }}
+			</div>
+
 			<div>
 				<span class="mb-1.5 block text-xs font-bold text-fg-secondary">نوع اثر</span>
 				<div class="grid grid-cols-4 gap-1.5 rounded-2xl border border-border bg-elevated p-1">
