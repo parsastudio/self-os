@@ -1,14 +1,23 @@
 import crypto from 'node:crypto';
-import util from 'node:util';
-import { eq, lt, ne } from 'drizzle-orm';
+import { eq, inArray, lt, notInArray } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '../database/index';
 import { appAuth, authSessions } from '../database/schema';
-
-const scryptAsync = util.promisify(crypto.scrypt);
 
 const AUTH_SINGLETON_ID = 'singleton';
 const SESSION_DURATION_DAYS = 365;
 const SESSION_DURATION_MS = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
+
+const SCRYPT_V2_PREFIX = 'scrypt$v2$';
+const SCRYPT_V2_PARAMS = {
+	N: 65536,
+	r: 8,
+	p: 1,
+	maxmem: 128 * 1024 * 1024
+} as const;
+const SCRYPT_KEYLEN = 64;
+const PASSWORD_SALT_BYTES = 32;
+const SESSION_TOKEN_HEX_REGEX = /^[a-f0-9]{64}$/i;
+const SESSION_HMAC_DOMAIN_KEY = 'newlife-personal-os-session-v2-domain-key';
 
 export const SESSION_COOKIE_NAME = 'newlife_session';
 export const SESSION_MAX_AGE_SECONDS = SESSION_DURATION_DAYS * 24 * 60 * 60;
@@ -23,12 +32,53 @@ export function getSessionCookieOptions(isSecureCookie: boolean) {
 	};
 }
 
-async function hashPasswordWithSalt(password: string, saltHex: string): Promise<string> {
-	const derivedKey = (await scryptAsync(password, Buffer.from(saltHex, 'hex'), 64)) as Buffer;
+function runScryptAsync(
+	password: string,
+	saltBuffer: Buffer,
+	keylen: number,
+	options?: crypto.ScryptOptions
+): Promise<Buffer> {
+	return new Promise((resolve, reject) => {
+		const callback = (err: Error | null, derivedKey: Buffer) => {
+			if (err) reject(err);
+			else resolve(derivedKey);
+		};
+		if (options) {
+			crypto.scrypt(password, saltBuffer, keylen, options, callback);
+		} else {
+			crypto.scrypt(password, saltBuffer, keylen, callback);
+		}
+	});
+}
+
+async function hashPasswordV2(password: string, saltHex: string): Promise<string> {
+	const normalizedPassword = password.normalize('NFKC');
+	const derivedKey = await runScryptAsync(
+		normalizedPassword,
+		Buffer.from(saltHex, 'hex'),
+		SCRYPT_KEYLEN,
+		SCRYPT_V2_PARAMS
+	);
+	return `${SCRYPT_V2_PREFIX}${derivedKey.toString('hex')}`;
+}
+
+async function hashPasswordLegacyV1(password: string, saltHex: string): Promise<string> {
+	const derivedKey = await runScryptAsync(password, Buffer.from(saltHex, 'hex'), SCRYPT_KEYLEN);
 	return derivedKey.toString('hex');
 }
 
-function hashSessionToken(rawToken: string): string {
+function isWellFormedSessionToken(rawToken: string): boolean {
+	return SESSION_TOKEN_HEX_REGEX.test(rawToken);
+}
+
+function hashSessionTokenV2(rawToken: string): string {
+	return crypto
+		.createHmac('sha256', SESSION_HMAC_DOMAIN_KEY)
+		.update(rawToken.toLowerCase())
+		.digest('hex');
+}
+
+function hashSessionTokenLegacyV1(rawToken: string): string {
 	return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
@@ -44,8 +94,8 @@ export async function isPasswordConfigured(): Promise<boolean> {
 
 export async function setupInitialPassword(password: string): Promise<void> {
 	await ensureDatabaseReady();
-	const saltHex = crypto.randomBytes(16).toString('hex');
-	const passwordHash = await hashPasswordWithSalt(password, saltHex);
+	const saltHex = crypto.randomBytes(PASSWORD_SALT_BYTES).toString('hex');
+	const passwordHash = await hashPasswordV2(password, saltHex);
 	const nowIso = new Date().toISOString();
 
 	await db.transaction(async (tx) => {
@@ -79,12 +129,46 @@ export async function verifyPassword(password: string): Promise<boolean> {
 	const record = rows[0];
 	if (!record) return false;
 
-	const candidateHash = await hashPasswordWithSalt(password, record.passwordSalt);
+	const isV2 = record.passwordHash.startsWith(SCRYPT_V2_PREFIX);
+
+	if (isV2) {
+		const storedHex = record.passwordHash.slice(SCRYPT_V2_PREFIX.length);
+		const candidateFull = await hashPasswordV2(password, record.passwordSalt);
+		const candidateHex = candidateFull.slice(SCRYPT_V2_PREFIX.length);
+
+		const expectedBuf = Buffer.from(storedHex, 'hex');
+		const candidateBuf = Buffer.from(candidateHex, 'hex');
+
+		if (expectedBuf.length !== candidateBuf.length) return false;
+		return crypto.timingSafeEqual(expectedBuf, candidateBuf);
+	}
+
+	// Legacy v1 verification + seamless background upgrade to scrypt$v2
+	const legacyCandidateHex = await hashPasswordLegacyV1(password, record.passwordSalt);
 	const expectedBuf = Buffer.from(record.passwordHash, 'hex');
-	const candidateBuf = Buffer.from(candidateHash, 'hex');
+	const candidateBuf = Buffer.from(legacyCandidateHex, 'hex');
 
 	if (expectedBuf.length !== candidateBuf.length) return false;
-	return crypto.timingSafeEqual(expectedBuf, candidateBuf);
+	const isLegacyMatch = crypto.timingSafeEqual(expectedBuf, candidateBuf);
+
+	if (isLegacyMatch) {
+		try {
+			const newSaltHex = crypto.randomBytes(PASSWORD_SALT_BYTES).toString('hex');
+			const upgradedHash = await hashPasswordV2(password, newSaltHex);
+			await db
+				.update(appAuth)
+				.set({
+					passwordHash: upgradedHash,
+					passwordSalt: newSaltHex,
+					updatedAtIso: new Date().toISOString()
+				})
+				.where(eq(appAuth.id, AUTH_SINGLETON_ID));
+		} catch {
+			// Ignore non-fatal background rehash errors
+		}
+	}
+
+	return isLegacyMatch;
 }
 
 export async function changeMasterPassword(
@@ -92,8 +176,8 @@ export async function changeMasterPassword(
 	keepRawToken?: string | null
 ): Promise<void> {
 	await ensureDatabaseReady();
-	const saltHex = crypto.randomBytes(16).toString('hex');
-	const passwordHash = await hashPasswordWithSalt(newPassword, saltHex);
+	const saltHex = crypto.randomBytes(PASSWORD_SALT_BYTES).toString('hex');
+	const passwordHash = await hashPasswordV2(newPassword, saltHex);
 	const nowIso = new Date().toISOString();
 
 	await db.transaction(async (tx) => {
@@ -106,9 +190,12 @@ export async function changeMasterPassword(
 			})
 			.where(eq(appAuth.id, AUTH_SINGLETON_ID));
 
-		if (keepRawToken) {
-			const currentSessionId = hashSessionToken(keepRawToken);
-			await tx.delete(authSessions).where(ne(authSessions.id, currentSessionId));
+		if (keepRawToken && isWellFormedSessionToken(keepRawToken)) {
+			const preserveIds = [
+				hashSessionTokenV2(keepRawToken),
+				hashSessionTokenLegacyV1(keepRawToken)
+			];
+			await tx.delete(authSessions).where(notInArray(authSessions.id, preserveIds));
 		} else {
 			await tx.delete(authSessions);
 		}
@@ -128,7 +215,7 @@ export async function createAuthSession(): Promise<{
 	await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 
 	const rawToken = crypto.randomBytes(32).toString('hex');
-	const sessionId = hashSessionToken(rawToken);
+	const sessionId = hashSessionTokenV2(rawToken);
 
 	await db.insert(authSessions).values({
 		id: sessionId,
@@ -150,13 +237,17 @@ export async function validateAndExtendSession(
 }> {
 	await ensureDatabaseReady();
 	const now = new Date();
+	if (!isWellFormedSessionToken(rawToken)) {
+		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
+	}
 	const nowIso = now.toISOString();
-	const sessionId = hashSessionToken(rawToken);
+	const v2SessionId = hashSessionTokenV2(rawToken);
+	const legacySessionId = hashSessionTokenLegacyV1(rawToken);
 
 	const rows = await db
 		.select()
 		.from(authSessions)
-		.where(eq(authSessions.id, sessionId))
+		.where(inArray(authSessions.id, [v2SessionId, legacySessionId]))
 		.limit(1);
 
 	const session = rows[0];
@@ -165,7 +256,7 @@ export async function validateAndExtendSession(
 	}
 
 	if (session.expiresAtIso <= nowIso) {
-		await db.delete(authSessions).where(eq(authSessions.id, sessionId));
+		await db.delete(authSessions).where(eq(authSessions.id, session.id));
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 
@@ -173,15 +264,30 @@ export async function validateAndExtendSession(
 	const lastSeenMs = new Date(session.lastSeenAtIso).getTime();
 	const hoursSinceLastSeen = (now.getTime() - lastSeenMs) / (1000 * 60 * 60);
 
-	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1;
-	if (shouldRefreshCookie) {
+	const isLegacySessionId = session.id === legacySessionId && session.id !== v2SessionId;
+	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1 || isLegacySessionId;
+
+	if (isLegacySessionId) {
+		await db.transaction(async (tx) => {
+			await tx.delete(authSessions).where(eq(authSessions.id, legacySessionId));
+			await tx
+				.insert(authSessions)
+				.values({
+					id: v2SessionId,
+					createdAtIso: session.createdAtIso,
+					expiresAtIso: newExpiresAt.toISOString(),
+					lastSeenAtIso: nowIso
+				})
+				.onConflictDoNothing();
+		});
+	} else if (shouldRefreshCookie) {
 		await db
 			.update(authSessions)
 			.set({
 				expiresAtIso: newExpiresAt.toISOString(),
 				lastSeenAtIso: nowIso
 			})
-			.where(eq(authSessions.id, sessionId));
+			.where(eq(authSessions.id, session.id));
 	}
 
 	return {
@@ -192,7 +298,8 @@ export async function validateAndExtendSession(
 }
 
 export async function revokeAuthSession(rawToken: string): Promise<void> {
+	if (!isWellFormedSessionToken(rawToken)) return;
 	await ensureDatabaseReady();
-	const sessionId = hashSessionToken(rawToken);
-	await db.delete(authSessions).where(eq(authSessions.id, sessionId));
+	const candidateIds = [hashSessionTokenV2(rawToken), hashSessionTokenLegacyV1(rawToken)];
+	await db.delete(authSessions).where(inArray(authSessions.id, candidateIds));
 }

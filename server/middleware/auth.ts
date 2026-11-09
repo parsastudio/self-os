@@ -1,4 +1,11 @@
-import { defineEventHandler, getCookie, setCookie, deleteCookie, createError } from 'h3';
+import {
+	defineEventHandler,
+	getCookie,
+	setCookie,
+	deleteCookie,
+	setResponseHeaders,
+	createError
+} from 'h3';
 import {
 	isPasswordConfigured,
 	validateAndExtendSession,
@@ -7,6 +14,13 @@ import {
 } from '../repositories/auth.repo';
 
 export default defineEventHandler(async (event) => {
+	setResponseHeaders(event, {
+		'X-Content-Type-Options': 'nosniff',
+		'X-Frame-Options': 'DENY',
+		'Referrer-Policy': 'strict-origin-when-cross-origin',
+		'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
+	});
+
 	const pathname = event.path || '';
 
 	if (!pathname.startsWith('/api/')) {

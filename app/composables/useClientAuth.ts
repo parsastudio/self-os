@@ -1,7 +1,12 @@
 import { ref } from 'vue';
 import { getAppDatabase, type LocalAuthRecord } from '~/composables/useAppDatabase';
 
-function generateRandomSalt(length = 16): Uint8Array {
+const PBKDF2_V2_PREFIX = 'pbkdf2_v2:';
+const PBKDF2_V2_ITERATIONS = 600000;
+const PBKDF2_LEGACY_ITERATIONS = 100000;
+const CLIENT_SALT_BYTES = 32;
+
+function generateRandomSalt(length = CLIENT_SALT_BYTES): Uint8Array {
 	const salt = new Uint8Array(length);
 	crypto.getRandomValues(salt);
 	return salt;
@@ -21,11 +26,16 @@ function hexToBytes(hex: string): Uint8Array {
 	return bytes;
 }
 
-async function deriveVerifierHex(password: string, salt: Uint8Array): Promise<string> {
+async function deriveVerifierHex(
+	password: string,
+	salt: Uint8Array,
+	iterations = PBKDF2_V2_ITERATIONS
+): Promise<string> {
 	const enc = new TextEncoder();
+	const normalizedPassword = password.normalize('NFKC');
 	const keyMaterial = await crypto.subtle.importKey(
 		'raw',
-		enc.encode(password),
+		enc.encode(normalizedPassword),
 		{ name: 'PBKDF2' },
 		false,
 		['deriveBits']
@@ -35,7 +45,7 @@ async function deriveVerifierHex(password: string, salt: Uint8Array): Promise<st
 		{
 			name: 'PBKDF2',
 			salt: salt as BufferSource,
-			iterations: 100000,
+			iterations,
 			hash: 'SHA-256'
 		},
 		keyMaterial,
@@ -141,9 +151,9 @@ export function useClientAuth() {
 		const db = getAppDatabase();
 		if (!db) return;
 
-		const salt = generateRandomSalt(16);
+		const salt = generateRandomSalt(CLIENT_SALT_BYTES);
 		const saltHex = bytesToHex(salt);
-		const verifierHex = await deriveVerifierHex(password, salt);
+		const verifierHex = await deriveVerifierHex(password, salt, PBKDF2_V2_ITERATIONS);
 		const now = new Date();
 		const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
 
@@ -153,7 +163,7 @@ export function useClientAuth() {
 			isPasswordConfigured: true,
 			expiresAtIso: expiresAt.toISOString(),
 			verifierSaltHex: saltHex,
-			passwordVerifierHex: verifierHex,
+			passwordVerifierHex: `${PBKDF2_V2_PREFIX}${verifierHex}`,
 			updatedAtIso: now.toISOString()
 		};
 
@@ -178,15 +188,32 @@ export function useClientAuth() {
 			};
 		}
 
-		const salt = hexToBytes(record.verifierSaltHex);
-		const candidateVerifier = await deriveVerifierHex(password, salt);
+		const isV2 = record.passwordVerifierHex.startsWith(PBKDF2_V2_PREFIX);
+		const expectedHex = isV2
+			? record.passwordVerifierHex.slice(PBKDF2_V2_PREFIX.length)
+			: record.passwordVerifierHex;
+		const iterations = isV2 ? PBKDF2_V2_ITERATIONS : PBKDF2_LEGACY_ITERATIONS;
 
-		if (!timingSafeEqual(candidateVerifier, record.passwordVerifierHex)) {
+		const salt = hexToBytes(record.verifierSaltHex);
+		const candidateVerifier = await deriveVerifierHex(password, salt, iterations);
+
+		if (!timingSafeEqual(candidateVerifier, expectedHex)) {
 			return { success: false, error: 'رمز عبور وارد شده نادرست است' };
 		}
 
 		const now = new Date();
 		const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+		if (!isV2) {
+			const upgradedSalt = generateRandomSalt(CLIENT_SALT_BYTES);
+			const upgradedVerifier = await deriveVerifierHex(
+				password,
+				upgradedSalt,
+				PBKDF2_V2_ITERATIONS
+			);
+			record.verifierSaltHex = bytesToHex(upgradedSalt);
+			record.passwordVerifierHex = `${PBKDF2_V2_PREFIX}${upgradedVerifier}`;
+		}
 
 		record.isAuthenticated = true;
 		record.expiresAtIso = expiresAt.toISOString();
