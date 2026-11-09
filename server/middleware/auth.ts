@@ -3,8 +3,11 @@ import {
 	getCookie,
 	setCookie,
 	deleteCookie,
+	getRequestHeader,
+	getRequestHost,
 	setResponseHeaders,
-	createError
+	createError,
+	type H3Event
 } from 'h3';
 import {
 	isPasswordConfigured,
@@ -13,6 +16,41 @@ import {
 	resolveIsSecureCookie,
 	SESSION_COOKIE_NAME
 } from '~~/server/repositories/auth.repo';
+
+function verifyCsrfProtection(event: H3Event): void {
+	const secFetchSite = getRequestHeader(event, 'sec-fetch-site')?.trim().toLowerCase();
+	if (secFetchSite === 'cross-site') {
+		throw createError({
+			statusCode: 403,
+			statusMessage: 'درخواست غیرمجاز از دامنه خارجی مسدود شد'
+		});
+	}
+
+	const originHeader = getRequestHeader(event, 'origin')?.trim();
+	if (originHeader && originHeader !== 'null') {
+		try {
+			const originUrl = new URL(originHeader);
+			const requestHost = getRequestHost(event, { xForwardedHost: true })
+				?.split(',')[0]
+				?.trim()
+				.toLowerCase();
+			if (requestHost && originUrl.host.toLowerCase() !== requestHost) {
+				throw createError({
+					statusCode: 403,
+					statusMessage: 'عدم تطابق دامنه مبدا درخواست (CSRF Protection)'
+				});
+			}
+		} catch (err) {
+			if (err && typeof err === 'object' && 'statusCode' in err) {
+				throw err;
+			}
+			throw createError({
+				statusCode: 403,
+				statusMessage: 'هدر Origin درخواست نامعتبر است'
+			});
+		}
+	}
+}
 
 export default defineEventHandler(async (event) => {
 	setResponseHeaders(event, {
@@ -26,6 +64,11 @@ export default defineEventHandler(async (event) => {
 
 	if (!pathname.startsWith('/api/')) {
 		return;
+	}
+
+	const method = (event.method || 'GET').toUpperCase();
+	if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+		verifyCsrfProtection(event);
 	}
 
 	const isPublicAuthApi =
