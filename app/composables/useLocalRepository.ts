@@ -153,7 +153,7 @@ export function useLocalRepository() {
 					dateIso: input.dateIso,
 					dayStatus: input.dayStatus,
 					reflectionNote: input.reflectionNote,
-					journalText: input.journalText?.trim() || null,
+					journalText: input.journalText?.trim() ? input.journalText : null,
 					tags: [...input.tags],
 					updatedAtIso: nowIso
 				};

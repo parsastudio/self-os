@@ -75,13 +75,14 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	watch(
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
-			if (activeDraftDateIso !== dateIso.value) {
+			const isDateChanged = activeDraftDateIso !== dateIso.value;
+			if (isDateChanged) {
 				if (isDirty.value && !pendingSavePayload) {
 					pendingSavePayload = {
 						dateIso: activeDraftDateIso,
 						dayStatus: computedDayStatus.value,
 						reflectionNote: reflectionNote.value,
-						journalText: journalText.value.trim() || null,
+						journalText: journalText.value.trim() ? journalText.value : null,
 						tags: [...selectedTags.value],
 						updatedAtIso: new Date().toISOString(),
 						logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
@@ -98,8 +99,24 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			if (pendingSavePayload && pendingSavePayload.dateIso === dateIso.value) {
 				return;
 			}
-			reflectionNote.value = entry.value?.reflectionNote ?? '';
-			journalText.value = entry.value?.journalText ?? '';
+
+			const incomingReflection = entry.value?.reflectionNote ?? '';
+			const incomingJournal = entry.value?.journalText ?? '';
+
+			if (
+				isDateChanged ||
+				(!isDirty.value && reflectionNote.value.trim() !== incomingReflection.trim())
+			) {
+				reflectionNote.value = incomingReflection;
+			}
+
+			if (
+				isDateChanged ||
+				(!isDirty.value && journalText.value.trim() !== incomingJournal.trim())
+			) {
+				journalText.value = incomingJournal;
+			}
+
 			selectedTags.value = entry.value?.tags ? [...entry.value.tags] : [];
 			manualDayStatus.value = null;
 
@@ -296,7 +313,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			dateIso: dateIso.value,
 			dayStatus: computedDayStatus.value,
 			reflectionNote: reflectionNote.value,
-			journalText: journalText.value.trim() || null,
+			journalText: journalText.value.trim() ? journalText.value : null,
 			tags: [...selectedTags.value],
 			updatedAtIso: new Date().toISOString(),
 			logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))

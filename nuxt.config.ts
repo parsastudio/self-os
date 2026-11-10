@@ -84,8 +84,9 @@ export default defineNuxtConfig({
       cleanupOutdatedCaches: true,
       clientsClaim: true,
       skipWaiting: true,
-      navigateFallback: '/',
+      navigateFallback: '/index.html',
       navigateFallbackDenylist: [/^\/api\//],
+      ignoreURLParametersMatching: [/.*/],
       maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
     },
     client: {

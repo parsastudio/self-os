@@ -2,7 +2,7 @@ import { getAppDatabase } from '~/composables/useAppDatabase';
 import type { LocalAuthRecord } from '~/domain/schemas';
 
 const PBKDF2_V2_PREFIX = 'pbkdf2_v2:';
-const PBKDF2_V2_ITERATIONS = 600000;
+const PBKDF2_V2_ITERATIONS = 120000;
 const PBKDF2_LEGACY_ITERATIONS = 100000;
 const CLIENT_SALT_BYTES = 32;
 
@@ -87,30 +87,17 @@ async function computeSessionSignatureHex(params: {
 	return bytesToHex(new Uint8Array(sigBuffer));
 }
 
-async function verifyOfflineRecordIntegrity(record: LocalAuthRecord): Promise<boolean> {
-	if (
-		!record.isAuthenticated ||
-		!record.passwordVerifierHex ||
-		!record.verifierSaltHex ||
-		record.verifierSaltHex.length < 32
-	) {
-		return false;
-	}
-	if (!record.sessionSignatureHex) {
-		return false;
-	}
-	const expectedSig = await computeSessionSignatureHex({
-		verifierHexWithPrefix: record.passwordVerifierHex,
-		verifierSaltHex: record.verifierSaltHex,
-		expiresAtIso: record.expiresAtIso
-	});
-	return timingSafeEqual(record.sessionSignatureHex, expectedSig);
+function hasValidLocalSession(record: LocalAuthRecord | undefined, nowIso: string): record is LocalAuthRecord {
+	if (!record || !record.isAuthenticated) return false;
+	if (!record.expiresAtIso || record.expiresAtIso <= nowIso) return false;
+	return Boolean(record.passwordVerifierHex && record.verifierSaltHex);
 }
 
 const isAuthenticated = ref(false);
 const isPasswordConfigured = ref(true);
 const isInitialized = ref(false);
 let hasVerifiedWithServerInSession = false;
+let backgroundCheckInFlight = false;
 
 export function useClientAuth() {
 
@@ -130,7 +117,12 @@ export function useClientAuth() {
 			return { isAuthenticated: false, isPasswordConfigured: true };
 		}
 
-		const record = await db.localAuth.get('auth:session');
+		let record: LocalAuthRecord | undefined;
+		try {
+			record = await db.localAuth.get('auth:session');
+		} catch {
+			record = undefined;
+		}
 		const nowIso = new Date().toISOString();
 
 		if (serverAuthenticated === true) {
@@ -140,18 +132,16 @@ export function useClientAuth() {
 				const newExpiresIso = new Date(
 					Date.now() + 365 * 24 * 60 * 60 * 1000
 				).toISOString();
-				const sig = await computeSessionSignatureHex({
-					verifierHexWithPrefix: record.passwordVerifierHex,
-					verifierSaltHex: record.verifierSaltHex,
-					expiresAtIso: newExpiresIso
-				});
-				await db.localAuth.put({
-					...record,
-					isAuthenticated: true,
-					expiresAtIso: newExpiresIso,
-					sessionSignatureHex: sig,
-					updatedAtIso: nowIso
-				});
+				try {
+					await db.localAuth.put({
+						...record,
+						isAuthenticated: true,
+						expiresAtIso: newExpiresIso,
+						updatedAtIso: nowIso
+					});
+				} catch {
+					// Ignore non-fatal storage write errors
+				}
 			}
 			isInitialized.value = true;
 			return {
@@ -165,13 +155,17 @@ export function useClientAuth() {
 			isPasswordConfigured.value =
 				serverPasswordConfigured ?? (record?.isPasswordConfigured ?? true);
 			if (record) {
-				await db.localAuth.put({
-					...record,
-					isAuthenticated: false,
-					isPasswordConfigured: isPasswordConfigured.value,
-					sessionSignatureHex: undefined,
-					updatedAtIso: nowIso
-				});
+				try {
+					await db.localAuth.put({
+						...record,
+						isAuthenticated: false,
+						isPasswordConfigured: isPasswordConfigured.value,
+						sessionSignatureHex: undefined,
+						updatedAtIso: nowIso
+					});
+				} catch {
+					// Ignore non-fatal storage write errors
+				}
 			}
 			isInitialized.value = true;
 			return {
@@ -180,25 +174,7 @@ export function useClientAuth() {
 			};
 		}
 
-		if (
-			record &&
-			record.isAuthenticated &&
-			record.expiresAtIso > nowIso &&
-			(await verifyOfflineRecordIntegrity(record))
-		) {
-			const newExpiresIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-			const sig = await computeSessionSignatureHex({
-				verifierHexWithPrefix: record.passwordVerifierHex,
-				verifierSaltHex: record.verifierSaltHex,
-				expiresAtIso: newExpiresIso
-			});
-			await db.localAuth.put({
-				...record,
-				expiresAtIso: newExpiresIso,
-				sessionSignatureHex: sig,
-				updatedAtIso: nowIso
-			});
-
+		if (hasValidLocalSession(record, nowIso)) {
 			isAuthenticated.value = true;
 			isPasswordConfigured.value = record.isPasswordConfigured;
 			isInitialized.value = true;
@@ -273,12 +249,24 @@ export function useClientAuth() {
 		const expectedHex = isV2
 			? record.passwordVerifierHex.slice(PBKDF2_V2_PREFIX.length)
 			: record.passwordVerifierHex;
-		const iterations = isV2 ? PBKDF2_V2_ITERATIONS : PBKDF2_LEGACY_ITERATIONS;
 
 		const salt = hexToBytes(record.verifierSaltHex);
-		const candidateVerifier = await deriveVerifierHex(password, salt, iterations);
+		let isMatch = false;
 
-		if (!timingSafeEqual(candidateVerifier, expectedHex)) {
+		if (isV2) {
+			const candidateFast = await deriveVerifierHex(password, salt, PBKDF2_V2_ITERATIONS);
+			if (timingSafeEqual(candidateFast, expectedHex)) {
+				isMatch = true;
+			} else {
+				const candidateOldV2 = await deriveVerifierHex(password, salt, 600000);
+				isMatch = timingSafeEqual(candidateOldV2, expectedHex);
+			}
+		} else {
+			const candidateLegacy = await deriveVerifierHex(password, salt, PBKDF2_LEGACY_ITERATIONS);
+			isMatch = timingSafeEqual(candidateLegacy, expectedHex);
+		}
+
+		if (!isMatch) {
 			return { success: false, error: 'رمز عبور وارد شده نادرست است' };
 		}
 
@@ -315,6 +303,27 @@ export function useClientAuth() {
 		return { success: true };
 	}
 
+	function verifyServerStatusInBackground(): void {
+		if (!import.meta.client || !navigator.onLine || hasVerifiedWithServerInSession || backgroundCheckInFlight) {
+			return;
+		}
+		backgroundCheckInFlight = true;
+		$fetch<{
+			isAuthenticated: boolean;
+			isPasswordConfigured: boolean;
+		}>('/api/auth/status', { timeout: 4000 })
+			.then(async (data) => {
+				hasVerifiedWithServerInSession = true;
+				await checkAuth(data.isAuthenticated, data.isPasswordConfigured);
+			})
+			.catch(() => {
+				// Keep offline local session intact when server is unreachable
+			})
+			.finally(() => {
+				backgroundCheckInFlight = false;
+			});
+	}
+
 	async function ensureSessionChecked(): Promise<{
 		isAuthenticated: boolean;
 		isPasswordConfigured: boolean;
@@ -326,31 +335,35 @@ export function useClientAuth() {
 			};
 		}
 
-		if (isInitialized.value && (hasVerifiedWithServerInSession || !navigator.onLine)) {
+		if (isInitialized.value) {
+			verifyServerStatusInBackground();
 			return {
 				isAuthenticated: isAuthenticated.value,
 				isPasswordConfigured: isPasswordConfigured.value
 			};
 		}
 
-		let serverAuth: boolean | undefined;
-		let serverPasswordConfigured: boolean | undefined;
+		const localState = await checkAuth();
 
-		try {
-			if (navigator.onLine) {
+		if (localState.isAuthenticated) {
+			verifyServerStatusInBackground();
+			return localState;
+		}
+
+		if (navigator.onLine && !hasVerifiedWithServerInSession) {
+			try {
 				const data = await $fetch<{
 					isAuthenticated: boolean;
 					isPasswordConfigured: boolean;
-				}>('/api/auth/status');
-				serverAuth = data.isAuthenticated;
-				serverPasswordConfigured = data.isPasswordConfigured;
+				}>('/api/auth/status', { timeout: 3500 });
 				hasVerifiedWithServerInSession = true;
+				return await checkAuth(data.isAuthenticated, data.isPasswordConfigured);
+			} catch {
+				// Ignore network timeout/offline and return local state immediately
 			}
-		} catch {
-			// Fallback to local IndexedDB session when offline or unreachable
 		}
 
-		return checkAuth(serverAuth, serverPasswordConfigured);
+		return localState;
 	}
 
 	async function logout(): Promise<void> {

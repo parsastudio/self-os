@@ -64,7 +64,7 @@ export async function saveDailyEntryAndLogs(
 	const nowMs = Date.now();
 	const nowIso = new Date(nowMs).toISOString();
 	const entryUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
-	const normalizedJournal = input.journalText?.trim() ? input.journalText.trim() : null;
+	const normalizedJournal = input.journalText?.trim() ? input.journalText : null;
 	const habitMap =
 		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
 
