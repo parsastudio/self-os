@@ -39,6 +39,10 @@ export function useTheme() {
 		const root = document.documentElement;
 		root.classList.toggle('dark', isDark.value);
 		root.style.colorScheme = isDark.value ? 'dark' : 'light';
+		const themeMeta = document.querySelector('meta[name="theme-color"]');
+		if (themeMeta) {
+			themeMeta.setAttribute('content', isDark.value ? '#0f131a' : '#f1ede4');
+		}
 	}
 
 	function init() {

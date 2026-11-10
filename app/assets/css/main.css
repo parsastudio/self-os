@@ -73,63 +73,63 @@
 .dark {
 	color-scheme: dark;
 
-	/* Warm Matte Obsidian Canvas + Low-Glare Velvet Surfaces */
-	--bg-canvas: oklch(0.172 0.005 75);
-	--bg-surface: oklch(0.202 0.006 75);
-	--bg-subtle: oklch(0.228 0.006 75);
-	--bg-interactive: oklch(0.258 0.008 75);
-	--bg-overlay: oklch(0.11 0.005 75 / 0.75);
+	/* Ergonomic Deep Slate Canvas & Crisp Elevated Surfaces (Zero Eye-Strain) */
+	--bg-canvas: oklch(0.182 0.014 258);
+	--bg-surface: oklch(0.222 0.016 258);
+	--bg-subtle: oklch(0.256 0.018 258);
+	--bg-interactive: oklch(0.295 0.02 258);
+	--bg-overlay: oklch(0.11 0.015 258 / 0.78);
 
-	/* Silk Warm Gray Typography (Zero Halation) */
-	--text-primary: oklch(0.865 0.008 82);
-	--text-secondary: oklch(0.675 0.008 80);
-	--text-muted: oklch(0.51 0.007 80);
-	--text-on-solid: oklch(0.16 0.008 75);
+	/* Crisp Alabaster & Cool Slate Typography (Optimal Readability, No Halation) */
+	--text-primary: oklch(0.935 0.008 255);
+	--text-secondary: oklch(0.745 0.016 255);
+	--text-muted: oklch(0.575 0.016 255);
+	--text-on-solid: oklch(0.145 0.015 258);
 
-	--border-hairline: oklch(0.258 0.007 75);
-	--border-focus: oklch(0.58 0.075 176);
+	--border-hairline: oklch(0.305 0.018 258);
+	--border-focus: oklch(0.68 0.125 182);
 
-	/* Muted Botanical Sage-Teal Primary Accent */
-	--surface-accent: oklch(0.64 0.08 176);
-	--surface-accent-soft: oklch(0.22 0.024 176);
-	--border-accent: oklch(0.35 0.048 176);
-	--text-accent: oklch(0.76 0.065 176);
-	--text-accent-fg: oklch(0.16 0.01 176);
+	/* Luminous Cyan-Teal Primary Accent */
+	--surface-accent: oklch(0.7 0.125 182);
+	--surface-accent-soft: oklch(0.265 0.042 182);
+	--border-accent: oklch(0.44 0.085 182);
+	--text-accent: oklch(0.83 0.095 182);
+	--text-accent-fg: oklch(0.15 0.02 182);
 
-	/* Tier Gold: Warm Matte Honey Ochre */
-	--tier-gold: oklch(0.69 0.095 80);
-	--tier-gold-soft: oklch(0.216 0.024 80);
-	--tier-gold-border: oklch(0.345 0.052 80);
-	--tier-gold-text: oklch(0.79 0.078 82);
+	/* Tier Gold: Radiant Warm Amber */
+	--tier-gold: oklch(0.75 0.135 82);
+	--tier-gold-soft: oklch(0.265 0.042 82);
+	--tier-gold-border: oklch(0.44 0.085 82);
+	--tier-gold-text: oklch(0.85 0.11 84);
 
-	/* Tier Silver: Soft Muted Pewter */
-	--tier-silver: oklch(0.65 0.035 255);
-	--tier-silver-soft: oklch(0.216 0.015 255);
-	--tier-silver-border: oklch(0.34 0.03 255);
-	--tier-silver-text: oklch(0.77 0.032 255);
+	/* Tier Silver: Cool Indigo-Silver */
+	--tier-silver: oklch(0.71 0.065 258);
+	--tier-silver-soft: oklch(0.265 0.03 258);
+	--tier-silver-border: oklch(0.43 0.055 258);
+	--tier-silver-text: oklch(0.84 0.055 258);
 
-	/* Tier Bronze: Warm Matte Terracotta Clay */
-	--tier-bronze: oklch(0.65 0.085 48);
-	--tier-bronze-soft: oklch(0.216 0.022 48);
-	--tier-bronze-border: oklch(0.345 0.048 48);
-	--tier-bronze-text: oklch(0.77 0.068 50);
+	/* Tier Bronze: Warm Copper-Terracotta */
+	--tier-bronze: oklch(0.7 0.12 48);
+	--tier-bronze-soft: oklch(0.265 0.038 48);
+	--tier-bronze-border: oklch(0.43 0.075 48);
+	--tier-bronze-text: oklch(0.83 0.095 50);
 
-	/* Semantic States (Low-Glare Matte Tones) */
-	--state-optimal: oklch(0.64 0.09 156);
-	--state-optimal-soft: oklch(0.215 0.024 156);
-	--state-optimal-border: oklch(0.34 0.05 156);
+	/* Semantic States (Balanced Contrast & Clarity) */
+	--state-optimal: oklch(0.69 0.135 156);
+	--state-optimal-soft: oklch(0.26 0.042 156);
+	--state-optimal-border: oklch(0.43 0.08 156);
 
-	--state-partial: oklch(0.69 0.095 80);
-	--state-partial-soft: oklch(0.216 0.024 80);
-	--state-partial-border: oklch(0.345 0.052 80);
+	--state-partial: oklch(0.75 0.135 82);
+	--state-partial-soft: oklch(0.265 0.042 82);
+	--state-partial-border: oklch(0.44 0.085 82);
 
-	--state-failed: oklch(0.62 0.115 24);
-	--state-failed-soft: oklch(0.215 0.025 24);
-	--state-failed-border: oklch(0.345 0.055 24);
+	--state-failed: oklch(0.66 0.16 24);
+	--state-failed-soft: oklch(0.26 0.045 24);
+	--state-failed-border: oklch(0.43 0.09 24);
 
-	--shadow-soft: 0 6px 22px -4px oklch(0.08 0.004 75 / 0.38);
-	--shadow-card: 0 3px 12px -2px oklch(0.08 0.004 75 / 0.3);
-	--shadow-modal: 0 24px 52px -12px oklch(0.05 0.004 75 / 0.65);
+	--shadow-soft: 0 8px 24px -4px oklch(0.08 0.015 258 / 0.45), 0 2px 6px -1px oklch(0.08 0.015 258 / 0.3);
+	--shadow-card: 0 4px 14px -2px oklch(0.08 0.015 258 / 0.38);
+	--shadow-modal: 0 24px 56px -12px oklch(0.05 0.015 258 / 0.72);
 }
 
 @theme inline {
