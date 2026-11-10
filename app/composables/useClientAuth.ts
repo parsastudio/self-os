@@ -87,7 +87,7 @@ async function computeSessionSignatureHex(params: {
 	return bytesToHex(new Uint8Array(sigBuffer));
 }
 
-function hasValidLocalSession(record: LocalAuthRecord | undefined, nowIso: string): record is LocalAuthRecord {
+function hasValidLocalSession(record: LocalAuthRecord | undefined, nowIso: string): boolean {
 	if (!record || !record.isAuthenticated) return false;
 	if (!record.expiresAtIso || record.expiresAtIso <= nowIso) return false;
 	return Boolean(record.passwordVerifierHex && record.verifierSaltHex);
@@ -174,7 +174,7 @@ export function useClientAuth() {
 			};
 		}
 
-		if (hasValidLocalSession(record, nowIso)) {
+		if (record && hasValidLocalSession(record, nowIso)) {
 			isAuthenticated.value = true;
 			isPasswordConfigured.value = record.isPasswordConfigured;
 			isInitialized.value = true;
