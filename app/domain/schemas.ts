@@ -736,7 +736,7 @@ export type SyncStatusVisual = z.infer<typeof SyncStatusVisualSchema>;
 export const CadenceDraftItemSchema = z.object({
 	habitId: z.string(),
 	plannedIntervals: z.number().int().min(0),
-	plannedMinutesPerInterval: z.number().min(0),
+	plannedMinutesPerInterval: z.number().min(0).nullable(),
 	cadenceWindowMinutes: z.number().int().min(15)
 });
 export type CadenceDraftItem = z.infer<typeof CadenceDraftItemSchema>;

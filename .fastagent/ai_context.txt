@@ -3,9 +3,13 @@ PROJECT STRUCTURE TREE
 ================================================================
 
 self-os
+├── 📄 .dockerignore
+├── 📄 .env.example
 ├── 📁 .github
     ├── 📁 workflows
         ├── 📄 ci.yml
+├── 📄 .gitignore
+├── 📄 Dockerfile
 ├── 📁 app
     ├── 📄 app.vue
     ├── 📁 assets
@@ -140,6 +144,212 @@ self-os
 ================================================================
 
 ================================================================
+PATH: nuxt.config.ts
+================================================================
+
+import tailwindcss from '@tailwindcss/vite';
+
+// https://nuxt.com/docs/api/configuration/nuxt-config
+export default defineNuxtConfig({
+  ssr: false,
+
+  modules: ['@vite-pwa/nuxt'],
+
+  compatibilityDate: '2025-07-15',
+  devtools: { enabled: true },
+
+  future: {
+    compatibilityVersion: 4
+  },
+
+  css: ['~/assets/css/main.css'],
+
+  vite: {
+    plugins: [tailwindcss()]
+  },
+
+  runtimeConfig: {
+    public: {
+      appVersion: '0.0.1'
+    }
+  },
+
+  nitro: {
+    experimental: {
+      openAPI: false
+    }
+  },
+
+  app: {
+    head: {
+      htmlAttrs: {
+        lang: 'fa',
+        dir: 'rtl'
+      },
+      title: 'ردیابی طرح‌ها و سیستم عامل فردی',
+      meta: [
+        { charset: 'utf-8' },
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
+        { name: 'theme-color', content: '#0f131a' },
+        { name: 'mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' }
+      ],
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'apple-touch-icon', href: '/favicon.svg' },
+        { rel: 'preload', href: '/Vazirmatn.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }
+      ]
+    }
+  },
+
+  pwa: {
+    strategies: 'generateSW',
+    registerType: 'autoUpdate',
+    manifestFilename: 'manifest.webmanifest',
+    includeAssets: ['favicon.svg', 'Vazirmatn.woff2'],
+    manifest: {
+      name: 'ردیابی طرح‌ها و سیستم عامل فردی',
+      short_name: 'طرح‌های من',
+      description: 'سیستم عامل فردی، ردیابی طرح‌ها، تقویم جلالی و آرشیو شخصی با عملکرد کامل آفلاین',
+      lang: 'fa',
+      dir: 'rtl',
+      start_url: '/',
+      scope: '/',
+      display: 'standalone',
+      background_color: '#0f131a',
+      theme_color: '#0f131a',
+      icons: [
+        {
+          src: '/favicon.svg',
+          sizes: 'any',
+          type: 'image/svg+xml',
+          purpose: 'any maskable'
+        }
+      ]
+    },
+    workbox: {
+      globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,webmanifest}'],
+      cleanupOutdatedCaches: true,
+      clientsClaim: true,
+      skipWaiting: true,
+      navigateFallback: '/index.html',
+      navigateFallbackDenylist: [/^\/api\//],
+      ignoreURLParametersMatching: [/.*/],
+      maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
+    },
+    client: {
+      installPrompt: false,
+      periodicSyncForUpdates: 1800
+    },
+    devOptions: {
+      enabled: false
+    }
+  }
+});
+
+
+----------------------------------------------------------------
+
+================================================================
+PATH: Dockerfile
+================================================================
+
+# syntax=docker/dockerfile:1
+
+# ==========================================
+# Stage 1: Build Application
+# ==========================================
+FROM node:22-bookworm-slim AS builder
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+ENV CI=true
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+
+RUN pnpm install --frozen-lockfile || pnpm install
+
+COPY . .
+
+RUN pnpm run build
+
+# ==========================================
+# Stage 2: Stateless Production Runner
+# ==========================================
+FROM node:22-bookworm-slim AS runner
+
+ENV NODE_ENV=production
+ENV NITRO_HOST=0.0.0.0
+ENV NITRO_PORT=3000
+
+WORKDIR /app
+
+COPY --from=builder --chown=node:node /app/.output ./.output
+
+USER node
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:3000/api/auth/status').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["node", ".output/server/index.mjs"]
+
+
+----------------------------------------------------------------
+
+================================================================
+PATH: docker-compose.yml
+================================================================
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: personal-os-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-personal_os}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-personal_os}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  personal-os:
+    container_name: personal-os-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - NITRO_HOST=0.0.0.0
+      - NITRO_PORT=3000
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/personal_os}
+      - SESSION_HMAC_SECRET=${SESSION_HMAC_SECRET:-}
+      - TZ=Asia/Tehran
+
+volumes:
+  pgdata:
+
+
+----------------------------------------------------------------
+
+================================================================
 PATH: tsconfig.json
 ================================================================
 
@@ -210,6 +420,48 @@ PATH: package.json
     "vue-tsc": "^2.2.12"
   }
 }
+
+
+----------------------------------------------------------------
+
+================================================================
+PATH: .dockerignore
+================================================================
+
+# Dependencies & Build Outputs
+node_modules
+.nuxt
+.output
+.nitro
+.cache
+dist
+
+# Local SQLite Database & Backups
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+
+# Git & IDE
+.git
+.gitignore
+.github
+.vscode
+.idea
+.fastpatch_backup
+
+# Environment & Logs
+.env
+.env.*
+*.log
+npm-debug.log*
+pnpm-debug.log*
+README.md
+ai_context.txt
+protocol.md
 
 
 ----------------------------------------------------------------
@@ -665,7 +917,7 @@ export async function saveDailyEntryAndLogs(
 	const nowMs = Date.now();
 	const nowIso = new Date(nowMs).toISOString();
 	const entryUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
-	const normalizedJournal = input.journalText?.trim() ? input.journalText.trim() : null;
+	const normalizedJournal = input.journalText?.trim() ? input.journalText : null;
 	const habitMap =
 		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
 
@@ -3009,113 +3261,6 @@ jobs:
 
             rm -f "$ENV_FILE"
             docker image prune -f
-
-
-----------------------------------------------------------------
-
-================================================================
-PATH: nuxt.config.ts
-================================================================
-
-import tailwindcss from '@tailwindcss/vite';
-
-// https://nuxt.com/docs/api/configuration/nuxt-config
-export default defineNuxtConfig({
-  ssr: false,
-
-  modules: ['@vite-pwa/nuxt'],
-
-  compatibilityDate: '2025-07-15',
-  devtools: { enabled: true },
-
-  future: {
-    compatibilityVersion: 4
-  },
-
-  css: ['~/assets/css/main.css'],
-
-  vite: {
-    plugins: [tailwindcss()]
-  },
-
-  runtimeConfig: {
-    public: {
-      appVersion: '0.0.1'
-    }
-  },
-
-  nitro: {
-    experimental: {
-      openAPI: false
-    }
-  },
-
-  app: {
-    head: {
-      htmlAttrs: {
-        lang: 'fa',
-        dir: 'rtl'
-      },
-      title: 'ردیابی طرح‌ها و سیستم عامل فردی',
-      meta: [
-        { charset: 'utf-8' },
-        { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
-        { name: 'theme-color', content: '#191817' },
-        { name: 'mobile-web-app-capable', content: 'yes' },
-        { name: 'apple-mobile-web-app-capable', content: 'yes' },
-        { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' }
-      ],
-      link: [
-        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
-        { rel: 'apple-touch-icon', href: '/favicon.svg' },
-        { rel: 'preload', href: '/Vazirmatn.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }
-      ]
-    }
-  },
-
-  pwa: {
-    strategies: 'generateSW',
-    registerType: 'autoUpdate',
-    manifestFilename: 'manifest.webmanifest',
-    includeAssets: ['favicon.svg', 'Vazirmatn.woff2'],
-    manifest: {
-      name: 'ردیابی طرح‌ها و سیستم عامل فردی',
-      short_name: 'طرح‌های من',
-      description: 'سیستم عامل فردی، ردیابی طرح‌ها، تقویم جلالی و آرشیو شخصی با عملکرد کامل آفلاین',
-      lang: 'fa',
-      dir: 'rtl',
-      start_url: '/',
-      scope: '/',
-      display: 'standalone',
-      background_color: '#191817',
-      theme_color: '#191817',
-      icons: [
-        {
-          src: '/favicon.svg',
-          sizes: 'any',
-          type: 'image/svg+xml',
-          purpose: 'any maskable'
-        }
-      ]
-    },
-    workbox: {
-      globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,webmanifest}'],
-      cleanupOutdatedCaches: true,
-      clientsClaim: true,
-      skipWaiting: true,
-      navigateFallback: '/',
-      navigateFallbackDenylist: [/^\/api\//],
-      maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
-    },
-    client: {
-      installPrompt: false,
-      periodicSyncForUpdates: 1800
-    },
-    devOptions: {
-      enabled: false
-    }
-  }
-});
 
 
 ----------------------------------------------------------------
@@ -6153,7 +6298,7 @@ import { getAppDatabase } from '~/composables/useAppDatabase';
 import type { LocalAuthRecord } from '~/domain/schemas';
 
 const PBKDF2_V2_PREFIX = 'pbkdf2_v2:';
-const PBKDF2_V2_ITERATIONS = 600000;
+const PBKDF2_V2_ITERATIONS = 120000;
 const PBKDF2_LEGACY_ITERATIONS = 100000;
 const CLIENT_SALT_BYTES = 32;
 
@@ -6238,30 +6383,17 @@ async function computeSessionSignatureHex(params: {
 	return bytesToHex(new Uint8Array(sigBuffer));
 }
 
-async function verifyOfflineRecordIntegrity(record: LocalAuthRecord): Promise<boolean> {
-	if (
-		!record.isAuthenticated ||
-		!record.passwordVerifierHex ||
-		!record.verifierSaltHex ||
-		record.verifierSaltHex.length < 32
-	) {
-		return false;
-	}
-	if (!record.sessionSignatureHex) {
-		return false;
-	}
-	const expectedSig = await computeSessionSignatureHex({
-		verifierHexWithPrefix: record.passwordVerifierHex,
-		verifierSaltHex: record.verifierSaltHex,
-		expiresAtIso: record.expiresAtIso
-	});
-	return timingSafeEqual(record.sessionSignatureHex, expectedSig);
+function hasValidLocalSession(record: LocalAuthRecord | undefined, nowIso: string): boolean {
+	if (!record || !record.isAuthenticated) return false;
+	if (!record.expiresAtIso || record.expiresAtIso <= nowIso) return false;
+	return Boolean(record.passwordVerifierHex && record.verifierSaltHex);
 }
 
 const isAuthenticated = ref(false);
 const isPasswordConfigured = ref(true);
 const isInitialized = ref(false);
 let hasVerifiedWithServerInSession = false;
+let backgroundCheckInFlight = false;
 
 export function useClientAuth() {
 
@@ -6281,7 +6413,12 @@ export function useClientAuth() {
 			return { isAuthenticated: false, isPasswordConfigured: true };
 		}
 
-		const record = await db.localAuth.get('auth:session');
+		let record: LocalAuthRecord | undefined;
+		try {
+			record = await db.localAuth.get('auth:session');
+		} catch {
+			record = undefined;
+		}
 		const nowIso = new Date().toISOString();
 
 		if (serverAuthenticated === true) {
@@ -6291,18 +6428,16 @@ export function useClientAuth() {
 				const newExpiresIso = new Date(
 					Date.now() + 365 * 24 * 60 * 60 * 1000
 				).toISOString();
-				const sig = await computeSessionSignatureHex({
-					verifierHexWithPrefix: record.passwordVerifierHex,
-					verifierSaltHex: record.verifierSaltHex,
-					expiresAtIso: newExpiresIso
-				});
-				await db.localAuth.put({
-					...record,
-					isAuthenticated: true,
-					expiresAtIso: newExpiresIso,
-					sessionSignatureHex: sig,
-					updatedAtIso: nowIso
-				});
+				try {
+					await db.localAuth.put({
+						...record,
+						isAuthenticated: true,
+						expiresAtIso: newExpiresIso,
+						updatedAtIso: nowIso
+					});
+				} catch {
+					// Ignore non-fatal storage write errors
+				}
 			}
 			isInitialized.value = true;
 			return {
@@ -6316,13 +6451,17 @@ export function useClientAuth() {
 			isPasswordConfigured.value =
 				serverPasswordConfigured ?? (record?.isPasswordConfigured ?? true);
 			if (record) {
-				await db.localAuth.put({
-					...record,
-					isAuthenticated: false,
-					isPasswordConfigured: isPasswordConfigured.value,
-					sessionSignatureHex: undefined,
-					updatedAtIso: nowIso
-				});
+				try {
+					await db.localAuth.put({
+						...record,
+						isAuthenticated: false,
+						isPasswordConfigured: isPasswordConfigured.value,
+						sessionSignatureHex: undefined,
+						updatedAtIso: nowIso
+					});
+				} catch {
+					// Ignore non-fatal storage write errors
+				}
 			}
 			isInitialized.value = true;
 			return {
@@ -6331,25 +6470,7 @@ export function useClientAuth() {
 			};
 		}
 
-		if (
-			record &&
-			record.isAuthenticated &&
-			record.expiresAtIso > nowIso &&
-			(await verifyOfflineRecordIntegrity(record))
-		) {
-			const newExpiresIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-			const sig = await computeSessionSignatureHex({
-				verifierHexWithPrefix: record.passwordVerifierHex,
-				verifierSaltHex: record.verifierSaltHex,
-				expiresAtIso: newExpiresIso
-			});
-			await db.localAuth.put({
-				...record,
-				expiresAtIso: newExpiresIso,
-				sessionSignatureHex: sig,
-				updatedAtIso: nowIso
-			});
-
+		if (record && hasValidLocalSession(record, nowIso)) {
 			isAuthenticated.value = true;
 			isPasswordConfigured.value = record.isPasswordConfigured;
 			isInitialized.value = true;
@@ -6424,12 +6545,24 @@ export function useClientAuth() {
 		const expectedHex = isV2
 			? record.passwordVerifierHex.slice(PBKDF2_V2_PREFIX.length)
 			: record.passwordVerifierHex;
-		const iterations = isV2 ? PBKDF2_V2_ITERATIONS : PBKDF2_LEGACY_ITERATIONS;
 
 		const salt = hexToBytes(record.verifierSaltHex);
-		const candidateVerifier = await deriveVerifierHex(password, salt, iterations);
+		let isMatch = false;
 
-		if (!timingSafeEqual(candidateVerifier, expectedHex)) {
+		if (isV2) {
+			const candidateFast = await deriveVerifierHex(password, salt, PBKDF2_V2_ITERATIONS);
+			if (timingSafeEqual(candidateFast, expectedHex)) {
+				isMatch = true;
+			} else {
+				const candidateOldV2 = await deriveVerifierHex(password, salt, 600000);
+				isMatch = timingSafeEqual(candidateOldV2, expectedHex);
+			}
+		} else {
+			const candidateLegacy = await deriveVerifierHex(password, salt, PBKDF2_LEGACY_ITERATIONS);
+			isMatch = timingSafeEqual(candidateLegacy, expectedHex);
+		}
+
+		if (!isMatch) {
 			return { success: false, error: 'رمز عبور وارد شده نادرست است' };
 		}
 
@@ -6466,6 +6599,27 @@ export function useClientAuth() {
 		return { success: true };
 	}
 
+	function verifyServerStatusInBackground(): void {
+		if (!import.meta.client || !navigator.onLine || hasVerifiedWithServerInSession || backgroundCheckInFlight) {
+			return;
+		}
+		backgroundCheckInFlight = true;
+		$fetch<{
+			isAuthenticated: boolean;
+			isPasswordConfigured: boolean;
+		}>('/api/auth/status', { timeout: 4000 })
+			.then(async (data) => {
+				hasVerifiedWithServerInSession = true;
+				await checkAuth(data.isAuthenticated, data.isPasswordConfigured);
+			})
+			.catch(() => {
+				// Keep offline local session intact when server is unreachable
+			})
+			.finally(() => {
+				backgroundCheckInFlight = false;
+			});
+	}
+
 	async function ensureSessionChecked(): Promise<{
 		isAuthenticated: boolean;
 		isPasswordConfigured: boolean;
@@ -6477,31 +6631,35 @@ export function useClientAuth() {
 			};
 		}
 
-		if (isInitialized.value && (hasVerifiedWithServerInSession || !navigator.onLine)) {
+		if (isInitialized.value) {
+			verifyServerStatusInBackground();
 			return {
 				isAuthenticated: isAuthenticated.value,
 				isPasswordConfigured: isPasswordConfigured.value
 			};
 		}
 
-		let serverAuth: boolean | undefined;
-		let serverPasswordConfigured: boolean | undefined;
+		const localState = await checkAuth();
 
-		try {
-			if (navigator.onLine) {
+		if (localState.isAuthenticated) {
+			verifyServerStatusInBackground();
+			return localState;
+		}
+
+		if (navigator.onLine && !hasVerifiedWithServerInSession) {
+			try {
 				const data = await $fetch<{
 					isAuthenticated: boolean;
 					isPasswordConfigured: boolean;
-				}>('/api/auth/status');
-				serverAuth = data.isAuthenticated;
-				serverPasswordConfigured = data.isPasswordConfigured;
+				}>('/api/auth/status', { timeout: 3500 });
 				hasVerifiedWithServerInSession = true;
+				return await checkAuth(data.isAuthenticated, data.isPasswordConfigured);
+			} catch {
+				// Ignore network timeout/offline and return local state immediately
 			}
-		} catch {
-			// Fallback to local IndexedDB session when offline or unreachable
 		}
 
-		return checkAuth(serverAuth, serverPasswordConfigured);
+		return localState;
 	}
 
 	async function logout(): Promise<void> {
@@ -6749,7 +6907,7 @@ export function useLocalRepository() {
 					dateIso: input.dateIso,
 					dayStatus: input.dayStatus,
 					reflectionNote: input.reflectionNote,
-					journalText: input.journalText?.trim() || null,
+					journalText: input.journalText?.trim() ? input.journalText : null,
 					tags: [...input.tags],
 					updatedAtIso: nowIso
 				};
@@ -8203,13 +8361,14 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	watch(
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
 		() => {
-			if (activeDraftDateIso !== dateIso.value) {
+			const isDateChanged = activeDraftDateIso !== dateIso.value;
+			if (isDateChanged) {
 				if (isDirty.value && !pendingSavePayload) {
 					pendingSavePayload = {
 						dateIso: activeDraftDateIso,
 						dayStatus: computedDayStatus.value,
 						reflectionNote: reflectionNote.value,
-						journalText: journalText.value.trim() || null,
+						journalText: journalText.value.trim() ? journalText.value : null,
 						tags: [...selectedTags.value],
 						updatedAtIso: new Date().toISOString(),
 						logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
@@ -8226,8 +8385,24 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			if (pendingSavePayload && pendingSavePayload.dateIso === dateIso.value) {
 				return;
 			}
-			reflectionNote.value = entry.value?.reflectionNote ?? '';
-			journalText.value = entry.value?.journalText ?? '';
+
+			const incomingReflection = entry.value?.reflectionNote ?? '';
+			const incomingJournal = entry.value?.journalText ?? '';
+
+			if (
+				isDateChanged ||
+				(!isDirty.value && reflectionNote.value.trim() !== incomingReflection.trim())
+			) {
+				reflectionNote.value = incomingReflection;
+			}
+
+			if (
+				isDateChanged ||
+				(!isDirty.value && journalText.value.trim() !== incomingJournal.trim())
+			) {
+				journalText.value = incomingJournal;
+			}
+
 			selectedTags.value = entry.value?.tags ? [...entry.value.tags] : [];
 			manualDayStatus.value = null;
 
@@ -8424,7 +8599,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			dateIso: dateIso.value,
 			dayStatus: computedDayStatus.value,
 			reflectionNote: reflectionNote.value,
-			journalText: journalText.value.trim() || null,
+			journalText: journalText.value.trim() ? journalText.value : null,
 			tags: [...selectedTags.value],
 			updatedAtIso: new Date().toISOString(),
 			logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
@@ -8885,6 +9060,10 @@ export function useTheme() {
 		const root = document.documentElement;
 		root.classList.toggle('dark', isDark.value);
 		root.style.colorScheme = isDark.value ? 'dark' : 'light';
+		const themeMeta = document.querySelector('meta[name="theme-color"]');
+		if (themeMeta) {
+			themeMeta.setAttribute('content', isDark.value ? '#0f131a' : '#f1ede4');
+		}
 	}
 
 	function init() {
@@ -9496,63 +9675,63 @@ PATH: app/assets/css/main.css
 .dark {
 	color-scheme: dark;
 
-	/* Warm Matte Obsidian Canvas + Low-Glare Velvet Surfaces */
-	--bg-canvas: oklch(0.172 0.005 75);
-	--bg-surface: oklch(0.202 0.006 75);
-	--bg-subtle: oklch(0.228 0.006 75);
-	--bg-interactive: oklch(0.258 0.008 75);
-	--bg-overlay: oklch(0.11 0.005 75 / 0.75);
+	/* Ergonomic Deep Slate Canvas & Crisp Elevated Surfaces (Zero Eye-Strain) */
+	--bg-canvas: oklch(0.182 0.014 258);
+	--bg-surface: oklch(0.222 0.016 258);
+	--bg-subtle: oklch(0.256 0.018 258);
+	--bg-interactive: oklch(0.295 0.02 258);
+	--bg-overlay: oklch(0.11 0.015 258 / 0.78);
 
-	/* Silk Warm Gray Typography (Zero Halation) */
-	--text-primary: oklch(0.865 0.008 82);
-	--text-secondary: oklch(0.675 0.008 80);
-	--text-muted: oklch(0.51 0.007 80);
-	--text-on-solid: oklch(0.16 0.008 75);
+	/* Crisp Alabaster & Cool Slate Typography (Optimal Readability, No Halation) */
+	--text-primary: oklch(0.935 0.008 255);
+	--text-secondary: oklch(0.745 0.016 255);
+	--text-muted: oklch(0.575 0.016 255);
+	--text-on-solid: oklch(0.145 0.015 258);
 
-	--border-hairline: oklch(0.258 0.007 75);
-	--border-focus: oklch(0.58 0.075 176);
+	--border-hairline: oklch(0.305 0.018 258);
+	--border-focus: oklch(0.68 0.125 182);
 
-	/* Muted Botanical Sage-Teal Primary Accent */
-	--surface-accent: oklch(0.64 0.08 176);
-	--surface-accent-soft: oklch(0.22 0.024 176);
-	--border-accent: oklch(0.35 0.048 176);
-	--text-accent: oklch(0.76 0.065 176);
-	--text-accent-fg: oklch(0.16 0.01 176);
+	/* Luminous Cyan-Teal Primary Accent */
+	--surface-accent: oklch(0.7 0.125 182);
+	--surface-accent-soft: oklch(0.265 0.042 182);
+	--border-accent: oklch(0.44 0.085 182);
+	--text-accent: oklch(0.83 0.095 182);
+	--text-accent-fg: oklch(0.15 0.02 182);
 
-	/* Tier Gold: Warm Matte Honey Ochre */
-	--tier-gold: oklch(0.69 0.095 80);
-	--tier-gold-soft: oklch(0.216 0.024 80);
-	--tier-gold-border: oklch(0.345 0.052 80);
-	--tier-gold-text: oklch(0.79 0.078 82);
+	/* Tier Gold: Radiant Warm Amber */
+	--tier-gold: oklch(0.75 0.135 82);
+	--tier-gold-soft: oklch(0.265 0.042 82);
+	--tier-gold-border: oklch(0.44 0.085 82);
+	--tier-gold-text: oklch(0.85 0.11 84);
 
-	/* Tier Silver: Soft Muted Pewter */
-	--tier-silver: oklch(0.65 0.035 255);
-	--tier-silver-soft: oklch(0.216 0.015 255);
-	--tier-silver-border: oklch(0.34 0.03 255);
-	--tier-silver-text: oklch(0.77 0.032 255);
+	/* Tier Silver: Cool Indigo-Silver */
+	--tier-silver: oklch(0.71 0.065 258);
+	--tier-silver-soft: oklch(0.265 0.03 258);
+	--tier-silver-border: oklch(0.43 0.055 258);
+	--tier-silver-text: oklch(0.84 0.055 258);
 
-	/* Tier Bronze: Warm Matte Terracotta Clay */
-	--tier-bronze: oklch(0.65 0.085 48);
-	--tier-bronze-soft: oklch(0.216 0.022 48);
-	--tier-bronze-border: oklch(0.345 0.048 48);
-	--tier-bronze-text: oklch(0.77 0.068 50);
+	/* Tier Bronze: Warm Copper-Terracotta */
+	--tier-bronze: oklch(0.7 0.12 48);
+	--tier-bronze-soft: oklch(0.265 0.038 48);
+	--tier-bronze-border: oklch(0.43 0.075 48);
+	--tier-bronze-text: oklch(0.83 0.095 50);
 
-	/* Semantic States (Low-Glare Matte Tones) */
-	--state-optimal: oklch(0.64 0.09 156);
-	--state-optimal-soft: oklch(0.215 0.024 156);
-	--state-optimal-border: oklch(0.34 0.05 156);
+	/* Semantic States (Balanced Contrast & Clarity) */
+	--state-optimal: oklch(0.69 0.135 156);
+	--state-optimal-soft: oklch(0.26 0.042 156);
+	--state-optimal-border: oklch(0.43 0.08 156);
 
-	--state-partial: oklch(0.69 0.095 80);
-	--state-partial-soft: oklch(0.216 0.024 80);
-	--state-partial-border: oklch(0.345 0.052 80);
+	--state-partial: oklch(0.75 0.135 82);
+	--state-partial-soft: oklch(0.265 0.042 82);
+	--state-partial-border: oklch(0.44 0.085 82);
 
-	--state-failed: oklch(0.62 0.115 24);
-	--state-failed-soft: oklch(0.215 0.025 24);
-	--state-failed-border: oklch(0.345 0.055 24);
+	--state-failed: oklch(0.66 0.16 24);
+	--state-failed-soft: oklch(0.26 0.045 24);
+	--state-failed-border: oklch(0.43 0.09 24);
 
-	--shadow-soft: 0 6px 22px -4px oklch(0.08 0.004 75 / 0.38);
-	--shadow-card: 0 3px 12px -2px oklch(0.08 0.004 75 / 0.3);
-	--shadow-modal: 0 24px 52px -12px oklch(0.05 0.004 75 / 0.65);
+	--shadow-soft: 0 8px 24px -4px oklch(0.08 0.015 258 / 0.45), 0 2px 6px -1px oklch(0.08 0.015 258 / 0.3);
+	--shadow-card: 0 4px 14px -2px oklch(0.08 0.015 258 / 0.38);
+	--shadow-modal: 0 24px 56px -12px oklch(0.05 0.015 258 / 0.72);
 }
 
 @theme inline {
@@ -19288,99 +19467,67 @@ onlyBuiltDependencies:
 ----------------------------------------------------------------
 
 ================================================================
-PATH: Dockerfile
+PATH: .gitignore
 ================================================================
 
-# syntax=docker/dockerfile:1
+# Nuxt dev/build outputs
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
 
-# ==========================================
-# Stage 1: Build Application
-# ==========================================
-FROM node:22-bookworm-slim AS builder
+# Node dependencies
+node_modules
+pnpm-lock.yaml
+# Local SQLite databases (keep directory, ignore db files)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
 
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-ENV CI=true
+# Personal backup files and private migration scripts (do not commit)
+my-personal-backup.json
+*-backup.json
+*.html
+*.xlsx
+*.csv
+scripts/
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
 
-WORKDIR /app
+# Environment variables
+.env
+.env.*
+!.env.example
 
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-RUN pnpm install --frozen-lockfile || pnpm install
-
-COPY . .
-
-RUN pnpm run build
-
-# ==========================================
-# Stage 2: Stateless Production Runner
-# ==========================================
-FROM node:22-bookworm-slim AS runner
-
-ENV NODE_ENV=production
-ENV NITRO_HOST=0.0.0.0
-ENV NITRO_PORT=3000
-
-WORKDIR /app
-
-COPY --from=builder --chown=node:node /app/.output ./.output
-
-USER node
-
-EXPOSE 3000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:3000/api/auth/status').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-
-CMD ["node", ".output/server/index.mjs"]
-
-
-----------------------------------------------------------------
-
-================================================================
-PATH: docker-compose.yml
-================================================================
-
-services:
-  postgres:
-    image: postgres:17-alpine
-    container_name: personal-os-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-personal_os}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-personal_os}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  personal-os:
-    container_name: personal-os-app
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "${APP_PORT:-3000}:3000"
-    environment:
-      - NODE_ENV=production
-      - NITRO_HOST=0.0.0.0
-      - NITRO_PORT=3000
-      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/personal_os}
-      - SESSION_HMAC_SECRET=${SESSION_HMAC_SECRET:-}
-      - TZ=Asia/Tehran
-
-volumes:
-  pgdata:
+# Tooling backups
+.fastpatch_backup
+scripts/
+# FastAgent artifacts
+.fastagent/
 
 
 ----------------------------------------------------------------

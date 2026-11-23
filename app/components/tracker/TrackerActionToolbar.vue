@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatJalaliHuman, toPersianDigits } from '~/domain/calendar';
+import { formatJalaliHuman, normalizeDigits, toPersianDigits } from '~/domain/calendar';
 import type { HabitEntity } from '~/domain/schemas';
 import { CalendarClock, Copy, Eraser, MessageSquarePlus, Sparkles } from 'lucide-vue-next';
 
@@ -9,7 +9,7 @@ interface Props {
 	availableTags: string[];
 	selectedTags: string[];
 	reflectionNote: string;
-	tomorrowPlans: Record<string, { plannedMinutesPerInterval: number }>;
+	tomorrowPlans: Record<string, { plannedMinutesPerInterval: number | null }>;
 	isSavingTomorrow?: boolean;
 	isTomorrowSaved?: boolean;
 }
@@ -24,10 +24,28 @@ const emit = defineEmits<{
 	(e: 'clearDay'): void;
 	(e: 'toggleTag', tag: string): void;
 	(e: 'updateReflectionNote', text: string): void;
-	(e: 'updateTomorrowPlan', habitId: string, minutes: number): void;
+	(e: 'updateTomorrowPlan', habitId: string, minutes: number | null): void;
 	(e: 'copyTodayToTomorrow'): void;
 	(e: 'saveTomorrowPlans'): void;
 }>();
+
+function handleTomorrowPlanInput(habitId: string, e: Event) {
+	const inputEl = e.target as HTMLInputElement;
+	const digitsOnly = normalizeDigits(inputEl.value).replace(/[^0-9]/g, '');
+	if (digitsOnly === '') {
+		if (inputEl.value !== '') {
+			inputEl.value = '';
+		}
+		emit('updateTomorrowPlan', habitId, null);
+		return;
+	}
+	const clamped = Math.min(1440, Math.max(0, Number(digitsOnly)));
+	const clampedStr = String(clamped);
+	if (inputEl.value !== clampedStr) {
+		inputEl.value = clampedStr;
+	}
+	emit('updateTomorrowPlan', habitId, clamped);
+}
 
 const showReflectionDrawer = ref(false);
 const showTomorrowDrawer = ref(false);
@@ -166,13 +184,11 @@ const activeNotesBadgeCount = computed(
 					<label class="flex items-center gap-2">
 						<input
 							v-if="tomorrowPlans[habit.id]"
-							:value="tomorrowPlans[habit.id]?.plannedMinutesPerInterval"
-							type="number"
-							min="0"
-							max="1440"
-							step="1"
+							:value="tomorrowPlans[habit.id]?.plannedMinutesPerInterval ?? ''"
+							type="text"
+							inputmode="numeric"
 							class="h-10 w-20 rounded-xl border border-border bg-surface px-3 text-center font-mono text-base font-black text-fg focus:border-border-strong focus:outline-none"
-							@input="emit('updateTomorrowPlan', habit.id, Math.min(1440, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0)))"
+							@input="handleTomorrowPlanInput(habit.id, $event)"
 						/>
 						<span class="text-xs font-bold text-fg-secondary">دقیقه</span>
 					</label>

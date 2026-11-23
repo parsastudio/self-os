@@ -180,15 +180,16 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			const nextTomorrow: Record<string, CadenceDraftItem> = {};
 			for (const habit of habits.value.filter((h) => h.trackingMode === 'interval_cadence')) {
 				const tPlan = tomorrowPlanMap.get(habit.id);
+				const initialMinutes =
+					tPlan !== undefined
+						? tPlan.plannedMinutesPerInterval
+						: habit.status === 'active'
+							? habit.defaultMinutesPerInterval
+							: 0;
 				nextTomorrow[habit.id] = {
 					habitId: habit.id,
 					plannedIntervals: tPlan?.plannedIntervals ?? habit.defaultIntervals ?? 1,
-					plannedMinutesPerInterval:
-						tPlan !== undefined
-							? tPlan.plannedMinutesPerInterval
-							: habit.status === 'active'
-								? habit.defaultMinutesPerInterval
-								: 0,
+					plannedMinutesPerInterval: initialMinutes > 0 ? initialMinutes : null,
 					cadenceWindowMinutes: tPlan?.cadenceWindowMinutes ?? habit.cadenceWindowMinutes ?? 60
 				};
 			}
@@ -629,14 +630,15 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		scheduleAutoSave(0);
 	}
 
-	function setTomorrowPlanMinutes(habitId: string, minutes: number) {
+	function setTomorrowPlanMinutes(habitId: string, minutes: number | null) {
 		const current = tomorrowPlansByHabitId.value[habitId];
 		if (!current) return;
 		tomorrowPlansByHabitId.value = {
 			...tomorrowPlansByHabitId.value,
 			[habitId]: {
 				...current,
-				plannedMinutesPerInterval: Math.max(0, Number.isNaN(minutes) ? 0 : minutes)
+				plannedMinutesPerInterval:
+					minutes === null ? null : Math.max(0, Number.isNaN(minutes) ? 0 : minutes)
 			}
 		};
 	}
@@ -648,10 +650,11 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		)) {
 			const log = logsByHabitId.value[habit.id];
 			if (log) {
+				const actualMinutes = log.actualMinutesPerInterval ?? 0;
 				next[habit.id] = {
 					habitId: habit.id,
 					plannedIntervals: 1,
-					plannedMinutesPerInterval: log.actualMinutesPerInterval ?? 0,
+					plannedMinutesPerInterval: actualMinutes > 0 ? actualMinutes : null,
 					cadenceWindowMinutes: 60
 				};
 			}
@@ -663,7 +666,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		const items = Object.values(tomorrowPlansByHabitId.value).map((item) => ({
 			habitId: item.habitId,
 			plannedIntervals: item.plannedIntervals,
-			plannedMinutesPerInterval: item.plannedMinutesPerInterval,
+			plannedMinutesPerInterval: item.plannedMinutesPerInterval ?? 0,
 			cadenceWindowMinutes: item.cadenceWindowMinutes
 		}));
 		await localRepo.daily.saveCadencePlans({
