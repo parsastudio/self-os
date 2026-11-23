@@ -16,8 +16,6 @@ interface Props {
 	recentEntries?: Array<{
 		dateIso: string;
 		dayStatus: DayStatusColor;
-		reflectionNote: string;
-		tags: string[];
 	}>;
 	liveDayStatus: DayStatusColor;
 	isLiveDirty?: boolean;

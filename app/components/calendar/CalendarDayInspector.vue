@@ -40,7 +40,6 @@ function handleAddEvent() {
 
 	emit('createEvent', {
 		title: eventTitleInput.value.trim(),
-		eventType: 'occasion',
 		isAnnual: isAnnualChecked.value,
 		dateIso: props.day.iso,
 		notes: eventNotesInput.value.trim() || undefined

@@ -5,7 +5,6 @@ const BOOTSTRAP_DDL_SQL = `
 		id TEXT PRIMARY KEY,
 		parent_id TEXT,
 		title TEXT NOT NULL,
-		category TEXT NOT NULL DEFAULT 'عمومی',
 		tracking_mode TEXT NOT NULL DEFAULT 'tiered',
 		time_slot TEXT NOT NULL DEFAULT 'day',
 		is_situational BOOLEAN NOT NULL DEFAULT FALSE,
@@ -38,9 +37,7 @@ const BOOTSTRAP_DDL_SQL = `
 		id TEXT PRIMARY KEY,
 		date_iso TEXT NOT NULL UNIQUE,
 		day_status TEXT NOT NULL DEFAULT 'optimal',
-		reflection_note TEXT NOT NULL DEFAULT '',
 		journal_text TEXT,
-		tags_json TEXT NOT NULL DEFAULT '[]',
 		updated_at_iso TEXT NOT NULL
 	);
 
@@ -73,12 +70,6 @@ const BOOTSTRAP_DDL_SQL = `
 		created_at_iso TEXT NOT NULL
 	);
 
-	CREATE TABLE IF NOT EXISTS reflection_tags (
-		id TEXT PRIMARY KEY,
-		label TEXT NOT NULL UNIQUE,
-		sort_order INTEGER NOT NULL DEFAULT 0
-	);
-
 	CREATE TABLE IF NOT EXISTS books (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
@@ -108,7 +99,6 @@ const BOOTSTRAP_DDL_SQL = `
 	CREATE TABLE IF NOT EXISTS calendar_events (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
-		event_type TEXT NOT NULL DEFAULT 'occasion',
 		is_annual BOOLEAN NOT NULL DEFAULT FALSE,
 		date_iso TEXT,
 		jalali_month INTEGER NOT NULL,

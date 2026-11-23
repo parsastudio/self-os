@@ -1,9 +1,5 @@
 import { z } from 'zod';
-import {
-	CADENCE_DEFAULTS,
-	DEFAULT_HABIT_CATEGORY,
-	TIER_SCORES
-} from '~/domain/constants';
+import { CADENCE_DEFAULTS, TIER_SCORES } from '~/domain/constants';
 
 export const TrackingModeSchema = z.enum(['tiered', 'interval_cadence']);
 export type TrackingMode = z.infer<typeof TrackingModeSchema>;
@@ -55,19 +51,10 @@ export type NoteSmartFilter = z.infer<typeof NoteSmartFilterSchema>;
 export const HabitTimeSlotSchema = z.enum(['morning', 'day', 'night']);
 export type HabitTimeSlot = z.infer<typeof HabitTimeSlotSchema>;
 
-export const CalendarEventTypeSchema = z.enum([
-	'birthday',
-	'deadline',
-	'occasion',
-	'reminder'
-]);
-export type CalendarEventType = z.infer<typeof CalendarEventTypeSchema>;
-
 export const HabitEntitySchema = z.object({
 	id: z.string(),
 	parentId: z.string().nullable(),
 	title: z.string().min(1),
-	category: z.string().default(DEFAULT_HABIT_CATEGORY),
 	trackingMode: TrackingModeSchema,
 	timeSlot: HabitTimeSlotSchema.default('day'),
 	isSituational: z.boolean().default(false),
@@ -145,9 +132,7 @@ export type HabitLogItemInput = z.infer<typeof HabitLogItemInputSchema>;
 export const SaveDailyEntryInputSchema = z.object({
 	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string().max(10000).default(''),
 	journalText: z.string().max(100000).nullable().optional(),
-	tags: z.array(z.string().max(120)).max(100).default([]),
 	updatedAtIso: z.string().optional(),
 	logs: z.array(HabitLogItemInputSchema).max(500)
 });
@@ -174,7 +159,6 @@ export type SaveCadencePlanBatch = z.infer<typeof SaveCadencePlanBatchSchema>;
 export const CreateHabitInputSchema = z.object({
 	title: z.string().min(2, 'عنوان طرح باید حداقل ۲ کاراکتر باشد'),
 	parentId: z.string().nullable().default(null),
-	category: z.string().default(DEFAULT_HABIT_CATEGORY),
 	trackingMode: TrackingModeSchema,
 	timeSlot: HabitTimeSlotSchema.optional().default('day'),
 	isSituational: z.boolean().default(false),
@@ -199,7 +183,6 @@ export type CreateHabitInput = z.infer<typeof CreateHabitInputSchema>;
 export const MutateHabitStructureSchema = z.object({
 	habitId: z.string(),
 	title: z.string().min(2),
-	category: z.string().default(DEFAULT_HABIT_CATEGORY),
 	parentId: z.string().nullable(),
 	timeSlot: HabitTimeSlotSchema.optional(),
 	isSituational: z.boolean().default(false),
@@ -279,7 +262,6 @@ export type UpdateMediaInput = z.infer<typeof UpdateMediaInputSchema>;
 export const CalendarEventEntitySchema = z.object({
 	id: z.string(),
 	title: z.string().min(1),
-	eventType: CalendarEventTypeSchema,
 	isAnnual: z.boolean().default(false),
 	dateIso: z.string().nullable(),
 	jalaliMonth: z.number().int().min(1).max(12),
@@ -293,7 +275,6 @@ export type CalendarEventEntity = z.infer<typeof CalendarEventEntitySchema>;
 
 export const CreateCalendarEventInputSchema = z.object({
 	title: z.string().min(1, 'عنوان رویداد الزامی است'),
-	eventType: CalendarEventTypeSchema.default('occasion'),
 	isAnnual: z.boolean().default(false),
 	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	notes: z.string().optional()
@@ -457,18 +438,6 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('ADD_LIFECYCLE_EVENT'),
 		queuedAtIso: z.string(),
 		payload: LifecycleEventEntitySchema
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('UPSERT_REFLECTION_TAGS'),
-		queuedAtIso: z.string(),
-		payload: z.array(
-			z.object({
-				id: z.string(),
-				label: z.string(),
-				sortOrder: z.number().int()
-			})
-		)
 	})
 ]);
 export type SyncOutboxMutation = z.infer<typeof SyncOutboxMutationSchema>;
@@ -483,9 +452,7 @@ export type SyncRequestPayload = z.infer<typeof SyncRequestPayloadSchema>;
 export const LocalDailyEntryRecordSchema = z.object({
 	dateIso: z.string(),
 	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string(),
 	journalText: z.string().nullable(),
-	tags: z.array(z.string()),
 	updatedAtIso: z.string()
 });
 export type LocalDailyEntryRecord = z.infer<typeof LocalDailyEntryRecordSchema>;
@@ -514,7 +481,6 @@ export const LocalWorkspaceSnapshotSchema = z.object({
 	versionIso: z.string(),
 	syncedAtIso: z.string(),
 	habits: z.array(HabitEntitySchema),
-	availableTags: z.array(z.string()),
 	entries: z.array(WorkspaceEntryItemSchema),
 	logs: z.array(WorkspaceLogItemSchema),
 	cadencePlans: z.array(CadencePlanEntitySchema),
@@ -554,7 +520,6 @@ export type ServerSyncResponse = z.infer<typeof ServerSyncResponseSchema>;
 export const UpcomingEventBannerItemSchema = z.object({
 	id: z.string(),
 	title: z.string(),
-	eventType: CalendarEventTypeSchema,
 	isAnnual: z.boolean(),
 	isCompleted: z.boolean(),
 	occurrenceDateIso: z.string(),
@@ -566,7 +531,6 @@ export type UpcomingEventBannerItem = z.infer<typeof UpcomingEventBannerItemSche
 
 export const HabitHistoricalSpecSchema = z.object({
 	title: z.string(),
-	category: z.string(),
 	scheduleLabel: z.string().nullable(),
 	notes: z.string().nullable(),
 	bronzeDesc: z.string().nullable(),
@@ -602,9 +566,7 @@ export const CalendarDayAggregateSchema = z.object({
 	entry: z
 		.object({
 			dayStatus: DayStatusColorSchema,
-			reflectionNote: z.string(),
-			journalText: z.string().nullable(),
-			tags: z.array(z.string())
+			journalText: z.string().nullable()
 		})
 		.nullable(),
 	habitPerformances: z.array(DayHabitPerformanceItemSchema),
@@ -652,19 +614,14 @@ export type AnalyticsRawLog = z.infer<typeof AnalyticsRawLogSchema>;
 
 export const AnalyticsRawEntrySchema = z.object({
 	dateIso: z.string(),
-	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string(),
-	tags: z.array(z.string())
+	dayStatus: DayStatusColorSchema
 });
 export type AnalyticsRawEntry = z.infer<typeof AnalyticsRawEntrySchema>;
 
 export const RawCalendarDayEntrySchema = z.object({
 	dateIso: z.string(),
 	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string(),
-	journalText: z.string().nullable(),
-	tags: z.array(z.string()).optional(),
-	tagsJson: z.string().optional()
+	journalText: z.string().nullable()
 });
 export type RawCalendarDayEntry = z.infer<typeof RawCalendarDayEntrySchema>;
 
@@ -674,13 +631,6 @@ export const LocalHabitLogRecordSchema = HabitLogItemInputSchema.extend({
 	updatedAtIso: z.string()
 });
 export type LocalHabitLogRecord = z.infer<typeof LocalHabitLogRecordSchema>;
-
-export const LocalReflectionTagRecordSchema = z.object({
-	id: z.string(),
-	label: z.string(),
-	sortOrder: z.number()
-});
-export type LocalReflectionTagRecord = z.infer<typeof LocalReflectionTagRecordSchema>;
 
 export const SelectOptionSchema = z.object({
 	value: z.union([z.string(), z.number()]),
@@ -820,7 +770,6 @@ export const HabitDailyPointSchema = z.object({
 	actualMinutes: z.number().nullable(),
 	plannedMinutes: z.number().nullable(),
 	completedIntervals: z.number().nullable(),
-	dayTags: z.array(z.string()),
 	lifecycleEventsOnDay: z.array(HabitEvolutionItemSchema)
 });
 export type HabitDailyPoint = z.infer<typeof HabitDailyPointSchema>;
@@ -848,15 +797,6 @@ export const WeekdayPerformanceStatSchema = z.object({
 	avgScore: z.number()
 });
 export type WeekdayPerformanceStat = z.infer<typeof WeekdayPerformanceStatSchema>;
-
-export const TagCorrelationStatSchema = z.object({
-	tag: z.string(),
-	occurrences: z.number(),
-	avgScoreWithTag: z.number(),
-	successRateWithTag: z.number(),
-	impactDelta: z.number()
-});
-export type TagCorrelationStat = z.infer<typeof TagCorrelationStatSchema>;
 
 export const HabitComparisonRowSchema = z.object({
 	habit: HabitEntitySchema,
@@ -905,7 +845,6 @@ export const SelectedHabitAnalyticsSchema = z.object({
 	weekdayStats: z.array(WeekdayPerformanceStatSchema),
 	bestWeekday: WeekdayPerformanceStatSchema.nullable(),
 	weakestWeekday: WeekdayPerformanceStatSchema.nullable(),
-	tagCorrelations: z.array(TagCorrelationStatSchema),
 	evolutionTimeline: z.array(HabitEvolutionItemSchema)
 });
 export type SelectedHabitAnalytics = z.infer<typeof SelectedHabitAnalyticsSchema>;
@@ -941,28 +880,18 @@ export const DatabaseBackupPayloadSchema = z.object({
 					id: z.string(),
 					dateIso: z.string(),
 					dayStatus: DayStatusColorSchema,
-					reflectionNote: z.string().max(10000),
 					journalText: z.string().max(100000).nullable(),
-					tagsJson: z.string().max(10000),
 					updatedAtIso: z.string()
 				})
 			)
 			.max(50000),
-		habitLogs: z.array(WorkspaceLogItemSchema).max(200000),		cadencePlans: z.array(CadencePlanEntitySchema).max(50000),
+		habitLogs: z.array(WorkspaceLogItemSchema).max(200000),
+		cadencePlans: z.array(CadencePlanEntitySchema).max(50000),
 		books: z.array(BookEntitySchema).max(10000),
 		media: z.array(MediaEntitySchema).max(10000),
 		notes: z.array(NoteEntitySchema).max(10000),
 		calendarEvents: z.array(CalendarEventEntitySchema).max(10000),
-		lifecycleEvents: z.array(LifecycleEventEntitySchema).max(50000),
-		reflectionTags: z
-			.array(
-				z.object({
-					id: z.string(),
-					label: z.string().max(120),
-					sortOrder: z.number()
-				})
-			)
-			.max(1000)
+		lifecycleEvents: z.array(LifecycleEventEntitySchema).max(50000)
 	})
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
@@ -983,7 +912,6 @@ export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;
 
 export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
 export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
-export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
 
 export const MergedBackupResultSchema = z.object({
 	habitsToUpsert: z.array(HabitEntitySchema),
@@ -995,7 +923,6 @@ export const MergedBackupResultSchema = z.object({
 	notesToUpsert: z.array(NoteEntitySchema),
 	calendarEventsToUpsert: z.array(CalendarEventEntitySchema),
 	lifecycleEventsToUpsert: z.array(LifecycleEventEntitySchema),
-	reflectionTagsToUpsert: ExistingWorkspaceDataSchema.shape.reflectionTags,
 	addedOrUpdatedCount: z.number().int(),
 	skippedDuplicatesCount: z.number().int()
 });

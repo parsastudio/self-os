@@ -12,12 +12,11 @@ import {
 	habits,
 	mediaLogs,
 	notes,
-	reflectionTags,
 	syncState
 } from '~~/server/database/schema';
 import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
-import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/constants';
+import { DEMO_ID_PREFIX } from '~/domain/constants';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
 const WORKSPACE_TABLES = [
@@ -25,7 +24,6 @@ const WORKSPACE_TABLES = [
 	dailyEntries,
 	cadencePlans,
 	habitLifecycleEvents,
-	reflectionTags,
 	habits,
 	books,
 	mediaLogs,
@@ -65,7 +63,6 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 	await ensureDatabaseReady();
 	let removed = 0;
 	const prefixPattern = `${DEMO_ID_PREFIX}%`;
-	const tagPattern = `%${DEMO_ENTRY_TAG}%`;
 
 	const demoCleanupTargets: ReadonlyArray<{
 		table: PgTable;
@@ -76,7 +73,6 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.id, pattern: prefixPattern },
 		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.habitId, pattern: prefixPattern },
 		{ table: dailyEntries, idCol: dailyEntries.id, matchCol: dailyEntries.id, pattern: prefixPattern },
-		{ table: dailyEntries, idCol: dailyEntries.id, matchCol: dailyEntries.tagsJson, pattern: tagPattern },
 		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.id, pattern: prefixPattern },
 		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.habitId, pattern: prefixPattern },
 		{
@@ -141,8 +137,7 @@ export async function importDatabaseFromJson(
 			media: await tx.select().from(mediaLogs),
 			notes: await tx.select().from(notes),
 			calendarEvents: await tx.select().from(calendarEvents),
-			lifecycleEvents: await tx.select().from(habitLifecycleEvents),
-			reflectionTags: await tx.select().from(reflectionTags)
+			lifecycleEvents: await tx.select().from(habitLifecycleEvents)
 		};
 
 		const merged = computeSmartBackupMerge(existingData, data);
@@ -197,12 +192,6 @@ export async function importDatabaseFromJson(
 			habitLifecycleEvents,
 			habitLifecycleEvents.id,
 			merged.lifecycleEventsToUpsert
-		);
-		await batchUpsertRows(
-			reflectionTags,
-			reflectionTags.label,
-			merged.reflectionTagsToUpsert,
-			['label']
 		);
 		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});

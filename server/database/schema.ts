@@ -14,7 +14,6 @@ export const habits = pgTable(
 		id: text('id').primaryKey(),
 		parentId: text('parent_id'),
 		title: text('title').notNull(),
-		category: text('category').notNull().default('عمومی'),
 		trackingMode: text('tracking_mode', { enum: ['tiered', 'interval_cadence'] })
 			.notNull()
 			.default('tiered'),
@@ -71,9 +70,7 @@ export const dailyEntries = pgTable(
 		dayStatus: text('day_status', { enum: ['optimal', 'partial', 'failed'] })
 			.notNull()
 			.default('optimal'),
-		reflectionNote: text('reflection_note').notNull().default(''),
 		journalText: text('journal_text'),
-		tagsJson: text('tags_json').notNull().default('[]'),
 		updatedAtIso: text('updated_at_iso').notNull()
 	},
 	(t) => [index('idx_daily_entries_updated_at').on(t.updatedAtIso)]
@@ -130,12 +127,6 @@ export const habitLifecycleEvents = pgTable(
 	(t) => [index('idx_lifecycle_events_habit_id').on(t.habitId)]
 );
 
-export const reflectionTags = pgTable('reflection_tags', {
-	id: text('id').primaryKey(),
-	label: text('label').notNull().unique(),
-	sortOrder: integer('sort_order').notNull().default(0)
-});
-
 export const books = pgTable(
 	'books',
 	{
@@ -187,11 +178,6 @@ export const calendarEvents = pgTable(
 	{
 		id: text('id').primaryKey(),
 		title: text('title').notNull(),
-		eventType: text('event_type', {
-			enum: ['birthday', 'deadline', 'occasion', 'reminder']
-		})
-			.notNull()
-			.default('occasion'),
 		isAnnual: boolean('is_annual').notNull().default(false),
 		dateIso: text('date_iso'),
 		jalaliMonth: integer('jalali_month').notNull(),

@@ -8,10 +8,7 @@ import type {
 	MediaStatus
 } from '~/domain/schemas';
 
-export const DEFAULT_HABIT_CATEGORY = 'عمومی';
-
 export const DEMO_ID_PREFIX = 'demo:';
-export const DEMO_ENTRY_TAG = 'داده_آزمایشی';
 
 export function isDemoRecordId(id: string | null | undefined): boolean {
 	return Boolean(id && id.startsWith(DEMO_ID_PREFIX));
@@ -266,15 +263,3 @@ export function getOutcomeBadgeMeta(
 		badgeClass: 'border-border bg-elevated text-fg-muted'
 	};
 }
-
-export const DEFAULT_REFLECTION_TAGS = [
-	'خستگی',
-	'کم‌خوابی',
-	'مشکلات اینترنت',
-	'اهمال‌کاری',
-	'بیرون بودن',
-	'انگیزه بالا',
-	'تمرکز عمیق',
-	'بحث سیاسی',
-	'مشکلات خانوادگی'
-] as const;

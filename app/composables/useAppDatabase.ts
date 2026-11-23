@@ -8,7 +8,6 @@ import type {
 	LocalAuthRecord,
 	LocalDailyEntryRecord,
 	LocalHabitLogRecord,
-	LocalReflectionTagRecord,
 	MediaEntity,
 	NoteEntity,
 	SyncMetaRecord,
@@ -25,7 +24,6 @@ export class PersonalOSDatabase extends Dexie {
 	notes!: Table<NoteEntity, string>;
 	calendarEvents!: Table<CalendarEventEntity, string>;
 	lifecycleEvents!: Table<LifecycleEventEntity, string>;
-	reflectionTags!: Table<LocalReflectionTagRecord, string>;
 	syncOutbox!: Table<SyncOutboxMutation, string>;
 	syncMeta!: Table<SyncMetaRecord, string>;
 	localAuth!: Table<LocalAuthRecord, string>;
@@ -48,6 +46,10 @@ export class PersonalOSDatabase extends Dexie {
 			syncMeta: 'key',
 			localAuth: 'key'
 		});
+
+		this.version(2).stores({
+			reflectionTags: null
+		});
 	}
 
 	get workspaceTables(): Table[] {
@@ -60,8 +62,7 @@ export class PersonalOSDatabase extends Dexie {
 			this.media,
 			this.notes,
 			this.calendarEvents,
-			this.lifecycleEvents,
-			this.reflectionTags
+			this.lifecycleEvents
 		];
 	}
 

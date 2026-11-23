@@ -26,7 +26,6 @@ import type {
 	HabitEvolutionItem,
 	LifecycleEventEntity,
 	SelectedHabitAnalytics,
-	TagCorrelationStat,
 	WeekdayPerformanceStat
 } from '~/domain/schemas';
 import {
@@ -492,7 +491,6 @@ export function buildFullAnalyticsReport(params: {
 		(h) => h.parentId!
 	);
 
-	const entryByDate = new Map(entries.map((e) => [e.dateIso, e]));
 	const logsByDate = new Map<string, Map<string, AnalyticsRawLog>>();
 	for (const log of logs) {
 		let dayMap = logsByDate.get(log.dateIso);
@@ -647,7 +645,6 @@ export function buildFullAnalyticsReport(params: {
 			const weekdayIndex = getPersianWeekdayIndex(dt);
 			const weekdayLabel = JALALI_GRID_WEEKDAYS[weekdayIndex] ?? '';
 			const human = formatJalaliHuman(dIso, todayIso);
-			const entry = entryByDate.get(dIso);
 
 			const evalRes = evaluateHabitDay(
 				targetHabit,
@@ -686,7 +683,6 @@ export function buildFullAnalyticsReport(params: {
 				actualMinutes: evalRes.actualMinutes,
 				plannedMinutes: evalRes.plannedMinutes,
 				completedIntervals: evalRes.completedIntervals,
-				dayTags: entry?.tags ?? [],
 				lifecycleEventsOnDay: eventsByDate.get(dIso) ?? []
 			});
 		}
@@ -759,37 +755,6 @@ export function buildFullAnalyticsReport(params: {
 				? [...activeWeekdays].sort((a, b) => a.avgScore - b.avgScore)[0]
 				: null;
 
-		const tagMap = new Map<
-			string,
-			{ occurrences: number; scoreSum: number; successCount: number }
-		>();
-		for (const pt of dailySeries) {
-			if (pt.score === null) continue;
-			for (const tag of pt.dayTags) {
-				const cur = tagMap.get(tag) ?? { occurrences: 0, scoreSum: 0, successCount: 0 };
-				cur.occurrences++;
-				cur.scoreSum += pt.score;
-				if (pt.score > 0) cur.successCount++;
-				tagMap.set(tag, cur);
-			}
-		}
-
-		const tagCorrelations: TagCorrelationStat[] = Array.from(tagMap.entries())
-			.map(([tag, stat]) => {
-				const avgScoreWithTag = Math.round(stat.scoreSum / stat.occurrences);
-				const successRateWithTag = Math.round(
-					(stat.successCount / stat.occurrences) * 100
-				);
-				return {
-					tag,
-					occurrences: stat.occurrences,
-					avgScoreWithTag,
-					successRateWithTag,
-					impactDelta: avgScoreWithTag - avgQualityScore
-				};
-			})
-			.sort((a, b) => Math.abs(b.impactDelta) - Math.abs(a.impactDelta));
-
 		selectedHabitReport = {
 			habit: targetHabit,
 			parentTitle: parent?.title ?? null,
@@ -823,7 +788,6 @@ export function buildFullAnalyticsReport(params: {
 			weekdayStats,
 			bestWeekday: bestWeekday ?? null,
 			weakestWeekday: weakestWeekday ?? null,
-			tagCorrelations,
 			evolutionTimeline
 		};
 	}

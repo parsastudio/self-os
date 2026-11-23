@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { toPersianDigits } from '~/domain/calendar';
 import type { HabitDailyPoint, SelectedHabitAnalytics } from '~/domain/schemas';
-import { Calendar, Hash, Layers, TrendingDown, TrendingUp } from 'lucide-vue-next';
+import { Calendar, Layers } from 'lucide-vue-next';
 
 interface Props {
 	report: SelectedHabitAnalytics;
@@ -96,7 +96,7 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 			<div class="flex items-center justify-between gap-2">
 				<div class="flex items-center gap-2">
 					<Calendar class="h-4.5 w-4.5 text-accent-text" />
-					<h3 class="text-base font-black text-fg">الگوی روزهای هفته و عوامل موثر</h3>
+					<h3 class="text-base font-black text-fg">الگوی روزهای هفته</h3>
 				</div>
 			</div>
 
@@ -112,26 +112,6 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 					</div>
 					<span class="w-12 shrink-0 text-left font-mono font-extrabold text-fg">
 						{{ w.loggedDays > 0 ? `%${toPersianDigits(w.avgScore)}` : '—' }}
-					</span>
-				</div>
-			</div>
-
-			<div v-if="report.tagCorrelations.length > 0" class="space-y-2 border-t border-border pt-3.5">
-				<div class="flex items-center gap-1.5 text-xs font-extrabold text-fg-secondary">
-					<Hash class="h-3.5 w-3.5 text-accent-text" />
-					<span>تاثیر تگ‌ها</span>
-				</div>
-				<div class="flex flex-wrap gap-1.5">
-					<span
-						v-for="item in report.tagCorrelations.slice(0, 6)"
-						:key="item.tag"
-						class="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[11px] font-extrabold"
-						:class="item.impactDelta >= 0 ? 'border-optimal-border bg-optimal-soft text-optimal' : 'border-failed-border bg-failed-soft text-failed'"
-					>
-						<TrendingUp v-if="item.impactDelta >= 0" class="h-3 w-3" />
-						<TrendingDown v-else class="h-3 w-3" />
-						<span>#{{ item.tag }}</span>
-						<span dir="ltr" class="font-mono">({{ item.impactDelta > 0 ? '+' : '' }}{{ toPersianDigits(item.impactDelta) }}%)</span>
 					</span>
 				</div>
 			</div>

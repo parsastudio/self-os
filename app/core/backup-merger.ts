@@ -2,7 +2,6 @@ import { compareTimestampsIso } from '~/domain/calendar';
 import type {
 	BackupDailyEntryRow,
 	BackupHabitLogRow,
-	BackupReflectionTagRow,
 	BookEntity,
 	CadencePlanEntity,
 	CalendarEventEntity,
@@ -143,9 +142,7 @@ export function computeSmartBackupMerge(
 		} else {
 			const sameContent =
 				ext.dayStatus === incEntry.dayStatus &&
-				normText(ext.reflectionNote) === normText(incEntry.reflectionNote) &&
-				normText(ext.journalText) === normText(incEntry.journalText) &&
-				ext.tagsJson === incEntry.tagsJson;
+				normText(ext.journalText) === normText(incEntry.journalText);
 
 			if (sameContent || !isIncomingNewer(incEntry.updatedAtIso, ext.updatedAtIso)) {
 				skippedDuplicatesCount++;
@@ -315,26 +312,6 @@ export function computeSmartBackupMerge(
 		}
 	}
 
-	// 10. Reflection Tags (Deduplicate by normalized label & avoid ID collisions)
-	const existingTagLabels = new Set(existing.reflectionTags.map((t) => normText(t.label)));
-	const usedTagIds = new Set(existing.reflectionTags.map((t) => t.id));
-	const reflectionTagsToUpsert: BackupReflectionTagRow[] = [];
-
-	for (const incTag of incoming.reflectionTags) {
-		const normLabel = normText(incTag.label);
-		if (existingTagLabels.has(normLabel)) {
-			skippedDuplicatesCount++;
-		} else {
-			const safeId = usedTagIds.has(incTag.id) ? `tag:${normLabel}` : incTag.id;
-			reflectionTagsToUpsert.push({
-				...incTag,
-				id: safeId
-			});
-			existingTagLabels.add(normLabel);
-			usedTagIds.add(safeId);
-		}
-	}
-
 	const addedOrUpdatedCount =
 		habitsToUpsert.length +
 		dailyEntriesToUpsert.length +
@@ -344,8 +321,7 @@ export function computeSmartBackupMerge(
 		mediaToUpsert.length +
 		notesToUpsert.length +
 		calendarEventsToUpsert.length +
-		lifecycleEventsToUpsert.length +
-		reflectionTagsToUpsert.length;
+		lifecycleEventsToUpsert.length;
 
 	return {
 		habitsToUpsert,
@@ -357,7 +333,6 @@ export function computeSmartBackupMerge(
 		notesToUpsert,
 		calendarEventsToUpsert,
 		lifecycleEventsToUpsert,
-		reflectionTagsToUpsert,
 		addedOrUpdatedCount,
 		skippedDuplicatesCount
 	};

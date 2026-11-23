@@ -299,39 +299,21 @@ function goToToday() {
 					@select-day="(iso) => (userSelectedIso = iso)"
 				/>
 
-				<!-- کارت خاطره و یادداشت روز انتخابی -->
+				<!-- کارت خاطره روز انتخابی -->
 				<section
-					v-if="selectedDay?.entry && (selectedDay.entry.journalText || selectedDay.entry.reflectionNote || selectedDay.entry.tags.length > 0)"
+					v-if="selectedDay?.entry?.journalText"
 					class="space-y-3.5 rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:p-6"
 				>
 					<div class="flex items-center justify-between gap-2">
 						<h3 class="flex items-center gap-2 text-sm font-black text-fg">
 							<BookHeart class="h-4 w-4 text-accent-text" />
-							<span>خاطره و یادداشت {{ selectedDay.fullHumanLabel }}</span>
+							<span>خاطره {{ selectedDay.fullHumanLabel }}</span>
 						</h3>
 					</div>
 
-					<p
-						v-if="selectedDay.entry.journalText"
-						class="whitespace-pre-line rounded-2xl border border-border bg-elevated p-4 text-sm leading-8 text-fg"
-					>
+					<p class="whitespace-pre-line rounded-2xl border border-border bg-elevated p-4 text-sm leading-8 text-fg">
 						{{ selectedDay.entry.journalText }}
 					</p>
-
-					<p v-if="selectedDay.entry.reflectionNote" class="rounded-2xl border border-border bg-elevated px-4 py-3 text-xs leading-6 text-fg-secondary">
-						<strong class="font-extrabold text-fg">علت / یادداشت روز: </strong>
-						{{ selectedDay.entry.reflectionNote }}
-					</p>
-
-					<div v-if="selectedDay.entry.tags.length > 0" class="flex flex-wrap gap-1.5 pt-0.5">
-						<span
-							v-for="tag in selectedDay.entry.tags"
-							:key="tag"
-							class="rounded-xl border border-border bg-elevated px-2.5 py-1 text-[11px] font-bold text-fg-secondary"
-						>
-							#{{ tag }}
-						</span>
-					</div>
 				</section>
 			</div>
 

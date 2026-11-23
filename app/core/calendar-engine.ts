@@ -6,7 +6,6 @@ import {
 	jalaliPartsToIso,
 	shiftIsoDate
 } from '~/domain/calendar';
-import { parseTagsJson } from '~/domain/tags';
 import type {
 	AnalyticsRawLog,
 	BookEntity,
@@ -62,7 +61,6 @@ export function computeUpcomingEventsBanner(params: {
 					upcoming.push({
 						id: ev.id,
 						title: ev.title,
-						eventType: ev.eventType,
 						isAnnual: true,
 						isCompleted: ev.isCompleted,
 						occurrenceDateIso: iso,
@@ -80,7 +78,6 @@ export function computeUpcomingEventsBanner(params: {
 				upcoming.push({
 					id: ev.id,
 					title: ev.title,
-					eventType: ev.eventType,
 					isAnnual: false,
 					isCompleted: ev.isCompleted,
 					occurrenceDateIso: ev.dateIso,
@@ -244,9 +241,7 @@ export function assembleJalaliMonthArchive(params: {
 			entry: rawEntry
 				? {
 						dayStatus: rawEntry.dayStatus,
-						reflectionNote: rawEntry.reflectionNote,
-						journalText: rawEntry.journalText ?? null,
-						tags: rawEntry.tags ?? parseTagsJson(rawEntry.tagsJson)
+						journalText: rawEntry.journalText ?? null
 					}
 				: null,
 			habitPerformances,

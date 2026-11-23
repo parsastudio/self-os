@@ -83,9 +83,7 @@ export function useLocalRepository() {
 		return {
 			dateIso: e.dateIso,
 			dayStatus: e.dayStatus,
-			reflectionNote: e.reflectionNote,
 			journalText: e.journalText ?? null,
-			tags: [...e.tags],
 			updatedAtIso: e.updatedAtIso
 		};
 	}
@@ -109,20 +107,6 @@ export function useLocalRepository() {
 			plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
 			updatedAtIso: l.updatedAtIso || fallbackNowIso
 		};
-	}
-
-	async function syncReflectionTagsToLocal(availableTags?: string[]): Promise<void> {
-		if (!availableTags || availableTags.length === 0) return;
-		const existingTags = await db.reflectionTags.toArray();
-		const existingByLabel = new Map(existingTags.map((t) => [t.label, t]));
-		const uniqueLabels = Array.from(new Set(availableTags));
-		const tagRecords = uniqueLabels.map((label, idx) => ({
-			id: existingByLabel.get(label)?.id ?? `tag:${label}`,
-			label,
-			sortOrder: idx + 1
-		}));
-		await db.reflectionTags.clear();
-		await db.reflectionTags.bulkPut(tagRecords);
 	}
 
 	const daily = {
@@ -152,9 +136,7 @@ export function useLocalRepository() {
 				const entryRecord: LocalDailyEntryRecord = {
 					dateIso: input.dateIso,
 					dayStatus: input.dayStatus,
-					reflectionNote: input.reflectionNote,
 					journalText: input.journalText?.trim() ? input.journalText : null,
-					tags: [...input.tags],
 					updatedAtIso: nowIso
 				};
 				await db.dailyEntries.put(entryRecord);
@@ -315,7 +297,6 @@ export function useLocalRepository() {
 								input: {
 									habitId: child.id,
 									title: child.title,
-									category: child.category,
 									parentId: child.parentId,
 									timeSlot: child.timeSlot,
 									isSituational: child.isSituational,
@@ -686,7 +667,6 @@ export function useLocalRepository() {
 			const newEvent: CalendarEventEntity = {
 				id: generateId(),
 				title: input.title.trim(),
-				eventType: input.eventType,
 				isAnnual,
 				dateIso: isAnnual ? null : input.dateIso,
 				jalaliMonth: parts.jm,
@@ -919,8 +899,6 @@ export function useLocalRepository() {
 				ws.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
 			);
 
-			await syncReflectionTagsToLocal(ws.availableTags);
-
 			// Reconcile cleared daily entries and logs
 			const serverEntryDates = new Set(ws.entries.map((e) => e.dateIso));
 			const localEntryDates = await db.dailyEntries.toCollection().primaryKeys();
@@ -1083,7 +1061,6 @@ export function useLocalRepository() {
 							.map((l) => mapServerLogToLocal(l, fallbackNowIso))
 					);
 				}
-				await syncReflectionTagsToLocal(delta.availableTags);
 			}
 		);
 	}

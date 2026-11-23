@@ -309,16 +309,6 @@ const renderedBars = computed(() =>
 					</span>
 				</div>
 			</div>
-
-			<div v-if="inspectedPoint.dayTags.length > 0" class="flex flex-wrap items-center gap-1.5">
-				<span
-					v-for="tag in inspectedPoint.dayTags"
-					:key="tag"
-					class="rounded-xl border border-border bg-surface px-2.5 py-0.5 text-[11px] font-bold text-fg-secondary"
-				>
-					#{{ tag }}
-				</span>
-			</div>
 		</div>
 	</section>
 </template>

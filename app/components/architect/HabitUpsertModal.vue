@@ -138,7 +138,6 @@ function handleSubmit() {
 			habitId: props.editingHabit.id,
 			title: title.value.trim(),
 			parentId: effectiveParentId,
-			category: props.editingHabit.category,
 			timeSlot: selectedTimeSlot.value,
 			isSituational: isTieredLeaf ? isSituational.value : false,
 			status: selectedStatus.value,
@@ -163,7 +162,6 @@ function handleSubmit() {
 		emit('create', {
 			title: title.value.trim(),
 			parentId: effectiveParentId,
-			category: 'عمومی',
 			trackingMode: isCadence ? 'interval_cadence' : 'tiered',
 			timeSlot: selectedTimeSlot.value,
 			isSituational: isTieredLeaf ? isSituational.value : false,

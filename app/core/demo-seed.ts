@@ -1,6 +1,17 @@
 import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, shiftIsoDate } from '~/domain/calendar';
-import { DEMO_ENTRY_TAG } from '~/domain/constants';
 import { evaluateDayStatusColor, resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
+
+const DEMO_JOURNAL_DAY_1 = 'روز اول تست سیستم؛ ساختار سطح‌بندی طرح‌ها حس خوبی دارد.';
+const DEMO_JOURNAL_DAY_3 = 'امروز کمی خسته بودم اما حداقل‌های برنزی را حفظ کردم.';
+const DEMO_JOURNAL_DAY_6 = 'بازگشت به ریتم مطلوب و تکمیل تمرکز عمیق.';
+const DEMO_JOURNAL_DAY_7 = 'ثبت آزمایشی امروز برای بررسی نمودارها و تقویم.';
+
+export const DEMO_DAILY_JOURNALS = new Set<string>([
+	DEMO_JOURNAL_DAY_1,
+	DEMO_JOURNAL_DAY_3,
+	DEMO_JOURNAL_DAY_6,
+	DEMO_JOURNAL_DAY_7
+]);
 import type {
 	BookEntity,
 	CadencePlanEntity,
@@ -22,7 +33,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-workout',
 			parentId: null,
 			title: 'ورزش و تحرک صبحگاهی (آزمایشی)',
-			category: 'سلامت',
 			trackingMode: 'tiered',
 			timeSlot: 'morning',
 			isSituational: false,
@@ -44,7 +54,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-deep-work',
 			parentId: null,
 			title: 'تمرین تمرکز عمیق (آزمایشی)',
-			category: 'کار',
 			trackingMode: 'interval_cadence',
 			timeSlot: 'day',
 			isSituational: false,
@@ -66,7 +75,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-night-routine',
 			parentId: null,
 			title: 'روتین آرامش شبانه (آزمایشی)',
-			category: 'رشد فردی',
 			trackingMode: 'tiered',
 			timeSlot: 'night',
 			isSituational: false,
@@ -88,7 +96,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-sub-reading',
 			parentId: 'demo:habit-night-routine',
 			title: 'مطالعه آزاد شبانه (آزمایشی)',
-			category: 'یادگیری',
 			trackingMode: 'tiered',
 			timeSlot: 'night',
 			isSituational: false,
@@ -110,7 +117,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-sub-review',
 			parentId: 'demo:habit-night-routine',
 			title: 'مرور و برنامه‌ریزی فردا (آزمایشی)',
-			category: 'رشد فردی',
 			trackingMode: 'tiered',
 			timeSlot: 'night',
 			isSituational: false,
@@ -155,13 +161,13 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 		reviewTier: number;
 		journal: string | null;
 	}> = [
-		{ offset: -6, workoutTier: 2, deepMinutes: 15, readingTier: 2, reviewTier: 3, journal: 'روز اول تست سیستم؛ ساختار سطح‌بندی طرح‌ها حس خوبی دارد.' },
+		{ offset: -6, workoutTier: 2, deepMinutes: 15, readingTier: 2, reviewTier: 3, journal: DEMO_JOURNAL_DAY_1 },
 		{ offset: -5, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: null },
-		{ offset: -4, workoutTier: 1, deepMinutes: 10, readingTier: 1, reviewTier: 2, journal: 'امروز کمی خسته بودم اما حداقل‌های برنزی را حفظ کردم.' },
+		{ offset: -4, workoutTier: 1, deepMinutes: 10, readingTier: 1, reviewTier: 2, journal: DEMO_JOURNAL_DAY_3 },
 		{ offset: -3, workoutTier: 3, deepMinutes: 25, readingTier: 3, reviewTier: 3, journal: null },
 		{ offset: -2, workoutTier: 0, deepMinutes: 0, readingTier: 1, reviewTier: 1, journal: null },
-		{ offset: -1, workoutTier: 3, deepMinutes: 20, readingTier: 2, reviewTier: 3, journal: 'بازگشت به ریتم مطلوب و تکمیل تمرکز عمیق.' },
-		{ offset: 0, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: 'ثبت آزمایشی امروز برای بررسی نمودارها و تقویم.' }
+		{ offset: -1, workoutTier: 3, deepMinutes: 20, readingTier: 2, reviewTier: 3, journal: DEMO_JOURNAL_DAY_6 },
+		{ offset: 0, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: DEMO_JOURNAL_DAY_7 }
 	];
 
 	const dailyEntries: DatabaseBackupPayload['data']['dailyEntries'] = [];
@@ -263,9 +269,7 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: `demo:entry:${dateIso}`,
 			dateIso,
 			dayStatus: status,
-			reflectionNote: 'ثبت آزمایشی جهت بررسی نمودارها',
 			journalText: pat.journal,
-			tagsJson: JSON.stringify([DEMO_ENTRY_TAG, status === 'optimal' ? 'انگیزه بالا' : 'خستگی']),
 			updatedAtIso: dayUpdatedIso
 		});
 	}
@@ -343,7 +347,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 		{
 			id: 'demo:event-1',
 			title: 'ارزیابی هفتگی سیستم (رویداد آزمایشی)',
-			eventType: 'reminder',
 			isAnnual: false,
 			dateIso: tomorrowIso,
 			jalaliMonth: tomorrowParts.jm,
@@ -369,8 +372,7 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			media,
 			notes,
 			calendarEvents,
-			lifecycleEvents,
-			reflectionTags: []
+			lifecycleEvents
 		}
 	};
 }

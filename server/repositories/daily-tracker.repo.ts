@@ -1,41 +1,23 @@
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
 	dailyEntries,
-	habitLogs,
-	reflectionTags
+	habitLogs
 } from '~~/server/database/schema';
 import { getAllHabits } from '~~/server/repositories/habits.repo';
-import {
-	bumpServerStructuralVersion,
-	recordServerDeletionTombstones
-} from '~~/server/repositories/sync.repo';
+import { recordServerDeletionTombstones } from '~~/server/repositories/sync.repo';
 import {
 	isDailyEntryEmpty,
 	resolveDailyHabitLogSnapshot,
 	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import { compareTimestampsIso } from '~/domain/calendar';
-import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
 import type {
 	HabitEntity,
 	SaveCadencePlanBatch,
 	SaveDailyEntryInput
 } from '~/domain/schemas';
-
-export async function getReflectionTags(): Promise<string[]> {
-	await ensureDatabaseReady();
-	const rows = await db
-		.select()
-		.from(reflectionTags)
-		.orderBy(asc(reflectionTags.sortOrder));
-
-	if (rows.length === 0) {
-		return [...DEFAULT_REFLECTION_TAGS];
-	}
-	return rows.map((r) => r.label);
-}
 
 export type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
 
@@ -110,9 +92,7 @@ export async function saveDailyEntryAndLogs(
 					.update(dailyEntries)
 					.set({
 						dayStatus: input.dayStatus,
-						reflectionNote: input.reflectionNote,
 						journalText: normalizedJournal,
-						tagsJson: JSON.stringify(input.tags),
 						updatedAtIso: entryUpdatedAtIso
 					})
 					.where(eq(dailyEntries.dateIso, input.dateIso));
@@ -122,9 +102,7 @@ export async function saveDailyEntryAndLogs(
 				id: `entry:${input.dateIso}`,
 				dateIso: input.dateIso,
 				dayStatus: input.dayStatus,
-				reflectionNote: input.reflectionNote,
 				journalText: normalizedJournal,
-				tagsJson: JSON.stringify(input.tags),
 				updatedAtIso: entryUpdatedAtIso
 			});
 		}

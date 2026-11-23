@@ -149,16 +149,6 @@ const displayedMemories = computed(() => {
 					<p class="whitespace-pre-line text-base leading-8 font-normal text-fg select-text">
 						{{ item.journalText }}
 					</p>
-
-					<footer v-if="item.tags.length > 0" class="mt-5 flex flex-wrap gap-1.5 pt-2">
-						<span
-							v-for="tag in item.tags"
-							:key="tag"
-							class="rounded-xl bg-elevated px-2.5 py-1 text-[11px] font-bold text-fg-secondary"
-						>
-							#{{ tag }}
-						</span>
-					</footer>
 				</article>
 			</div>
 

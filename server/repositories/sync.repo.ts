@@ -10,19 +10,16 @@ import {
 	habits,
 	mediaLogs,
 	notes,
-	reflectionTags,
 	syncState
 } from '~~/server/database/schema';
 import { getAllHabits } from '~~/server/repositories/habits.repo';
 import {
 	clampClientTimestampIso,
 	type DbExecutor,
-	getReflectionTags,
 	saveCadencePlansForDate,
 	saveDailyEntryAndLogs
 } from '~~/server/repositories/daily-tracker.repo';
 import { compareTimestampsIso, normalizeTimestampIso } from '~/domain/calendar';
-import { parseTagsJson } from '~/domain/tags';
 import type {
 	DeltaWorkspaceSnapshot,
 	LocalWorkspaceSnapshot,
@@ -37,9 +34,7 @@ function mapEntryRow(e: typeof dailyEntries.$inferSelect) {
 		id: e.id,
 		dateIso: e.dateIso,
 		dayStatus: e.dayStatus,
-		reflectionNote: e.reflectionNote,
 		journalText: e.journalText ?? null,
-		tags: parseTagsJson(e.tagsJson),
 		updatedAtIso: e.updatedAtIso
 	};
 }
@@ -372,19 +367,6 @@ export async function processClientSyncRequest(
 							target: habitLifecycleEvents.id,
 							set: payload
 						});
-				} else if (mutation.kind === 'UPSERT_REFLECTION_TAGS') {
-					if (mutation.payload.length > 0) {
-						await tx
-							.insert(reflectionTags)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: reflectionTags.label,
-								set: {
-									sortOrder: sql`excluded.sort_order`
-								}
-							});
-						await bumpServerStructuralVersion(safeQueuedIso, tx);
-					}
 				}
 				appliedMutationIds.push(mutation.id);
 			}
@@ -416,7 +398,6 @@ export async function processClientSyncRequest(
 			changedEntriesRaw,
 			changedLogsRaw,
 			changedHabits,
-			availableTags,
 			changedCadencePlans,
 			changedBooks,
 			changedMedia,
@@ -440,7 +421,6 @@ export async function processClientSyncRequest(
 				.from(habits)
 				.where(gt(habits.updatedAtIso, normalizedKnownIso))
 				.orderBy(asc(habits.sortOrder)),
-			getReflectionTags(),
 			db
 				.select()
 				.from(cadencePlans)
@@ -508,7 +488,6 @@ export async function processClientSyncRequest(
 			versionIso: serverVersionIso,
 			syncedAtIso: serverTimeIso,
 			habits: changedHabits,
-			availableTags,
 			entries: changedEntriesRaw.map(mapEntryRow),
 			logs: changedLogsRaw.map(mapLogRow),
 			cadencePlans: changedCadencePlans,
@@ -542,7 +521,6 @@ export async function processClientSyncRequest(
 		allEntriesRaw,
 		allLogsRaw,
 		allHabits,
-		availableTags,
 		allCadencePlans,
 		allBooks,
 		allMedia,
@@ -553,7 +531,6 @@ export async function processClientSyncRequest(
 		db.select().from(dailyEntries).orderBy(desc(dailyEntries.dateIso)),
 		db.select().from(habitLogs).orderBy(desc(habitLogs.dateIso)),
 		getAllHabits(),
-		getReflectionTags(),
 		db.select().from(cadencePlans).orderBy(asc(cadencePlans.dateIso)),
 		db.select().from(books).orderBy(desc(books.createdAtIso)),
 		db.select().from(mediaLogs).orderBy(desc(mediaLogs.createdAtIso)),
@@ -572,7 +549,6 @@ export async function processClientSyncRequest(
 		versionIso: serverVersionIso,
 		syncedAtIso: serverTimeIso,
 		habits: allHabits,
-		availableTags,
 		entries: allEntriesRaw.map(mapEntryRow),
 		logs: allLogsRaw.map(mapLogRow),
 		cadencePlans: allCadencePlans,

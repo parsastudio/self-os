@@ -1,5 +1,5 @@
 import { generateId } from '~/domain/calendar';
-import { COMPOSITE_FULL_LABEL, DEFAULT_HABIT_CATEGORY, TIER_SCORES } from '~/domain/constants';
+import { COMPOSITE_FULL_LABEL, TIER_SCORES } from '~/domain/constants';
 import {
 	HabitLifecycleStateSnapshotSchema,
 	type CompositeChildrenStatus,
@@ -18,12 +18,10 @@ import {
 } from '~/domain/schemas';
 
 export function isDailyEntryEmpty(
-	input: Pick<SaveDailyEntryInput, 'reflectionNote' | 'journalText' | 'tags' | 'logs'>
+	input: Pick<SaveDailyEntryInput, 'journalText' | 'logs'>
 ): boolean {
 	return (
-		(!input.reflectionNote || input.reflectionNote.trim() === '') &&
 		(!input.journalText || input.journalText.trim() === '') &&
-		input.tags.length === 0 &&
 		input.logs.every(
 			(l) =>
 				(l.achievedTier === null || l.achievedTier === undefined) &&
@@ -61,7 +59,6 @@ export function resolveEffectiveCadenceMinutes(
 export function serializeHabitSpecSnapshot(habit: HabitEntity): string {
 	const spec: HabitHistoricalSpec = {
 		title: habit.title,
-		category: habit.category,
 		scheduleLabel: habit.scheduleLabel,
 		notes: habit.notes,
 		bronzeDesc: habit.bronzeDesc,
@@ -89,7 +86,6 @@ export function parseHabitSpecSnapshot(
 
 	return {
 		title: parsed.title || fallbackTitle,
-		category: parsed.category || fallbackHabit?.category || 'عمومی',
 		scheduleLabel: parsed.scheduleLabel ?? fallbackHabit?.scheduleLabel ?? null,
 		notes: parsed.notes ?? fallbackHabit?.notes ?? null,
 		bronzeDesc: parsed.bronzeDesc ?? fallbackHabit?.bronzeDesc ?? null,
@@ -271,7 +267,6 @@ function applyHabitSpecOverlay(
 	return {
 		...habit,
 		title: overlay.title || habit.title,
-		category: overlay.category || habit.category,
 		scheduleLabel:
 			overlay.scheduleLabel !== undefined ? overlay.scheduleLabel : habit.scheduleLabel,
 		notes: overlay.notes !== undefined ? overlay.notes : habit.notes,
@@ -754,7 +749,6 @@ export function buildCreatedHabitWithLifecycle(params: {
 		id: generateId(),
 		parentId: input.parentId ?? null,
 		title: input.title.trim(),
-		category: input.category.trim() || DEFAULT_HABIT_CATEGORY,
 		trackingMode: input.trackingMode,
 		timeSlot: input.timeSlot ?? 'day',
 		isSituational: input.isSituational ?? false,
@@ -840,7 +834,6 @@ export function buildUpdatedHabitWithLifecycle(params: {
 	const updatedHabit: HabitEntity = {
 		...current,
 		title: input.title.trim(),
-		category: input.category.trim() || current.category,
 		parentId: input.parentId,
 		timeSlot: input.timeSlot ?? current.timeSlot,
 		isSituational: input.isSituational,

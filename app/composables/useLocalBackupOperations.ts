@@ -1,11 +1,10 @@
 import type { Table } from 'dexie';
 import type { PersonalOSDatabase } from '~/composables/useAppDatabase';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
-import { buildDemoSeedDataset } from '~/core/demo-seed';
+import { buildDemoSeedDataset, DEMO_DAILY_JOURNALS } from '~/core/demo-seed';
 import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
-import { DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/constants';
+import { isDemoRecordId } from '~/domain/constants';
 import type { DatabaseBackupPayload, SyncOutboxMutation } from '~/domain/schemas';
-import { parseTagsJson } from '~/domain/tags';
 import { clonePlain } from '~/utils/clone';
 
 export function createLocalBackupOperations(
@@ -25,8 +24,7 @@ export function createLocalBackupOperations(
 			allMedia,
 			allNotes,
 			allEvents,
-			allLifecycle,
-			allTags
+			allLifecycle
 		] = await Promise.all([
 			db.habits.toArray(),
 			db.dailyEntries.toArray(),
@@ -36,8 +34,7 @@ export function createLocalBackupOperations(
 			db.media.toArray(),
 			db.notes.toArray(),
 			db.calendarEvents.toArray(),
-			db.lifecycleEvents.toArray(),
-			db.reflectionTags.toArray()
+			db.lifecycleEvents.toArray()
 		]);
 
 		return {
@@ -49,8 +46,7 @@ export function createLocalBackupOperations(
 				habits: allHabits,
 				dailyEntries: allEntries.map((e) => ({
 					...e,
-					id: `entry:${e.dateIso}`,
-					tagsJson: JSON.stringify(e.tags)
+					id: `entry:${e.dateIso}`
 				})),
 				habitLogs: allLogs.map((l) => ({
 					...l,
@@ -69,12 +65,7 @@ export function createLocalBackupOperations(
 				media: allMedia,
 				notes: allNotes,
 				calendarEvents: allEvents,
-				lifecycleEvents: allLifecycle,
-				reflectionTags: allTags.map((t) => ({
-					id: t.id,
-					label: t.label,
-					sortOrder: t.sortOrder
-				}))
+				lifecycleEvents: allLifecycle
 			}
 		};
 	}
@@ -95,8 +86,7 @@ export function createLocalBackupOperations(
 			media: [],
 			notes: [],
 			calendarEvents: [],
-			lifecycleEvents: [],
-			reflectionTags: []
+			lifecycleEvents: []
 		};
 		const currentSnapshot = mode === 'replace' ? { data: emptyData } : await exportBackupPayload();
 		const merged = computeSmartBackupMerge(currentSnapshot.data, payload.data);
@@ -127,9 +117,7 @@ export function createLocalBackupOperations(
 						merged.dailyEntriesToUpsert.map((e) => ({
 							dateIso: e.dateIso,
 							dayStatus: e.dayStatus,
-							reflectionNote: e.reflectionNote,
 							journalText: e.journalText ?? null,
-							tags: parseTagsJson(e.tagsJson),
 							updatedAtIso: e.updatedAtIso
 						}))
 					);
@@ -158,9 +146,7 @@ export function createLocalBackupOperations(
 								payload: clonePlain({
 									dateIso,
 									dayStatus: entryRec.dayStatus,
-									reflectionNote: entryRec.reflectionNote,
 									journalText: entryRec.journalText,
-									tags: entryRec.tags,
 									updatedAtIso: entryRec.updatedAtIso,
 									logs: dayLogs
 								})
@@ -249,15 +235,6 @@ export function createLocalBackupOperations(
 						});
 					}
 				}
-				if (merged.reflectionTagsToUpsert.length > 0) {
-					await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
-					stagedMutations.push({
-						id: 'tags:batch',
-						kind: 'UPSERT_REFLECTION_TAGS',
-						queuedAtIso: nowIso,
-						payload: clonePlain(merged.reflectionTagsToUpsert)
-					});
-				}
 				if (!skipOutboxStaging && stagedMutations.length > 0) {
 					await db.syncOutbox.bulkPut(stagedMutations);
 				}
@@ -292,13 +269,11 @@ export function createLocalBackupOperations(
 
 				for (const e of data.dailyEntries) {
 					const existing = await db.dailyEntries.get(e.dateIso);
-					if (!existing || existing.tags.includes(DEMO_ENTRY_TAG)) {
+					if (!existing) {
 						await db.dailyEntries.put({
 							dateIso: e.dateIso,
 							dayStatus: e.dayStatus,
-							reflectionNote: e.reflectionNote,
 							journalText: e.journalText ?? null,
-							tags: parseTagsJson(e.tagsJson),
 							updatedAtIso: e.updatedAtIso
 						});
 					}
@@ -325,6 +300,11 @@ export function createLocalBackupOperations(
 		};
 
 		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+			const demoLogs = (await db.habitLogs.toArray()).filter(
+				(l) => isDemoRecordId(l.id) || isDemoRecordId(l.habitId)
+			);
+			const demoLogDates = new Set(demoLogs.map((l) => l.dateIso));
+
 			await deleteMatchingById(db.habits);
 			await deleteMatchingById(
 				db.habitLogs,
@@ -344,14 +324,19 @@ export function createLocalBackupOperations(
 			);
 			await deleteMatchingById(db.syncOutbox, (m) => m.id.includes('demo:'));
 
-			const demoEntryDates = (await db.dailyEntries.toArray())
-				.filter(
-					(e) =>
-						e.tags.includes(DEMO_ENTRY_TAG) ||
-						e.reflectionNote === 'ثبت آزمایشی جهت بررسی نمودارها'
-				)
-				.map((e) => e.dateIso);
-			if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
+			const demoEntryDatesToDelete: string[] = [];
+			for (const dateIso of demoLogDates) {
+				const remainingLogsCount = await db.habitLogs.where('dateIso').equals(dateIso).count();
+				if (remainingLogsCount === 0) {
+					const entry = await db.dailyEntries.get(dateIso);
+					if (entry && (!entry.journalText || DEMO_DAILY_JOURNALS.has(entry.journalText))) {
+						demoEntryDatesToDelete.push(dateIso);
+					}
+				}
+			}
+			if (demoEntryDatesToDelete.length > 0) {
+				await db.dailyEntries.bulkDelete(demoEntryDatesToDelete);
+			}
 		});
 	}
 

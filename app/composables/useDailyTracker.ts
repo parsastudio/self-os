@@ -15,7 +15,7 @@ import {
 	resolveHistoricalHabitForDate
 } from '~/core/habit-engine';
 import { shiftIsoDate } from '~/domain/calendar';
-import { CADENCE_SUCCESS_RATIOS, DEFAULT_REFLECTION_TAGS, TIER_SCORES } from '~/domain/constants';
+import { CADENCE_SUCCESS_RATIOS, TIER_SCORES } from '~/domain/constants';
 import type {
 	CadenceDraftItem,
 	DayStatusColor,
@@ -35,16 +35,13 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const entry = useDexieLiveQuery(() => db.dailyEntries.get(dateIso.value), undefined, dateIso);
 	const logs = useDexieLiveQuery(() => db.habitLogs.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
 	const allEntries = useDexieLiveQuery(() => db.dailyEntries.orderBy('dateIso').reverse().limit(35).toArray(), []);
-	const tagsRecords = useDexieLiveQuery(() => db.reflectionTags.orderBy('sortOrder').toArray(), []);
 	const dayCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
 	const tomorrowCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(tomorrowIso.value).toArray(), [], tomorrowIso);
 	const calendarEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
 	const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 	// Local mutable state
-	const reflectionNote = ref('');
 	const journalText = ref('');
-	const selectedTags = ref<string[]>([]);
 	const manualDayStatus = ref<DayStatusColor | null>(null);
 	const logsByHabitId = ref<Record<string, HabitLogItemInput>>({});
 	const tomorrowPlansByHabitId = ref<Record<string, CadenceDraftItem>>({});
@@ -64,13 +61,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			tomorrowCadencePlans.isLoading.value
 	);
 
-	const availableTags = computed(() => {
-		if (tagsRecords.value.length > 0) {
-			return tagsRecords.value.map((t) => t.label);
-		}
-		return [...DEFAULT_REFLECTION_TAGS];
-	});
-
 	// Synchronize when date or database queries change
 	watch(
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
@@ -81,9 +71,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 					pendingSavePayload = {
 						dateIso: activeDraftDateIso,
 						dayStatus: computedDayStatus.value,
-						reflectionNote: reflectionNote.value,
 						journalText: journalText.value.trim() ? journalText.value : null,
-						tags: [...selectedTags.value],
 						updatedAtIso: new Date().toISOString(),
 						logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
 					};
@@ -100,15 +88,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 				return;
 			}
 
-			const incomingReflection = entry.value?.reflectionNote ?? '';
 			const incomingJournal = entry.value?.journalText ?? '';
-
-			if (
-				isDateChanged ||
-				(!isDirty.value && reflectionNote.value.trim() !== incomingReflection.trim())
-			) {
-				reflectionNote.value = incomingReflection;
-			}
 
 			if (
 				isDateChanged ||
@@ -117,7 +97,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 				journalText.value = incomingJournal;
 			}
 
-			selectedTags.value = entry.value?.tags ? [...entry.value.tags] : [];
 			manualDayStatus.value = null;
 
 			const dayPlanMap = new Map(dayCadencePlans.value.map((p) => [p.habitId, p]));
@@ -313,9 +292,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		return {
 			dateIso: dateIso.value,
 			dayStatus: computedDayStatus.value,
-			reflectionNote: reflectionNote.value,
 			journalText: journalText.value.trim() ? journalText.value : null,
-			tags: [...selectedTags.value],
 			updatedAtIso: new Date().toISOString(),
 			logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
 		};
@@ -550,9 +527,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			};
 		}
 		logsByHabitId.value = updated;
-		reflectionNote.value = '';
 		journalText.value = '';
-		selectedTags.value = [];
 		manualDayStatus.value = null;
 		scheduleAutoSave(0);
 	}
@@ -618,15 +593,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			}
 		};
 		manualDayStatus.value = null;
-		scheduleAutoSave(0);
-	}
-
-	function toggleTag(tag: string) {
-		if (selectedTags.value.includes(tag)) {
-			selectedTags.value = selectedTags.value.filter((t) => t !== tag);
-		} else {
-			selectedTags.value = [...selectedTags.value, tag];
-		}
 		scheduleAutoSave(0);
 	}
 
@@ -700,10 +666,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		tree,
 		schedulableCadenceHabits,
 		applicableHabits,
-		availableTags,
-		reflectionNote,
 		journalText,
-		selectedTags,
 		manualDayStatus,
 		logsByHabitId,
 		tomorrowPlansByHabitId,
@@ -718,7 +681,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		setParentGroupAllTier,
 		clearDay,
 		updateCadenceActual,
-		toggleTag,
 		scheduleAutoSave,
 		flushPendingSave,
 		setTomorrowPlanMinutes,
