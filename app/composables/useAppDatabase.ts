@@ -31,7 +31,7 @@ export class PersonalOSDatabase extends Dexie {
 	constructor() {
 		super('newlife_dexie_db');
 
-		this.version(1).stores({
+		this.version(2).stores({
 			habits: 'id, parentId, status, sortOrder, trackingMode, timeSlot, updatedAtIso',
 			dailyEntries: 'dateIso, dayStatus, updatedAtIso',
 			habitLogs: 'id, dateIso, habitId, [dateIso+habitId], updatedAtIso',
@@ -41,14 +41,9 @@ export class PersonalOSDatabase extends Dexie {
 			notes: 'id, category, isPinned, updatedAtIso',
 			calendarEvents: 'id, dateIso, [jalaliMonth+jalaliDay], isCompleted, updatedAtIso',
 			lifecycleEvents: 'id, habitId, effectiveDateIso, createdAtIso',
-			reflectionTags: 'id, &label, sortOrder',
 			syncOutbox: 'id, queuedAtIso, kind',
 			syncMeta: 'key',
 			localAuth: 'key'
-		});
-
-		this.version(2).stores({
-			reflectionTags: null
 		});
 	}
 

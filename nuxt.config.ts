@@ -19,12 +19,6 @@ export default defineNuxtConfig({
     plugins: [tailwindcss()]
   },
 
-  runtimeConfig: {
-    public: {
-      appVersion: '0.0.1'
-    }
-  },
-
   nitro: {
     experimental: {
       openAPI: false

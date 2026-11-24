@@ -14,10 +14,7 @@ export default defineEventHandler(async (event) => {
 			});
 		}
 
-		const config = useRuntimeConfig();
-		const appVersion = (config.public?.appVersion as string) || '0.0.1';
-
-		return await processClientSyncRequest(parsed.data, appVersion);
+		return await processClientSyncRequest(parsed.data);
 	} catch (err: unknown) {
 		const info = extractApiErrorInfo(err, 'خطا در پردازش همگام‌سازی با سرور');
 		throw createError({

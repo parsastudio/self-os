@@ -9,17 +9,6 @@ dist
 # Node dependencies
 node_modules
 pnpm-lock.yaml
-# Local SQLite databases (keep directory, ignore db files)
-data/*.db
-data/*.db-wal
-data/*.db-shm
-data/*.sqlite
-data/*.sqlite-wal
-data/*.sqlite-shm
-*.db
-*.db-wal
-*.db-shm
-
 # Personal backup files and private migration scripts (do not commit)
 my-personal-backup.json
 *-backup.json

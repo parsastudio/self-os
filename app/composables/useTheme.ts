@@ -23,7 +23,6 @@ async function persistThemeToDb(dark: boolean): Promise<void> {
 		if (!db) return;
 		await db.syncMeta.put({
 			key: 'meta:theme',
-			clientId: '',
 			knownServerVersionIso: null,
 			lastSyncedAtIso: null,
 			themeMode: dark ? 'dark' : 'light'

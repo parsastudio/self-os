@@ -58,9 +58,6 @@ const emergencyMinDesc = ref(props.editingHabit?.emergencyMinDesc ?? '');
 const defaultMinutesPerInterval = ref<number>(
 	props.editingHabit?.defaultMinutesPerInterval ?? CADENCE_DEFAULTS.MINUTES_PER_INTERVAL
 );
-const cadenceWindowMinutes = ref<number>(
-	props.editingHabit?.cadenceWindowMinutes ?? CADENCE_DEFAULTS.WINDOW_MINUTES
-);
 const notes = ref(props.editingHabit?.notes ?? '');
 const reason = ref('');
 
@@ -150,12 +147,6 @@ function handleSubmit() {
 			defaultMinutesPerInterval: isCadence
 				? Math.max(0, Number(defaultMinutesPerInterval.value) || 0)
 				: props.editingHabit.defaultMinutesPerInterval,
-			cadenceWindowMinutes: isCadence
-				? Math.max(
-						CADENCE_DEFAULTS.MIN_WINDOW_MINUTES,
-						Math.round(Number(cadenceWindowMinutes.value) || CADENCE_DEFAULTS.WINDOW_MINUTES)
-					)
-				: props.editingHabit.cadenceWindowMinutes,
 			reason: reason.value.trim() || 'ویرایش قوانین طرح'
 		});
 	} else {
@@ -171,19 +162,12 @@ function handleSubmit() {
 			silverDesc: isTieredLeaf ? silverDesc.value.trim() || undefined : undefined,
 			goldDesc: isTieredLeaf ? goldDesc.value.trim() || undefined : undefined,
 			emergencyMinDesc: isCadence ? emergencyMinDesc.value.trim() || undefined : undefined,
-			defaultIntervals: CADENCE_DEFAULTS.INTERVALS,
 			defaultMinutesPerInterval: isCadence
 				? Math.max(
 						0,
 						Number(defaultMinutesPerInterval.value) || CADENCE_DEFAULTS.MINUTES_PER_INTERVAL
 					)
 				: 0,
-			cadenceWindowMinutes: isCadence
-				? Math.max(
-						CADENCE_DEFAULTS.MIN_WINDOW_MINUTES,
-						Math.round(Number(cadenceWindowMinutes.value) || CADENCE_DEFAULTS.WINDOW_MINUTES)
-					)
-				: CADENCE_DEFAULTS.WINDOW_MINUTES,
 			reason: reason.value.trim() || undefined
 		});
 	}
@@ -309,31 +293,17 @@ function handleSubmit() {
 				<p class="text-xs font-bold text-fg-secondary">
 					این طرح در روزهایی که از بخش «تنظیم ریتم فردا» برایش زمان تعیین کنید در صفحه ثبت روزانه و آمار ظاهر می‌شود.
 				</p>
-				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-					<div>
-						<label for="h-cadence-mins" class="mb-1.5 block text-xs font-bold text-fg">هدف پیش‌فرض هر بازه (دقیقه)</label>
-						<input
-							id="h-cadence-mins"
-							v-model.number="defaultMinutesPerInterval"
-							type="number"
-							min="0"
-							max="1440"
-							step="1"
-							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
-						/>
-					</div>
-					<div>
-						<label for="h-cadence-win" class="mb-1.5 block text-xs font-bold text-fg">پنجره زمانی تکرار (دقیقه)</label>
-						<input
-							id="h-cadence-win"
-							v-model.number="cadenceWindowMinutes"
-							type="number"
-							:min="CADENCE_DEFAULTS.MIN_WINDOW_MINUTES"
-							max="1440"
-							step="5"
-							class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
-						/>
-					</div>
+				<div>
+					<label for="h-cadence-mins" class="mb-1.5 block text-xs font-bold text-fg">هدف پیش‌فرض روزانه (دقیقه)</label>
+					<input
+						id="h-cadence-mins"
+						v-model.number="defaultMinutesPerInterval"
+						type="number"
+						min="0"
+						max="1440"
+						step="1"
+						class="h-11 w-full rounded-xl border border-border bg-surface px-3.5 text-center font-mono text-sm font-black text-fg"
+					/>
 				</div>
 				<div>
 					<label for="h-emerg" class="mb-1.5 block text-xs font-bold text-fg">حداقل اضطراری (اختیاری)</label>

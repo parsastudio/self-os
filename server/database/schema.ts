@@ -30,11 +30,9 @@ export const habits = pgTable(
 		silverDesc: text('silver_desc'),
 		goldDesc: text('gold_desc'),
 		emergencyMinDesc: text('emergency_min_desc'),
-		defaultIntervals: integer('default_intervals').notNull().default(2),
 		defaultMinutesPerInterval: doublePrecision('default_minutes_per_interval')
 			.notNull()
 			.default(10),
-		cadenceWindowMinutes: integer('cadence_window_minutes').notNull().default(60),
 		sortOrder: integer('sort_order').notNull().default(0),
 		createdAtIso: text('created_at_iso').notNull(),
 		updatedAtIso: text('updated_at_iso')
@@ -51,9 +49,7 @@ export const cadencePlans = pgTable(
 		id: text('id').primaryKey(),
 		dateIso: text('date_iso').notNull(),
 		habitId: text('habit_id').notNull(),
-		plannedIntervals: integer('planned_intervals').notNull(),
 		plannedMinutesPerInterval: doublePrecision('planned_minutes_per_interval').notNull(),
-		cadenceWindowMinutes: integer('cadence_window_minutes').notNull().default(60),
 		updatedAtIso: text('updated_at_iso')
 	},
 	(t) => [
@@ -86,10 +82,7 @@ export const habitLogs = pgTable(
 		achievedTier: integer('achieved_tier'),
 		achievedRuleSnapshot: text('achieved_rule_snapshot'),
 		habitSnapshotJson: text('habit_snapshot_json'),
-		completedIntervals: integer('completed_intervals'),
 		actualMinutesPerInterval: doublePrecision('actual_minutes_per_interval'),
-		totalActualMinutes: doublePrecision('total_actual_minutes'),
-		plannedIntervalsSnapshot: integer('planned_intervals_snapshot'),
 		plannedMinutesSnapshot: doublePrecision('planned_minutes_snapshot'),
 		updatedAtIso: text('updated_at_iso')
 	},

@@ -6,15 +6,6 @@ node_modules
 .cache
 dist
 
-# Local SQLite Database & Backups
-data/*.db
-data/*.db-wal
-data/*.db-shm
-data/*.sqlite*
-*.db
-*.db-wal
-*.db-shm
-
 # Git & IDE
 .git
 .gitignore

@@ -12,10 +12,10 @@ import {
 	notes,
 	syncState
 } from '~~/server/database/schema';
-import { getAllHabits } from '~~/server/repositories/habits.repo';
 import {
 	clampClientTimestampIso,
 	type DbExecutor,
+	getAllHabits,
 	saveCadencePlansForDate,
 	saveDailyEntryAndLogs
 } from '~~/server/repositories/daily-tracker.repo';
@@ -48,10 +48,7 @@ function mapLogRow(l: typeof habitLogs.$inferSelect) {
 		achievedTier: l.achievedTier,
 		achievedRuleSnapshot: l.achievedRuleSnapshot,
 		habitSnapshotJson: l.habitSnapshotJson ?? null,
-		completedIntervals: l.completedIntervals,
 		actualMinutesPerInterval: l.actualMinutesPerInterval,
-		totalActualMinutes: l.totalActualMinutes,
-		plannedIntervalsSnapshot: l.plannedIntervalsSnapshot,
 		plannedMinutesSnapshot: l.plannedMinutesSnapshot,
 		updatedAtIso: l.updatedAtIso ?? null
 	};
@@ -146,8 +143,7 @@ export async function getServerMaxVersionIso(): Promise<string> {
 }
 
 export async function processClientSyncRequest(
-	input: SyncRequestPayload,
-	appVersion = '0.0.1'
+	input: SyncRequestPayload
 ): Promise<ServerSyncResponse> {
 	await ensureDatabaseReady();
 	const normalizedKnownIso = normalizeTimestampIso(input.knownServerVersionIso);
@@ -382,8 +378,6 @@ export async function processClientSyncRequest(
 			ok: true,
 			appliedMutationIds,
 			serverVersionIso,
-			appBuildVersion: appVersion,
-			hasRemoteUpdates: false,
 			serverTimeIso
 		};
 	}
@@ -510,8 +504,6 @@ export async function processClientSyncRequest(
 			ok: true,
 			appliedMutationIds,
 			serverVersionIso,
-			appBuildVersion: appVersion,
-			hasRemoteUpdates: hadRemoteUpdatesBeforePush,
 			serverTimeIso,
 			deltaWorkspace
 		};
@@ -563,8 +555,6 @@ export async function processClientSyncRequest(
 		ok: true,
 		appliedMutationIds,
 		serverVersionIso,
-		appBuildVersion: appVersion,
-		hasRemoteUpdates: hadRemoteUpdatesBeforePush,
 		serverTimeIso,
 		fullWorkspace
 	};

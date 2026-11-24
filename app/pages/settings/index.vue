@@ -6,7 +6,6 @@ import { useSyncEngine } from '~/composables/useSyncEngine';
 import { useTheme } from '~/composables/useTheme';
 import { useClientAuth } from '~/composables/useClientAuth';
 import { toPersianDigits } from '~/domain/calendar';
-import { isDemoRecordId } from '~/domain/constants';
 import {
 	type BackupRestoreMode,
 	DatabaseBackupPayloadSchema,
@@ -17,14 +16,12 @@ import {
 	Check,
 	Database,
 	Download,
-	FlaskConical,
 	HardDriveDownload,
 	HardDriveUpload,
 	KeyRound,
 	LogOut,
 	Moon,
 	Palette,
-	Plus,
 	Settings,
 	ShieldCheck,
 	Sun,
@@ -50,83 +47,13 @@ const newPassword = ref('');
 const confirmNewPassword = ref('');
 const passwordMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
 const importMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
-const demoSeedMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
 const isExporting = ref(false);
 const isImporting = ref(false);
-const isMutatingDemoSeed = ref(false);
 const isChangingPassword = ref(false);
 const isConfirmingClearAll = ref(false);
 const isClearingAll = ref(false);
 const isLoggingOut = ref(false);
 const isConfirmingOfflineLogout = ref(false);
-
-const activeDemoHabitsCount = computed(
-	() => habits.value.filter((h) => isDemoRecordId(h.id)).length
-);
-
-async function handleInjectDemoSeed() {
-	if (isMutatingDemoSeed.value) return;
-	isMutatingDemoSeed.value = true;
-	demoSeedMessage.value = null;
-
-	try {
-		await localRepo.injectDemoSeed();
-		if (navigator.onLine) {
-			try {
-				await $fetch('/api/backup/demo-seed', {
-					method: 'POST',
-					body: { action: 'inject' }
-				});
-				void syncEngine.syncNow({ checkRemoteUpdates: true });
-			} catch {
-				// در حالت آفلاین یا عدم دسترسی، در Dexie محلی تزریق شده است
-			}
-		}
-		demoSeedMessage.value = {
-			type: 'success',
-			text: 'داده‌های آزمایشی (Seed) با موفقیت اضافه شدند. اکنون می‌توانید تمام بخش‌ها و نمودارها را بررسی کنید.'
-		};
-	} catch {
-		demoSeedMessage.value = {
-			type: 'error',
-			text: 'خطا در افزودن داده‌های آزمایشی'
-		};
-	} finally {
-		isMutatingDemoSeed.value = false;
-	}
-}
-
-async function handleRemoveDemoSeed() {
-	if (isMutatingDemoSeed.value) return;
-	isMutatingDemoSeed.value = true;
-	demoSeedMessage.value = null;
-
-	try {
-		await localRepo.removeDemoSeed();
-		if (navigator.onLine) {
-			try {
-				await $fetch('/api/backup/demo-seed', {
-					method: 'POST',
-					body: { action: 'remove' }
-				});
-				void syncEngine.syncNow({ checkRemoteUpdates: true });
-			} catch {
-				// در حالت آفلاین یا عدم دسترسی، از Dexie محلی حذف شده است
-			}
-		}
-		demoSeedMessage.value = {
-			type: 'success',
-			text: 'تمام داده‌های آزمایشی به طور کامل و بدون دست زدن به داده‌های شخصی شما حذف شدند.'
-		};
-	} catch {
-		demoSeedMessage.value = {
-			type: 'error',
-			text: 'خطا در حذف داده‌های آزمایشی'
-		};
-	} finally {
-		isMutatingDemoSeed.value = false;
-	}
-}
 
 async function exportLocalBackup() {
 	isExporting.value = true;
@@ -632,60 +559,6 @@ async function handleLogout(forceOfflineLogout = false) {
 			</div>
 		</section>
 
-		<!-- بخش تاشو داده‌های آزمایشی (Demo Seed) برای تست سیستم -->
-		<details
-			:open="activeDemoHabitsCount > 0 || Boolean(demoSeedMessage)"
-			class="rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:px-7"
-		>
-			<summary class="flex cursor-pointer items-center justify-between gap-3 text-sm font-black text-fg-secondary select-none hover:text-fg">
-				<div class="flex items-center gap-2.5">
-					<FlaskConical class="h-4.5 w-4.5 text-accent-text" />
-					<span>داده‌های آزمایشی (برای تست اولیه نمودارها)</span>
-				</div>
-				<span
-					v-if="activeDemoHabitsCount > 0"
-					class="rounded-xl border border-gold-border bg-gold-soft px-2.5 py-0.5 text-[11px] font-extrabold text-gold-text"
-				>
-					{{ toPersianDigits(activeDemoHabitsCount) }} طرح فعال
-				</span>
-			</summary>
-
-			<div class="mt-4 space-y-4 border-t border-border pt-4">
-				<div
-					v-if="demoSeedMessage"
-					class="rounded-2xl border px-4 py-3 text-xs font-extrabold"
-					:class="
-						demoSeedMessage.type === 'success'
-							? 'border-optimal-border bg-optimal-soft text-optimal'
-							: 'border-failed-border bg-failed-soft text-failed'
-					"
-				>
-					{{ demoSeedMessage.text }}
-				</div>
-
-				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-					<button
-						type="button"
-						:disabled="isMutatingDemoSeed"
-						class="flex h-11 items-center justify-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 text-xs font-black text-accent-text transition hover:opacity-90 active:scale-98 disabled:opacity-50"
-						@click="handleInjectDemoSeed"
-					>
-						<Plus class="h-4 w-4" />
-						<span>افزودن داده‌های آزمایشی</span>
-					</button>
-
-					<button
-						type="button"
-						:disabled="isMutatingDemoSeed || activeDemoHabitsCount === 0"
-						class="flex h-11 items-center justify-center gap-2 rounded-xl border border-failed-border bg-failed-soft px-4 text-xs font-black text-failed transition hover:opacity-90 active:scale-98 disabled:opacity-40"
-						@click="handleRemoveDemoSeed"
-					>
-						<Trash2 class="h-4 w-4" />
-						<span>حذف داده‌های آزمایشی</span>
-					</button>
-				</div>
-			</div>
-		</details>
 		</div>
 
 		<template #error="{ error, clearError }">

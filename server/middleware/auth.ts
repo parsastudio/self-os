@@ -75,8 +75,6 @@ export default defineEventHandler(async (event) => {
 	const { isPasswordConfigured, isAuthenticated, sessionToken } =
 		await resolveEventAuthSession(event, false);
 
-	event.context.isAuthenticated = isAuthenticated;
-	event.context.isPasswordConfigured = isPasswordConfigured;
 	event.context.sessionToken = sessionToken;
 
 	if (!isPasswordConfigured || !isAuthenticated) {

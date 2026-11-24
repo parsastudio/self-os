@@ -179,8 +179,7 @@ export function computeSmartBackupMerge(
 			const isIdentical =
 				ext.achievedTier === normalizedLog.achievedTier &&
 				(ext.actualMinutesPerInterval ?? null) ===
-					(normalizedLog.actualMinutesPerInterval ?? null) &&
-				(ext.totalActualMinutes ?? null) === (normalizedLog.totalActualMinutes ?? null);
+					(normalizedLog.actualMinutesPerInterval ?? null);
 
 			if (isIdentical || !isIncomingNewer(normalizedLog.updatedAtIso, ext.updatedAtIso)) {
 				skippedDuplicatesCount++;
@@ -213,9 +212,7 @@ export function computeSmartBackupMerge(
 			existingPlanByKey.set(key, normalizedPlan);
 		} else {
 			const isIdentical =
-				ext.plannedIntervals === normalizedPlan.plannedIntervals &&
-				ext.plannedMinutesPerInterval === normalizedPlan.plannedMinutesPerInterval &&
-				ext.cadenceWindowMinutes === normalizedPlan.cadenceWindowMinutes;
+				ext.plannedMinutesPerInterval === normalizedPlan.plannedMinutesPerInterval;
 
 			if (isIdentical || !isIncomingNewer(normalizedPlan.updatedAtIso, ext.updatedAtIso)) {
 				skippedDuplicatesCount++;

@@ -75,7 +75,6 @@ self-os
         ├── 📄 calendar.ts
         ├── 📄 constants.ts
         ├── 📄 schemas.ts
-        ├── 📄 tags.ts
     ├── 📁 layouts
         ├── 📄 default.vue
     ├── 📁 middleware
@@ -851,44 +850,26 @@ export async function resolveEventAuthSession(
 PATH: server/repositories/daily-tracker.repo.ts
 ================================================================
 
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
 	dailyEntries,
-	habitLogs,
-	reflectionTags
+	habitLogs
 } from '~~/server/database/schema';
 import { getAllHabits } from '~~/server/repositories/habits.repo';
-import {
-	bumpServerStructuralVersion,
-	recordServerDeletionTombstones
-} from '~~/server/repositories/sync.repo';
+import { recordServerDeletionTombstones } from '~~/server/repositories/sync.repo';
 import {
 	isDailyEntryEmpty,
 	resolveDailyHabitLogSnapshot,
 	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import { compareTimestampsIso } from '~/domain/calendar';
-import { DEFAULT_REFLECTION_TAGS } from '~/domain/constants';
 import type {
 	HabitEntity,
 	SaveCadencePlanBatch,
 	SaveDailyEntryInput
 } from '~/domain/schemas';
-
-export async function getReflectionTags(): Promise<string[]> {
-	await ensureDatabaseReady();
-	const rows = await db
-		.select()
-		.from(reflectionTags)
-		.orderBy(asc(reflectionTags.sortOrder));
-
-	if (rows.length === 0) {
-		return [...DEFAULT_REFLECTION_TAGS];
-	}
-	return rows.map((r) => r.label);
-}
 
 export type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
 
@@ -963,9 +944,7 @@ export async function saveDailyEntryAndLogs(
 					.update(dailyEntries)
 					.set({
 						dayStatus: input.dayStatus,
-						reflectionNote: input.reflectionNote,
 						journalText: normalizedJournal,
-						tagsJson: JSON.stringify(input.tags),
 						updatedAtIso: entryUpdatedAtIso
 					})
 					.where(eq(dailyEntries.dateIso, input.dateIso));
@@ -975,9 +954,7 @@ export async function saveDailyEntryAndLogs(
 				id: `entry:${input.dateIso}`,
 				dateIso: input.dateIso,
 				dayStatus: input.dayStatus,
-				reflectionNote: input.reflectionNote,
 				journalText: normalizedJournal,
-				tagsJson: JSON.stringify(input.tags),
 				updatedAtIso: entryUpdatedAtIso
 			});
 		}
@@ -1185,12 +1162,11 @@ import {
 	habits,
 	mediaLogs,
 	notes,
-	reflectionTags,
 	syncState
 } from '~~/server/database/schema';
 import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
-import { DEMO_ENTRY_TAG, DEMO_ID_PREFIX } from '~/domain/constants';
+import { DEMO_ID_PREFIX } from '~/domain/constants';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
 const WORKSPACE_TABLES = [
@@ -1198,7 +1174,6 @@ const WORKSPACE_TABLES = [
 	dailyEntries,
 	cadencePlans,
 	habitLifecycleEvents,
-	reflectionTags,
 	habits,
 	books,
 	mediaLogs,
@@ -1238,7 +1213,6 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 	await ensureDatabaseReady();
 	let removed = 0;
 	const prefixPattern = `${DEMO_ID_PREFIX}%`;
-	const tagPattern = `%${DEMO_ENTRY_TAG}%`;
 
 	const demoCleanupTargets: ReadonlyArray<{
 		table: PgTable;
@@ -1249,7 +1223,6 @@ export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount:
 		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.id, pattern: prefixPattern },
 		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.habitId, pattern: prefixPattern },
 		{ table: dailyEntries, idCol: dailyEntries.id, matchCol: dailyEntries.id, pattern: prefixPattern },
-		{ table: dailyEntries, idCol: dailyEntries.id, matchCol: dailyEntries.tagsJson, pattern: tagPattern },
 		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.id, pattern: prefixPattern },
 		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.habitId, pattern: prefixPattern },
 		{
@@ -1314,8 +1287,7 @@ export async function importDatabaseFromJson(
 			media: await tx.select().from(mediaLogs),
 			notes: await tx.select().from(notes),
 			calendarEvents: await tx.select().from(calendarEvents),
-			lifecycleEvents: await tx.select().from(habitLifecycleEvents),
-			reflectionTags: await tx.select().from(reflectionTags)
+			lifecycleEvents: await tx.select().from(habitLifecycleEvents)
 		};
 
 		const merged = computeSmartBackupMerge(existingData, data);
@@ -1371,12 +1343,6 @@ export async function importDatabaseFromJson(
 			habitLifecycleEvents.id,
 			merged.lifecycleEventsToUpsert
 		);
-		await batchUpsertRows(
-			reflectionTags,
-			reflectionTags.label,
-			merged.reflectionTagsToUpsert,
-			['label']
-		);
 		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
 
@@ -1402,19 +1368,16 @@ import {
 	habits,
 	mediaLogs,
 	notes,
-	reflectionTags,
 	syncState
 } from '~~/server/database/schema';
 import { getAllHabits } from '~~/server/repositories/habits.repo';
 import {
 	clampClientTimestampIso,
 	type DbExecutor,
-	getReflectionTags,
 	saveCadencePlansForDate,
 	saveDailyEntryAndLogs
 } from '~~/server/repositories/daily-tracker.repo';
 import { compareTimestampsIso, normalizeTimestampIso } from '~/domain/calendar';
-import { parseTagsJson } from '~/domain/tags';
 import type {
 	DeltaWorkspaceSnapshot,
 	LocalWorkspaceSnapshot,
@@ -1429,9 +1392,7 @@ function mapEntryRow(e: typeof dailyEntries.$inferSelect) {
 		id: e.id,
 		dateIso: e.dateIso,
 		dayStatus: e.dayStatus,
-		reflectionNote: e.reflectionNote,
 		journalText: e.journalText ?? null,
-		tags: parseTagsJson(e.tagsJson),
 		updatedAtIso: e.updatedAtIso
 	};
 }
@@ -1764,19 +1725,6 @@ export async function processClientSyncRequest(
 							target: habitLifecycleEvents.id,
 							set: payload
 						});
-				} else if (mutation.kind === 'UPSERT_REFLECTION_TAGS') {
-					if (mutation.payload.length > 0) {
-						await tx
-							.insert(reflectionTags)
-							.values(mutation.payload)
-							.onConflictDoUpdate({
-								target: reflectionTags.label,
-								set: {
-									sortOrder: sql`excluded.sort_order`
-								}
-							});
-						await bumpServerStructuralVersion(safeQueuedIso, tx);
-					}
 				}
 				appliedMutationIds.push(mutation.id);
 			}
@@ -1808,7 +1756,6 @@ export async function processClientSyncRequest(
 			changedEntriesRaw,
 			changedLogsRaw,
 			changedHabits,
-			availableTags,
 			changedCadencePlans,
 			changedBooks,
 			changedMedia,
@@ -1832,7 +1779,6 @@ export async function processClientSyncRequest(
 				.from(habits)
 				.where(gt(habits.updatedAtIso, normalizedKnownIso))
 				.orderBy(asc(habits.sortOrder)),
-			getReflectionTags(),
 			db
 				.select()
 				.from(cadencePlans)
@@ -1900,7 +1846,6 @@ export async function processClientSyncRequest(
 			versionIso: serverVersionIso,
 			syncedAtIso: serverTimeIso,
 			habits: changedHabits,
-			availableTags,
 			entries: changedEntriesRaw.map(mapEntryRow),
 			logs: changedLogsRaw.map(mapLogRow),
 			cadencePlans: changedCadencePlans,
@@ -1934,7 +1879,6 @@ export async function processClientSyncRequest(
 		allEntriesRaw,
 		allLogsRaw,
 		allHabits,
-		availableTags,
 		allCadencePlans,
 		allBooks,
 		allMedia,
@@ -1945,7 +1889,6 @@ export async function processClientSyncRequest(
 		db.select().from(dailyEntries).orderBy(desc(dailyEntries.dateIso)),
 		db.select().from(habitLogs).orderBy(desc(habitLogs.dateIso)),
 		getAllHabits(),
-		getReflectionTags(),
 		db.select().from(cadencePlans).orderBy(asc(cadencePlans.dateIso)),
 		db.select().from(books).orderBy(desc(books.createdAtIso)),
 		db.select().from(mediaLogs).orderBy(desc(mediaLogs.createdAtIso)),
@@ -1964,7 +1907,6 @@ export async function processClientSyncRequest(
 		versionIso: serverVersionIso,
 		syncedAtIso: serverTimeIso,
 		habits: allHabits,
-		availableTags,
 		entries: allEntriesRaw.map(mapEntryRow),
 		logs: allLogsRaw.map(mapLogRow),
 		cadencePlans: allCadencePlans,
@@ -2179,7 +2121,6 @@ export const habits = pgTable(
 		id: text('id').primaryKey(),
 		parentId: text('parent_id'),
 		title: text('title').notNull(),
-		category: text('category').notNull().default('عمومی'),
 		trackingMode: text('tracking_mode', { enum: ['tiered', 'interval_cadence'] })
 			.notNull()
 			.default('tiered'),
@@ -2236,9 +2177,7 @@ export const dailyEntries = pgTable(
 		dayStatus: text('day_status', { enum: ['optimal', 'partial', 'failed'] })
 			.notNull()
 			.default('optimal'),
-		reflectionNote: text('reflection_note').notNull().default(''),
 		journalText: text('journal_text'),
-		tagsJson: text('tags_json').notNull().default('[]'),
 		updatedAtIso: text('updated_at_iso').notNull()
 	},
 	(t) => [index('idx_daily_entries_updated_at').on(t.updatedAtIso)]
@@ -2295,12 +2234,6 @@ export const habitLifecycleEvents = pgTable(
 	(t) => [index('idx_lifecycle_events_habit_id').on(t.habitId)]
 );
 
-export const reflectionTags = pgTable('reflection_tags', {
-	id: text('id').primaryKey(),
-	label: text('label').notNull().unique(),
-	sortOrder: integer('sort_order').notNull().default(0)
-});
-
 export const books = pgTable(
 	'books',
 	{
@@ -2352,11 +2285,6 @@ export const calendarEvents = pgTable(
 	{
 		id: text('id').primaryKey(),
 		title: text('title').notNull(),
-		eventType: text('event_type', {
-			enum: ['birthday', 'deadline', 'occasion', 'reminder']
-		})
-			.notNull()
-			.default('occasion'),
 		isAnnual: boolean('is_annual').notNull().default(false),
 		dateIso: text('date_iso'),
 		jalaliMonth: integer('jalali_month').notNull(),
@@ -2424,7 +2352,6 @@ const BOOTSTRAP_DDL_SQL = `
 		id TEXT PRIMARY KEY,
 		parent_id TEXT,
 		title TEXT NOT NULL,
-		category TEXT NOT NULL DEFAULT 'عمومی',
 		tracking_mode TEXT NOT NULL DEFAULT 'tiered',
 		time_slot TEXT NOT NULL DEFAULT 'day',
 		is_situational BOOLEAN NOT NULL DEFAULT FALSE,
@@ -2457,9 +2384,7 @@ const BOOTSTRAP_DDL_SQL = `
 		id TEXT PRIMARY KEY,
 		date_iso TEXT NOT NULL UNIQUE,
 		day_status TEXT NOT NULL DEFAULT 'optimal',
-		reflection_note TEXT NOT NULL DEFAULT '',
 		journal_text TEXT,
-		tags_json TEXT NOT NULL DEFAULT '[]',
 		updated_at_iso TEXT NOT NULL
 	);
 
@@ -2492,12 +2417,6 @@ const BOOTSTRAP_DDL_SQL = `
 		created_at_iso TEXT NOT NULL
 	);
 
-	CREATE TABLE IF NOT EXISTS reflection_tags (
-		id TEXT PRIMARY KEY,
-		label TEXT NOT NULL UNIQUE,
-		sort_order INTEGER NOT NULL DEFAULT 0
-	);
-
 	CREATE TABLE IF NOT EXISTS books (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
@@ -2527,7 +2446,6 @@ const BOOTSTRAP_DDL_SQL = `
 	CREATE TABLE IF NOT EXISTS calendar_events (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
-		event_type TEXT NOT NULL DEFAULT 'occasion',
 		is_annual BOOLEAN NOT NULL DEFAULT FALSE,
 		date_iso TEXT,
 		jalali_month INTEGER NOT NULL,
@@ -3321,7 +3239,7 @@ PATH: app/core/habit-engine.ts
 ================================================================
 
 import { generateId } from '~/domain/calendar';
-import { COMPOSITE_FULL_LABEL, DEFAULT_HABIT_CATEGORY, TIER_SCORES } from '~/domain/constants';
+import { COMPOSITE_FULL_LABEL, TIER_SCORES } from '~/domain/constants';
 import {
 	HabitLifecycleStateSnapshotSchema,
 	type CompositeChildrenStatus,
@@ -3340,12 +3258,10 @@ import {
 } from '~/domain/schemas';
 
 export function isDailyEntryEmpty(
-	input: Pick<SaveDailyEntryInput, 'reflectionNote' | 'journalText' | 'tags' | 'logs'>
+	input: Pick<SaveDailyEntryInput, 'journalText' | 'logs'>
 ): boolean {
 	return (
-		(!input.reflectionNote || input.reflectionNote.trim() === '') &&
 		(!input.journalText || input.journalText.trim() === '') &&
-		input.tags.length === 0 &&
 		input.logs.every(
 			(l) =>
 				(l.achievedTier === null || l.achievedTier === undefined) &&
@@ -3383,7 +3299,6 @@ export function resolveEffectiveCadenceMinutes(
 export function serializeHabitSpecSnapshot(habit: HabitEntity): string {
 	const spec: HabitHistoricalSpec = {
 		title: habit.title,
-		category: habit.category,
 		scheduleLabel: habit.scheduleLabel,
 		notes: habit.notes,
 		bronzeDesc: habit.bronzeDesc,
@@ -3411,7 +3326,6 @@ export function parseHabitSpecSnapshot(
 
 	return {
 		title: parsed.title || fallbackTitle,
-		category: parsed.category || fallbackHabit?.category || 'عمومی',
 		scheduleLabel: parsed.scheduleLabel ?? fallbackHabit?.scheduleLabel ?? null,
 		notes: parsed.notes ?? fallbackHabit?.notes ?? null,
 		bronzeDesc: parsed.bronzeDesc ?? fallbackHabit?.bronzeDesc ?? null,
@@ -3593,7 +3507,6 @@ function applyHabitSpecOverlay(
 	return {
 		...habit,
 		title: overlay.title || habit.title,
-		category: overlay.category || habit.category,
 		scheduleLabel:
 			overlay.scheduleLabel !== undefined ? overlay.scheduleLabel : habit.scheduleLabel,
 		notes: overlay.notes !== undefined ? overlay.notes : habit.notes,
@@ -4076,7 +3989,6 @@ export function buildCreatedHabitWithLifecycle(params: {
 		id: generateId(),
 		parentId: input.parentId ?? null,
 		title: input.title.trim(),
-		category: input.category.trim() || DEFAULT_HABIT_CATEGORY,
 		trackingMode: input.trackingMode,
 		timeSlot: input.timeSlot ?? 'day',
 		isSituational: input.isSituational ?? false,
@@ -4162,7 +4074,6 @@ export function buildUpdatedHabitWithLifecycle(params: {
 	const updatedHabit: HabitEntity = {
 		...current,
 		title: input.title.trim(),
-		category: input.category.trim() || current.category,
 		parentId: input.parentId,
 		timeSlot: input.timeSlot ?? current.timeSlot,
 		isSituational: input.isSituational,
@@ -4205,7 +4116,6 @@ import { compareTimestampsIso } from '~/domain/calendar';
 import type {
 	BackupDailyEntryRow,
 	BackupHabitLogRow,
-	BackupReflectionTagRow,
 	BookEntity,
 	CadencePlanEntity,
 	CalendarEventEntity,
@@ -4346,9 +4256,7 @@ export function computeSmartBackupMerge(
 		} else {
 			const sameContent =
 				ext.dayStatus === incEntry.dayStatus &&
-				normText(ext.reflectionNote) === normText(incEntry.reflectionNote) &&
-				normText(ext.journalText) === normText(incEntry.journalText) &&
-				ext.tagsJson === incEntry.tagsJson;
+				normText(ext.journalText) === normText(incEntry.journalText);
 
 			if (sameContent || !isIncomingNewer(incEntry.updatedAtIso, ext.updatedAtIso)) {
 				skippedDuplicatesCount++;
@@ -4518,26 +4426,6 @@ export function computeSmartBackupMerge(
 		}
 	}
 
-	// 10. Reflection Tags (Deduplicate by normalized label & avoid ID collisions)
-	const existingTagLabels = new Set(existing.reflectionTags.map((t) => normText(t.label)));
-	const usedTagIds = new Set(existing.reflectionTags.map((t) => t.id));
-	const reflectionTagsToUpsert: BackupReflectionTagRow[] = [];
-
-	for (const incTag of incoming.reflectionTags) {
-		const normLabel = normText(incTag.label);
-		if (existingTagLabels.has(normLabel)) {
-			skippedDuplicatesCount++;
-		} else {
-			const safeId = usedTagIds.has(incTag.id) ? `tag:${normLabel}` : incTag.id;
-			reflectionTagsToUpsert.push({
-				...incTag,
-				id: safeId
-			});
-			existingTagLabels.add(normLabel);
-			usedTagIds.add(safeId);
-		}
-	}
-
 	const addedOrUpdatedCount =
 		habitsToUpsert.length +
 		dailyEntriesToUpsert.length +
@@ -4547,8 +4435,7 @@ export function computeSmartBackupMerge(
 		mediaToUpsert.length +
 		notesToUpsert.length +
 		calendarEventsToUpsert.length +
-		lifecycleEventsToUpsert.length +
-		reflectionTagsToUpsert.length;
+		lifecycleEventsToUpsert.length;
 
 	return {
 		habitsToUpsert,
@@ -4560,7 +4447,6 @@ export function computeSmartBackupMerge(
 		notesToUpsert,
 		calendarEventsToUpsert,
 		lifecycleEventsToUpsert,
-		reflectionTagsToUpsert,
 		addedOrUpdatedCount,
 		skippedDuplicatesCount
 	};
@@ -4647,7 +4533,6 @@ import type {
 	HabitEvolutionItem,
 	LifecycleEventEntity,
 	SelectedHabitAnalytics,
-	TagCorrelationStat,
 	WeekdayPerformanceStat
 } from '~/domain/schemas';
 import {
@@ -5113,7 +4998,6 @@ export function buildFullAnalyticsReport(params: {
 		(h) => h.parentId!
 	);
 
-	const entryByDate = new Map(entries.map((e) => [e.dateIso, e]));
 	const logsByDate = new Map<string, Map<string, AnalyticsRawLog>>();
 	for (const log of logs) {
 		let dayMap = logsByDate.get(log.dateIso);
@@ -5268,7 +5152,6 @@ export function buildFullAnalyticsReport(params: {
 			const weekdayIndex = getPersianWeekdayIndex(dt);
 			const weekdayLabel = JALALI_GRID_WEEKDAYS[weekdayIndex] ?? '';
 			const human = formatJalaliHuman(dIso, todayIso);
-			const entry = entryByDate.get(dIso);
 
 			const evalRes = evaluateHabitDay(
 				targetHabit,
@@ -5307,7 +5190,6 @@ export function buildFullAnalyticsReport(params: {
 				actualMinutes: evalRes.actualMinutes,
 				plannedMinutes: evalRes.plannedMinutes,
 				completedIntervals: evalRes.completedIntervals,
-				dayTags: entry?.tags ?? [],
 				lifecycleEventsOnDay: eventsByDate.get(dIso) ?? []
 			});
 		}
@@ -5380,37 +5262,6 @@ export function buildFullAnalyticsReport(params: {
 				? [...activeWeekdays].sort((a, b) => a.avgScore - b.avgScore)[0]
 				: null;
 
-		const tagMap = new Map<
-			string,
-			{ occurrences: number; scoreSum: number; successCount: number }
-		>();
-		for (const pt of dailySeries) {
-			if (pt.score === null) continue;
-			for (const tag of pt.dayTags) {
-				const cur = tagMap.get(tag) ?? { occurrences: 0, scoreSum: 0, successCount: 0 };
-				cur.occurrences++;
-				cur.scoreSum += pt.score;
-				if (pt.score > 0) cur.successCount++;
-				tagMap.set(tag, cur);
-			}
-		}
-
-		const tagCorrelations: TagCorrelationStat[] = Array.from(tagMap.entries())
-			.map(([tag, stat]) => {
-				const avgScoreWithTag = Math.round(stat.scoreSum / stat.occurrences);
-				const successRateWithTag = Math.round(
-					(stat.successCount / stat.occurrences) * 100
-				);
-				return {
-					tag,
-					occurrences: stat.occurrences,
-					avgScoreWithTag,
-					successRateWithTag,
-					impactDelta: avgScoreWithTag - avgQualityScore
-				};
-			})
-			.sort((a, b) => Math.abs(b.impactDelta) - Math.abs(a.impactDelta));
-
 		selectedHabitReport = {
 			habit: targetHabit,
 			parentTitle: parent?.title ?? null,
@@ -5444,7 +5295,6 @@ export function buildFullAnalyticsReport(params: {
 			weekdayStats,
 			bestWeekday: bestWeekday ?? null,
 			weakestWeekday: weakestWeekday ?? null,
-			tagCorrelations,
 			evolutionTimeline
 		};
 	}
@@ -5475,7 +5325,6 @@ import {
 	jalaliPartsToIso,
 	shiftIsoDate
 } from '~/domain/calendar';
-import { parseTagsJson } from '~/domain/tags';
 import type {
 	AnalyticsRawLog,
 	BookEntity,
@@ -5531,7 +5380,6 @@ export function computeUpcomingEventsBanner(params: {
 					upcoming.push({
 						id: ev.id,
 						title: ev.title,
-						eventType: ev.eventType,
 						isAnnual: true,
 						isCompleted: ev.isCompleted,
 						occurrenceDateIso: iso,
@@ -5549,7 +5397,6 @@ export function computeUpcomingEventsBanner(params: {
 				upcoming.push({
 					id: ev.id,
 					title: ev.title,
-					eventType: ev.eventType,
 					isAnnual: false,
 					isCompleted: ev.isCompleted,
 					occurrenceDateIso: ev.dateIso,
@@ -5713,9 +5560,7 @@ export function assembleJalaliMonthArchive(params: {
 			entry: rawEntry
 				? {
 						dayStatus: rawEntry.dayStatus,
-						reflectionNote: rawEntry.reflectionNote,
-						journalText: rawEntry.journalText ?? null,
-						tags: rawEntry.tags ?? parseTagsJson(rawEntry.tagsJson)
+						journalText: rawEntry.journalText ?? null
 					}
 				: null,
 			habitPerformances,
@@ -5750,8 +5595,19 @@ PATH: app/core/demo-seed.ts
 ================================================================
 
 import { getTodayIso, isoToJalaliParts, isoToJalaliSlash, shiftIsoDate } from '~/domain/calendar';
-import { DEMO_ENTRY_TAG } from '~/domain/constants';
 import { evaluateDayStatusColor, resolveHabitRuleSnapshot, serializeHabitSpecSnapshot } from '~/core/habit-engine';
+
+const DEMO_JOURNAL_DAY_1 = 'روز اول تست سیستم؛ ساختار سطح‌بندی طرح‌ها حس خوبی دارد.';
+const DEMO_JOURNAL_DAY_3 = 'امروز کمی خسته بودم اما حداقل‌های برنزی را حفظ کردم.';
+const DEMO_JOURNAL_DAY_6 = 'بازگشت به ریتم مطلوب و تکمیل تمرکز عمیق.';
+const DEMO_JOURNAL_DAY_7 = 'ثبت آزمایشی امروز برای بررسی نمودارها و تقویم.';
+
+export const DEMO_DAILY_JOURNALS = new Set<string>([
+	DEMO_JOURNAL_DAY_1,
+	DEMO_JOURNAL_DAY_3,
+	DEMO_JOURNAL_DAY_6,
+	DEMO_JOURNAL_DAY_7
+]);
 import type {
 	BookEntity,
 	CadencePlanEntity,
@@ -5773,7 +5629,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-workout',
 			parentId: null,
 			title: 'ورزش و تحرک صبحگاهی (آزمایشی)',
-			category: 'سلامت',
 			trackingMode: 'tiered',
 			timeSlot: 'morning',
 			isSituational: false,
@@ -5795,7 +5650,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-deep-work',
 			parentId: null,
 			title: 'تمرین تمرکز عمیق (آزمایشی)',
-			category: 'کار',
 			trackingMode: 'interval_cadence',
 			timeSlot: 'day',
 			isSituational: false,
@@ -5817,7 +5671,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-night-routine',
 			parentId: null,
 			title: 'روتین آرامش شبانه (آزمایشی)',
-			category: 'رشد فردی',
 			trackingMode: 'tiered',
 			timeSlot: 'night',
 			isSituational: false,
@@ -5839,7 +5692,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-sub-reading',
 			parentId: 'demo:habit-night-routine',
 			title: 'مطالعه آزاد شبانه (آزمایشی)',
-			category: 'یادگیری',
 			trackingMode: 'tiered',
 			timeSlot: 'night',
 			isSituational: false,
@@ -5861,7 +5713,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: 'demo:habit-sub-review',
 			parentId: 'demo:habit-night-routine',
 			title: 'مرور و برنامه‌ریزی فردا (آزمایشی)',
-			category: 'رشد فردی',
 			trackingMode: 'tiered',
 			timeSlot: 'night',
 			isSituational: false,
@@ -5906,13 +5757,13 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 		reviewTier: number;
 		journal: string | null;
 	}> = [
-		{ offset: -6, workoutTier: 2, deepMinutes: 15, readingTier: 2, reviewTier: 3, journal: 'روز اول تست سیستم؛ ساختار سطح‌بندی طرح‌ها حس خوبی دارد.' },
+		{ offset: -6, workoutTier: 2, deepMinutes: 15, readingTier: 2, reviewTier: 3, journal: DEMO_JOURNAL_DAY_1 },
 		{ offset: -5, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: null },
-		{ offset: -4, workoutTier: 1, deepMinutes: 10, readingTier: 1, reviewTier: 2, journal: 'امروز کمی خسته بودم اما حداقل‌های برنزی را حفظ کردم.' },
+		{ offset: -4, workoutTier: 1, deepMinutes: 10, readingTier: 1, reviewTier: 2, journal: DEMO_JOURNAL_DAY_3 },
 		{ offset: -3, workoutTier: 3, deepMinutes: 25, readingTier: 3, reviewTier: 3, journal: null },
 		{ offset: -2, workoutTier: 0, deepMinutes: 0, readingTier: 1, reviewTier: 1, journal: null },
-		{ offset: -1, workoutTier: 3, deepMinutes: 20, readingTier: 2, reviewTier: 3, journal: 'بازگشت به ریتم مطلوب و تکمیل تمرکز عمیق.' },
-		{ offset: 0, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: 'ثبت آزمایشی امروز برای بررسی نمودارها و تقویم.' }
+		{ offset: -1, workoutTier: 3, deepMinutes: 20, readingTier: 2, reviewTier: 3, journal: DEMO_JOURNAL_DAY_6 },
+		{ offset: 0, workoutTier: 3, deepMinutes: 20, readingTier: 3, reviewTier: 3, journal: DEMO_JOURNAL_DAY_7 }
 	];
 
 	const dailyEntries: DatabaseBackupPayload['data']['dailyEntries'] = [];
@@ -6014,9 +5865,7 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			id: `demo:entry:${dateIso}`,
 			dateIso,
 			dayStatus: status,
-			reflectionNote: 'ثبت آزمایشی جهت بررسی نمودارها',
 			journalText: pat.journal,
-			tagsJson: JSON.stringify([DEMO_ENTRY_TAG, status === 'optimal' ? 'انگیزه بالا' : 'خستگی']),
 			updatedAtIso: dayUpdatedIso
 		});
 	}
@@ -6094,7 +5943,6 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 		{
 			id: 'demo:event-1',
 			title: 'ارزیابی هفتگی سیستم (رویداد آزمایشی)',
-			eventType: 'reminder',
 			isAnnual: false,
 			dateIso: tomorrowIso,
 			jalaliMonth: tomorrowParts.jm,
@@ -6120,8 +5968,7 @@ export function buildDemoSeedDataset(referenceTodayIso = getTodayIso()): Databas
 			media,
 			notes,
 			calendarEvents,
-			lifecycleEvents,
-			reflectionTags: []
+			lifecycleEvents
 		}
 	};
 }
@@ -6837,9 +6684,7 @@ export function useLocalRepository() {
 		return {
 			dateIso: e.dateIso,
 			dayStatus: e.dayStatus,
-			reflectionNote: e.reflectionNote,
 			journalText: e.journalText ?? null,
-			tags: [...e.tags],
 			updatedAtIso: e.updatedAtIso
 		};
 	}
@@ -6863,20 +6708,6 @@ export function useLocalRepository() {
 			plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
 			updatedAtIso: l.updatedAtIso || fallbackNowIso
 		};
-	}
-
-	async function syncReflectionTagsToLocal(availableTags?: string[]): Promise<void> {
-		if (!availableTags || availableTags.length === 0) return;
-		const existingTags = await db.reflectionTags.toArray();
-		const existingByLabel = new Map(existingTags.map((t) => [t.label, t]));
-		const uniqueLabels = Array.from(new Set(availableTags));
-		const tagRecords = uniqueLabels.map((label, idx) => ({
-			id: existingByLabel.get(label)?.id ?? `tag:${label}`,
-			label,
-			sortOrder: idx + 1
-		}));
-		await db.reflectionTags.clear();
-		await db.reflectionTags.bulkPut(tagRecords);
 	}
 
 	const daily = {
@@ -6906,9 +6737,7 @@ export function useLocalRepository() {
 				const entryRecord: LocalDailyEntryRecord = {
 					dateIso: input.dateIso,
 					dayStatus: input.dayStatus,
-					reflectionNote: input.reflectionNote,
 					journalText: input.journalText?.trim() ? input.journalText : null,
-					tags: [...input.tags],
 					updatedAtIso: nowIso
 				};
 				await db.dailyEntries.put(entryRecord);
@@ -7069,7 +6898,6 @@ export function useLocalRepository() {
 								input: {
 									habitId: child.id,
 									title: child.title,
-									category: child.category,
 									parentId: child.parentId,
 									timeSlot: child.timeSlot,
 									isSituational: child.isSituational,
@@ -7440,7 +7268,6 @@ export function useLocalRepository() {
 			const newEvent: CalendarEventEntity = {
 				id: generateId(),
 				title: input.title.trim(),
-				eventType: input.eventType,
 				isAnnual,
 				dateIso: isAnnual ? null : input.dateIso,
 				jalaliMonth: parts.jm,
@@ -7673,8 +7500,6 @@ export function useLocalRepository() {
 				ws.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
 			);
 
-			await syncReflectionTagsToLocal(ws.availableTags);
-
 			// Reconcile cleared daily entries and logs
 			const serverEntryDates = new Set(ws.entries.map((e) => e.dateIso));
 			const localEntryDates = await db.dailyEntries.toCollection().primaryKeys();
@@ -7837,7 +7662,6 @@ export function useLocalRepository() {
 							.map((l) => mapServerLogToLocal(l, fallbackNowIso))
 					);
 				}
-				await syncReflectionTagsToLocal(delta.availableTags);
 			}
 		);
 	}
@@ -8301,7 +8125,7 @@ import {
 	resolveHistoricalHabitForDate
 } from '~/core/habit-engine';
 import { shiftIsoDate } from '~/domain/calendar';
-import { CADENCE_SUCCESS_RATIOS, DEFAULT_REFLECTION_TAGS, TIER_SCORES } from '~/domain/constants';
+import { CADENCE_SUCCESS_RATIOS, TIER_SCORES } from '~/domain/constants';
 import type {
 	CadenceDraftItem,
 	DayStatusColor,
@@ -8321,16 +8145,13 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const entry = useDexieLiveQuery(() => db.dailyEntries.get(dateIso.value), undefined, dateIso);
 	const logs = useDexieLiveQuery(() => db.habitLogs.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
 	const allEntries = useDexieLiveQuery(() => db.dailyEntries.orderBy('dateIso').reverse().limit(35).toArray(), []);
-	const tagsRecords = useDexieLiveQuery(() => db.reflectionTags.orderBy('sortOrder').toArray(), []);
 	const dayCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
 	const tomorrowCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(tomorrowIso.value).toArray(), [], tomorrowIso);
 	const calendarEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
 	const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 	// Local mutable state
-	const reflectionNote = ref('');
 	const journalText = ref('');
-	const selectedTags = ref<string[]>([]);
 	const manualDayStatus = ref<DayStatusColor | null>(null);
 	const logsByHabitId = ref<Record<string, HabitLogItemInput>>({});
 	const tomorrowPlansByHabitId = ref<Record<string, CadenceDraftItem>>({});
@@ -8350,13 +8171,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			tomorrowCadencePlans.isLoading.value
 	);
 
-	const availableTags = computed(() => {
-		if (tagsRecords.value.length > 0) {
-			return tagsRecords.value.map((t) => t.label);
-		}
-		return [...DEFAULT_REFLECTION_TAGS];
-	});
-
 	// Synchronize when date or database queries change
 	watch(
 		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
@@ -8367,9 +8181,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 					pendingSavePayload = {
 						dateIso: activeDraftDateIso,
 						dayStatus: computedDayStatus.value,
-						reflectionNote: reflectionNote.value,
 						journalText: journalText.value.trim() ? journalText.value : null,
-						tags: [...selectedTags.value],
 						updatedAtIso: new Date().toISOString(),
 						logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
 					};
@@ -8386,15 +8198,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 				return;
 			}
 
-			const incomingReflection = entry.value?.reflectionNote ?? '';
 			const incomingJournal = entry.value?.journalText ?? '';
-
-			if (
-				isDateChanged ||
-				(!isDirty.value && reflectionNote.value.trim() !== incomingReflection.trim())
-			) {
-				reflectionNote.value = incomingReflection;
-			}
 
 			if (
 				isDateChanged ||
@@ -8403,7 +8207,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 				journalText.value = incomingJournal;
 			}
 
-			selectedTags.value = entry.value?.tags ? [...entry.value.tags] : [];
 			manualDayStatus.value = null;
 
 			const dayPlanMap = new Map(dayCadencePlans.value.map((p) => [p.habitId, p]));
@@ -8466,15 +8269,16 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			const nextTomorrow: Record<string, CadenceDraftItem> = {};
 			for (const habit of habits.value.filter((h) => h.trackingMode === 'interval_cadence')) {
 				const tPlan = tomorrowPlanMap.get(habit.id);
+				const initialMinutes =
+					tPlan !== undefined
+						? tPlan.plannedMinutesPerInterval
+						: habit.status === 'active'
+							? habit.defaultMinutesPerInterval
+							: 0;
 				nextTomorrow[habit.id] = {
 					habitId: habit.id,
 					plannedIntervals: tPlan?.plannedIntervals ?? habit.defaultIntervals ?? 1,
-					plannedMinutesPerInterval:
-						tPlan !== undefined
-							? tPlan.plannedMinutesPerInterval
-							: habit.status === 'active'
-								? habit.defaultMinutesPerInterval
-								: 0,
+					plannedMinutesPerInterval: initialMinutes > 0 ? initialMinutes : null,
 					cadenceWindowMinutes: tPlan?.cadenceWindowMinutes ?? habit.cadenceWindowMinutes ?? 60
 				};
 			}
@@ -8598,9 +8402,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		return {
 			dateIso: dateIso.value,
 			dayStatus: computedDayStatus.value,
-			reflectionNote: reflectionNote.value,
 			journalText: journalText.value.trim() ? journalText.value : null,
-			tags: [...selectedTags.value],
 			updatedAtIso: new Date().toISOString(),
 			logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
 		};
@@ -8835,9 +8637,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			};
 		}
 		logsByHabitId.value = updated;
-		reflectionNote.value = '';
 		journalText.value = '';
-		selectedTags.value = [];
 		manualDayStatus.value = null;
 		scheduleAutoSave(0);
 	}
@@ -8906,23 +8706,15 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		scheduleAutoSave(0);
 	}
 
-	function toggleTag(tag: string) {
-		if (selectedTags.value.includes(tag)) {
-			selectedTags.value = selectedTags.value.filter((t) => t !== tag);
-		} else {
-			selectedTags.value = [...selectedTags.value, tag];
-		}
-		scheduleAutoSave(0);
-	}
-
-	function setTomorrowPlanMinutes(habitId: string, minutes: number) {
+	function setTomorrowPlanMinutes(habitId: string, minutes: number | null) {
 		const current = tomorrowPlansByHabitId.value[habitId];
 		if (!current) return;
 		tomorrowPlansByHabitId.value = {
 			...tomorrowPlansByHabitId.value,
 			[habitId]: {
 				...current,
-				plannedMinutesPerInterval: Math.max(0, Number.isNaN(minutes) ? 0 : minutes)
+				plannedMinutesPerInterval:
+					minutes === null ? null : Math.max(0, Number.isNaN(minutes) ? 0 : minutes)
 			}
 		};
 	}
@@ -8934,10 +8726,11 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		)) {
 			const log = logsByHabitId.value[habit.id];
 			if (log) {
+				const actualMinutes = log.actualMinutesPerInterval ?? 0;
 				next[habit.id] = {
 					habitId: habit.id,
 					plannedIntervals: 1,
-					plannedMinutesPerInterval: log.actualMinutesPerInterval ?? 0,
+					plannedMinutesPerInterval: actualMinutes > 0 ? actualMinutes : null,
 					cadenceWindowMinutes: 60
 				};
 			}
@@ -8949,7 +8742,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		const items = Object.values(tomorrowPlansByHabitId.value).map((item) => ({
 			habitId: item.habitId,
 			plannedIntervals: item.plannedIntervals,
-			plannedMinutesPerInterval: item.plannedMinutesPerInterval,
+			plannedMinutesPerInterval: item.plannedMinutesPerInterval ?? 0,
 			cadenceWindowMinutes: item.cadenceWindowMinutes
 		}));
 		await localRepo.daily.saveCadencePlans({
@@ -8983,10 +8776,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		tree,
 		schedulableCadenceHabits,
 		applicableHabits,
-		availableTags,
-		reflectionNote,
 		journalText,
-		selectedTags,
 		manualDayStatus,
 		logsByHabitId,
 		tomorrowPlansByHabitId,
@@ -9001,7 +8791,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		setParentGroupAllTier,
 		clearDay,
 		updateCadenceActual,
-		toggleTag,
 		scheduleAutoSave,
 		flushPendingSave,
 		setTomorrowPlanMinutes,
@@ -9121,11 +8910,10 @@ PATH: app/composables/useLocalBackupOperations.ts
 import type { Table } from 'dexie';
 import type { PersonalOSDatabase } from '~/composables/useAppDatabase';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
-import { buildDemoSeedDataset } from '~/core/demo-seed';
+import { buildDemoSeedDataset, DEMO_DAILY_JOURNALS } from '~/core/demo-seed';
 import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
-import { DEMO_ENTRY_TAG, isDemoRecordId } from '~/domain/constants';
+import { isDemoRecordId } from '~/domain/constants';
 import type { DatabaseBackupPayload, SyncOutboxMutation } from '~/domain/schemas';
-import { parseTagsJson } from '~/domain/tags';
 import { clonePlain } from '~/utils/clone';
 
 export function createLocalBackupOperations(
@@ -9145,8 +8933,7 @@ export function createLocalBackupOperations(
 			allMedia,
 			allNotes,
 			allEvents,
-			allLifecycle,
-			allTags
+			allLifecycle
 		] = await Promise.all([
 			db.habits.toArray(),
 			db.dailyEntries.toArray(),
@@ -9156,8 +8943,7 @@ export function createLocalBackupOperations(
 			db.media.toArray(),
 			db.notes.toArray(),
 			db.calendarEvents.toArray(),
-			db.lifecycleEvents.toArray(),
-			db.reflectionTags.toArray()
+			db.lifecycleEvents.toArray()
 		]);
 
 		return {
@@ -9169,8 +8955,7 @@ export function createLocalBackupOperations(
 				habits: allHabits,
 				dailyEntries: allEntries.map((e) => ({
 					...e,
-					id: `entry:${e.dateIso}`,
-					tagsJson: JSON.stringify(e.tags)
+					id: `entry:${e.dateIso}`
 				})),
 				habitLogs: allLogs.map((l) => ({
 					...l,
@@ -9189,12 +8974,7 @@ export function createLocalBackupOperations(
 				media: allMedia,
 				notes: allNotes,
 				calendarEvents: allEvents,
-				lifecycleEvents: allLifecycle,
-				reflectionTags: allTags.map((t) => ({
-					id: t.id,
-					label: t.label,
-					sortOrder: t.sortOrder
-				}))
+				lifecycleEvents: allLifecycle
 			}
 		};
 	}
@@ -9215,8 +8995,7 @@ export function createLocalBackupOperations(
 			media: [],
 			notes: [],
 			calendarEvents: [],
-			lifecycleEvents: [],
-			reflectionTags: []
+			lifecycleEvents: []
 		};
 		const currentSnapshot = mode === 'replace' ? { data: emptyData } : await exportBackupPayload();
 		const merged = computeSmartBackupMerge(currentSnapshot.data, payload.data);
@@ -9247,9 +9026,7 @@ export function createLocalBackupOperations(
 						merged.dailyEntriesToUpsert.map((e) => ({
 							dateIso: e.dateIso,
 							dayStatus: e.dayStatus,
-							reflectionNote: e.reflectionNote,
 							journalText: e.journalText ?? null,
-							tags: parseTagsJson(e.tagsJson),
 							updatedAtIso: e.updatedAtIso
 						}))
 					);
@@ -9278,9 +9055,7 @@ export function createLocalBackupOperations(
 								payload: clonePlain({
 									dateIso,
 									dayStatus: entryRec.dayStatus,
-									reflectionNote: entryRec.reflectionNote,
 									journalText: entryRec.journalText,
-									tags: entryRec.tags,
 									updatedAtIso: entryRec.updatedAtIso,
 									logs: dayLogs
 								})
@@ -9369,15 +9144,6 @@ export function createLocalBackupOperations(
 						});
 					}
 				}
-				if (merged.reflectionTagsToUpsert.length > 0) {
-					await db.reflectionTags.bulkPut(merged.reflectionTagsToUpsert);
-					stagedMutations.push({
-						id: 'tags:batch',
-						kind: 'UPSERT_REFLECTION_TAGS',
-						queuedAtIso: nowIso,
-						payload: clonePlain(merged.reflectionTagsToUpsert)
-					});
-				}
 				if (!skipOutboxStaging && stagedMutations.length > 0) {
 					await db.syncOutbox.bulkPut(stagedMutations);
 				}
@@ -9412,13 +9178,11 @@ export function createLocalBackupOperations(
 
 				for (const e of data.dailyEntries) {
 					const existing = await db.dailyEntries.get(e.dateIso);
-					if (!existing || existing.tags.includes(DEMO_ENTRY_TAG)) {
+					if (!existing) {
 						await db.dailyEntries.put({
 							dateIso: e.dateIso,
 							dayStatus: e.dayStatus,
-							reflectionNote: e.reflectionNote,
 							journalText: e.journalText ?? null,
-							tags: parseTagsJson(e.tagsJson),
 							updatedAtIso: e.updatedAtIso
 						});
 					}
@@ -9445,6 +9209,11 @@ export function createLocalBackupOperations(
 		};
 
 		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+			const demoLogs = (await db.habitLogs.toArray()).filter(
+				(l) => isDemoRecordId(l.id) || isDemoRecordId(l.habitId)
+			);
+			const demoLogDates = new Set(demoLogs.map((l) => l.dateIso));
+
 			await deleteMatchingById(db.habits);
 			await deleteMatchingById(
 				db.habitLogs,
@@ -9464,14 +9233,19 @@ export function createLocalBackupOperations(
 			);
 			await deleteMatchingById(db.syncOutbox, (m) => m.id.includes('demo:'));
 
-			const demoEntryDates = (await db.dailyEntries.toArray())
-				.filter(
-					(e) =>
-						e.tags.includes(DEMO_ENTRY_TAG) ||
-						e.reflectionNote === 'ثبت آزمایشی جهت بررسی نمودارها'
-				)
-				.map((e) => e.dateIso);
-			if (demoEntryDates.length > 0) await db.dailyEntries.bulkDelete(demoEntryDates);
+			const demoEntryDatesToDelete: string[] = [];
+			for (const dateIso of demoLogDates) {
+				const remainingLogsCount = await db.habitLogs.where('dateIso').equals(dateIso).count();
+				if (remainingLogsCount === 0) {
+					const entry = await db.dailyEntries.get(dateIso);
+					if (entry && (!entry.journalText || DEMO_DAILY_JOURNALS.has(entry.journalText))) {
+						demoEntryDatesToDelete.push(dateIso);
+					}
+				}
+			}
+			if (demoEntryDatesToDelete.length > 0) {
+				await db.dailyEntries.bulkDelete(demoEntryDatesToDelete);
+			}
 		});
 	}
 
@@ -9500,7 +9274,6 @@ import type {
 	LocalAuthRecord,
 	LocalDailyEntryRecord,
 	LocalHabitLogRecord,
-	LocalReflectionTagRecord,
 	MediaEntity,
 	NoteEntity,
 	SyncMetaRecord,
@@ -9517,7 +9290,6 @@ export class PersonalOSDatabase extends Dexie {
 	notes!: Table<NoteEntity, string>;
 	calendarEvents!: Table<CalendarEventEntity, string>;
 	lifecycleEvents!: Table<LifecycleEventEntity, string>;
-	reflectionTags!: Table<LocalReflectionTagRecord, string>;
 	syncOutbox!: Table<SyncOutboxMutation, string>;
 	syncMeta!: Table<SyncMetaRecord, string>;
 	localAuth!: Table<LocalAuthRecord, string>;
@@ -9540,6 +9312,10 @@ export class PersonalOSDatabase extends Dexie {
 			syncMeta: 'key',
 			localAuth: 'key'
 		});
+
+		this.version(2).stores({
+			reflectionTags: null
+		});
 	}
 
 	get workspaceTables(): Table[] {
@@ -9552,8 +9328,7 @@ export class PersonalOSDatabase extends Dexie {
 			this.media,
 			this.notes,
 			this.calendarEvents,
-			this.lifecycleEvents,
-			this.reflectionTags
+			this.lifecycleEvents
 		];
 	}
 
@@ -10499,16 +10274,6 @@ const renderedBars = computed(() =>
 					</span>
 				</div>
 			</div>
-
-			<div v-if="inspectedPoint.dayTags.length > 0" class="flex flex-wrap items-center gap-1.5">
-				<span
-					v-for="tag in inspectedPoint.dayTags"
-					:key="tag"
-					class="rounded-xl border border-border bg-surface px-2.5 py-0.5 text-[11px] font-bold text-fg-secondary"
-				>
-					#{{ tag }}
-				</span>
-			</div>
 		</div>
 	</section>
 </template>
@@ -10523,7 +10288,7 @@ PATH: app/components/analytics/HabitHeatmapMatrix.vue
 <script setup lang="ts">
 import { toPersianDigits } from '~/domain/calendar';
 import type { HabitDailyPoint, SelectedHabitAnalytics } from '~/domain/schemas';
-import { Calendar, Hash, Layers, TrendingDown, TrendingUp } from 'lucide-vue-next';
+import { Calendar, Layers } from 'lucide-vue-next';
 
 interface Props {
 	report: SelectedHabitAnalytics;
@@ -10618,7 +10383,7 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 			<div class="flex items-center justify-between gap-2">
 				<div class="flex items-center gap-2">
 					<Calendar class="h-4.5 w-4.5 text-accent-text" />
-					<h3 class="text-base font-black text-fg">الگوی روزهای هفته و عوامل موثر</h3>
+					<h3 class="text-base font-black text-fg">الگوی روزهای هفته</h3>
 				</div>
 			</div>
 
@@ -10634,26 +10399,6 @@ function getCellClasses(outcome: HabitDailyPoint['outcome']): string {
 					</div>
 					<span class="w-12 shrink-0 text-left font-mono font-extrabold text-fg">
 						{{ w.loggedDays > 0 ? `%${toPersianDigits(w.avgScore)}` : '—' }}
-					</span>
-				</div>
-			</div>
-
-			<div v-if="report.tagCorrelations.length > 0" class="space-y-2 border-t border-border pt-3.5">
-				<div class="flex items-center gap-1.5 text-xs font-extrabold text-fg-secondary">
-					<Hash class="h-3.5 w-3.5 text-accent-text" />
-					<span>تاثیر تگ‌ها</span>
-				</div>
-				<div class="flex flex-wrap gap-1.5">
-					<span
-						v-for="item in report.tagCorrelations.slice(0, 6)"
-						:key="item.tag"
-						class="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[11px] font-extrabold"
-						:class="item.impactDelta >= 0 ? 'border-optimal-border bg-optimal-soft text-optimal' : 'border-failed-border bg-failed-soft text-failed'"
-					>
-						<TrendingUp v-if="item.impactDelta >= 0" class="h-3 w-3" />
-						<TrendingDown v-else class="h-3 w-3" />
-						<span>#{{ item.tag }}</span>
-						<span dir="ltr" class="font-mono">({{ item.impactDelta > 0 ? '+' : '' }}{{ toPersianDigits(item.impactDelta) }}%)</span>
 					</span>
 				</div>
 			</div>
@@ -11348,7 +11093,6 @@ function handleSubmit() {
 			habitId: props.editingHabit.id,
 			title: title.value.trim(),
 			parentId: effectiveParentId,
-			category: props.editingHabit.category,
 			timeSlot: selectedTimeSlot.value,
 			isSituational: isTieredLeaf ? isSituational.value : false,
 			status: selectedStatus.value,
@@ -11373,7 +11117,6 @@ function handleSubmit() {
 		emit('create', {
 			title: title.value.trim(),
 			parentId: effectiveParentId,
-			category: 'عمومی',
 			trackingMode: isCadence ? 'interval_cadence' : 'tiered',
 			timeSlot: selectedTimeSlot.value,
 			isSituational: isTieredLeaf ? isSituational.value : false,
@@ -12394,17 +12137,14 @@ PATH: app/components/tracker/TrackerActionToolbar.vue
 ================================================================
 
 <script setup lang="ts">
-import { formatJalaliHuman, toPersianDigits } from '~/domain/calendar';
+import { formatJalaliHuman, normalizeDigits } from '~/domain/calendar';
 import type { HabitEntity } from '~/domain/schemas';
-import { CalendarClock, Copy, Eraser, MessageSquarePlus, Sparkles } from 'lucide-vue-next';
+import { CalendarClock, Copy, Eraser, Sparkles } from 'lucide-vue-next';
 
 interface Props {
 	cadenceHabits: HabitEntity[];
 	tomorrowIso: string;
-	availableTags: string[];
-	selectedTags: string[];
-	reflectionNote: string;
-	tomorrowPlans: Record<string, { plannedMinutesPerInterval: number }>;
+	tomorrowPlans: Record<string, { plannedMinutesPerInterval: number | null }>;
 	isSavingTomorrow?: boolean;
 	isTomorrowSaved?: boolean;
 }
@@ -12417,14 +12157,29 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
 	(e: 'markAllOptimal'): void;
 	(e: 'clearDay'): void;
-	(e: 'toggleTag', tag: string): void;
-	(e: 'updateReflectionNote', text: string): void;
-	(e: 'updateTomorrowPlan', habitId: string, minutes: number): void;
+	(e: 'updateTomorrowPlan', habitId: string, minutes: number | null): void;
 	(e: 'copyTodayToTomorrow'): void;
 	(e: 'saveTomorrowPlans'): void;
 }>();
 
-const showReflectionDrawer = ref(false);
+function handleTomorrowPlanInput(habitId: string, e: Event) {
+	const inputEl = e.target as HTMLInputElement;
+	const digitsOnly = normalizeDigits(inputEl.value).replace(/[^0-9]/g, '');
+	if (digitsOnly === '') {
+		if (inputEl.value !== '') {
+			inputEl.value = '';
+		}
+		emit('updateTomorrowPlan', habitId, null);
+		return;
+	}
+	const clamped = Math.min(1440, Math.max(0, Number(digitsOnly)));
+	const clampedStr = String(clamped);
+	if (inputEl.value !== clampedStr) {
+		inputEl.value = clampedStr;
+	}
+	emit('updateTomorrowPlan', habitId, clamped);
+}
+
 const showTomorrowDrawer = ref(false);
 
 watch(
@@ -12437,9 +12192,6 @@ watch(
 );
 
 const tomorrowHuman = computed(() => formatJalaliHuman(props.tomorrowIso));
-const activeNotesBadgeCount = computed(
-	() => props.selectedTags.length + (props.reflectionNote.trim().length > 0 ? 1 : 0)
-);
 </script>
 
 <template>
@@ -12466,29 +12218,8 @@ const activeNotesBadgeCount = computed(
 				</button>
 			</div>
 
-			<div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+			<div v-if="cadenceHabits.length > 0" class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
 				<button
-					type="button"
-					class="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl border px-3 text-xs font-extrabold transition sm:flex-initial sm:gap-2 sm:px-4"
-					:class="
-						showReflectionDrawer || activeNotesBadgeCount > 0
-							? 'border-accent-border bg-accent-soft text-accent-text'
-							: 'border-border bg-elevated text-fg-secondary hover:text-fg'
-					"
-					@click="showReflectionDrawer = !showReflectionDrawer"
-				>
-					<MessageSquarePlus class="h-4 w-4 shrink-0" />
-					<span class="truncate">علت‌ها و یادداشت</span>
-					<span
-						v-if="activeNotesBadgeCount > 0"
-						class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-black text-accent-fg"
-					>
-						{{ toPersianDigits(activeNotesBadgeCount) }}
-					</span>
-				</button>
-
-				<button
-					v-if="cadenceHabits.length > 0"
 					type="button"
 					class="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl border px-3 text-xs font-extrabold transition sm:flex-initial sm:gap-2 sm:px-4"
 					:class="
@@ -12501,36 +12232,6 @@ const activeNotesBadgeCount = computed(
 					<CalendarClock class="h-4 w-4 shrink-0" />
 					<span class="truncate">تنظیم ریتم فردا</span>
 				</button>
-			</div>
-		</div>
-
-		<!-- کشوی علت‌ها و یادداشت روز -->
-		<div v-if="showReflectionDrawer" class="mt-4 space-y-3.5 border-t border-border pt-4">
-			<div class="flex flex-wrap gap-1.5">
-				<button
-					v-for="tag in availableTags"
-					:key="tag"
-					type="button"
-					class="h-9 rounded-xl border px-3 text-xs font-bold transition"
-					:class="
-						selectedTags.includes(tag)
-							? 'border-accent-border bg-accent text-accent-fg'
-							: 'border-border bg-elevated text-fg-secondary hover:text-fg'
-					"
-					@click="emit('toggleTag', tag)"
-				>
-					#{{ tag }}
-				</button>
-			</div>
-
-			<div>
-				<textarea
-					rows="2"
-					:value="reflectionNote"
-					placeholder="یادداشت کوتاه درباره اتفاقات یا دلایل امروز..."
-					class="w-full rounded-2xl border border-border bg-elevated p-3.5 text-sm text-fg placeholder:text-fg-muted focus:border-border-strong focus:outline-none"
-					@input="emit('updateReflectionNote', ($event.target as HTMLTextAreaElement).value)"
-				></textarea>
 			</div>
 		</div>
 
@@ -12561,13 +12262,11 @@ const activeNotesBadgeCount = computed(
 					<label class="flex items-center gap-2">
 						<input
 							v-if="tomorrowPlans[habit.id]"
-							:value="tomorrowPlans[habit.id]?.plannedMinutesPerInterval"
-							type="number"
-							min="0"
-							max="1440"
-							step="1"
+							:value="tomorrowPlans[habit.id]?.plannedMinutesPerInterval ?? ''"
+							type="text"
+							inputmode="numeric"
 							class="h-10 w-20 rounded-xl border border-border bg-surface px-3 text-center font-mono text-base font-black text-fg focus:border-border-strong focus:outline-none"
-							@input="emit('updateTomorrowPlan', habit.id, Math.min(1440, Math.max(0, Number(($event.target as HTMLInputElement).value) || 0)))"
+							@input="handleTomorrowPlanInput(habit.id, $event)"
 						/>
 						<span class="text-xs font-bold text-fg-secondary">دقیقه</span>
 					</label>
@@ -12618,8 +12317,6 @@ interface Props {
 	recentEntries?: Array<{
 		dateIso: string;
 		dayStatus: DayStatusColor;
-		reflectionNote: string;
-		tags: string[];
 	}>;
 	liveDayStatus: DayStatusColor;
 	isLiveDirty?: boolean;
@@ -13636,7 +13333,6 @@ function handleAddEvent() {
 
 	emit('createEvent', {
 		title: eventTitleInput.value.trim(),
-		eventType: 'occasion',
 		isAnnual: isAnnualChecked.value,
 		dateIso: props.day.iso,
 		notes: eventNotesInput.value.trim() || undefined
@@ -15174,16 +14870,6 @@ const displayedMemories = computed(() => {
 					<p class="whitespace-pre-line text-base leading-8 font-normal text-fg select-text">
 						{{ item.journalText }}
 					</p>
-
-					<footer v-if="item.tags.length > 0" class="mt-5 flex flex-wrap gap-1.5 pt-2">
-						<span
-							v-for="tag in item.tags"
-							:key="tag"
-							class="rounded-xl bg-elevated px-2.5 py-1 text-[11px] font-bold text-fg-secondary"
-						>
-							#{{ tag }}
-						</span>
-					</footer>
 				</article>
 			</div>
 
@@ -15385,16 +15071,11 @@ const groupedTieredSections = computed(() => {
 			<TrackerActionToolbar
 				:cadence-habits="tracker.schedulableCadenceHabits.value"
 				:tomorrow-iso="tracker.tomorrowIso.value"
-				:available-tags="tracker.availableTags.value"
-				:selected-tags="tracker.selectedTags.value"
-				:reflection-note="tracker.reflectionNote.value"
 				:tomorrow-plans="tracker.tomorrowPlansByHabitId.value"
 				:is-saving-tomorrow="isSavingTomorrow"
 				:is-tomorrow-saved="isTomorrowSaved"
 				@mark-all-optimal="tracker.markAllOptimalFiveSecond"
 				@clear-day="tracker.clearDay"
-				@toggle-tag="tracker.toggleTag"
-				@update-reflection-note="(val) => { tracker.reflectionNote.value = val; tracker.scheduleAutoSave(750); }"
 				@update-tomorrow-plan="(id, mins) => tracker.setTomorrowPlanMinutes(id, mins)"
 				@copy-today-to-tomorrow="tracker.copyTodayActualsToTomorrowPlan"
 				@save-tomorrow-plans="handleSaveTomorrowPlans"
@@ -16424,39 +16105,21 @@ function goToToday() {
 					@select-day="(iso) => (userSelectedIso = iso)"
 				/>
 
-				<!-- کارت خاطره و یادداشت روز انتخابی -->
+				<!-- کارت خاطره روز انتخابی -->
 				<section
-					v-if="selectedDay?.entry && (selectedDay.entry.journalText || selectedDay.entry.reflectionNote || selectedDay.entry.tags.length > 0)"
+					v-if="selectedDay?.entry?.journalText"
 					class="space-y-3.5 rounded-3xl border border-border bg-surface p-5 shadow-(--shadow-soft) sm:p-6"
 				>
 					<div class="flex items-center justify-between gap-2">
 						<h3 class="flex items-center gap-2 text-sm font-black text-fg">
 							<BookHeart class="h-4 w-4 text-accent-text" />
-							<span>خاطره و یادداشت {{ selectedDay.fullHumanLabel }}</span>
+							<span>خاطره {{ selectedDay.fullHumanLabel }}</span>
 						</h3>
 					</div>
 
-					<p
-						v-if="selectedDay.entry.journalText"
-						class="whitespace-pre-line rounded-2xl border border-border bg-elevated p-4 text-sm leading-8 text-fg"
-					>
+					<p class="whitespace-pre-line rounded-2xl border border-border bg-elevated p-4 text-sm leading-8 text-fg">
 						{{ selectedDay.entry.journalText }}
 					</p>
-
-					<p v-if="selectedDay.entry.reflectionNote" class="rounded-2xl border border-border bg-elevated px-4 py-3 text-xs leading-6 text-fg-secondary">
-						<strong class="font-extrabold text-fg">علت / یادداشت روز: </strong>
-						{{ selectedDay.entry.reflectionNote }}
-					</p>
-
-					<div v-if="selectedDay.entry.tags.length > 0" class="flex flex-wrap gap-1.5 pt-0.5">
-						<span
-							v-for="tag in selectedDay.entry.tags"
-							:key="tag"
-							class="rounded-xl border border-border bg-elevated px-2.5 py-1 text-[11px] font-bold text-fg-secondary"
-						>
-							#{{ tag }}
-						</span>
-					</div>
 				</section>
 			</div>
 
@@ -17407,10 +17070,7 @@ import type {
 	MediaStatus
 } from '~/domain/schemas';
 
-export const DEFAULT_HABIT_CATEGORY = 'عمومی';
-
 export const DEMO_ID_PREFIX = 'demo:';
-export const DEMO_ENTRY_TAG = 'داده_آزمایشی';
 
 export function isDemoRecordId(id: string | null | undefined): boolean {
 	return Boolean(id && id.startsWith(DEMO_ID_PREFIX));
@@ -17665,18 +17325,6 @@ export function getOutcomeBadgeMeta(
 		badgeClass: 'border-border bg-elevated text-fg-muted'
 	};
 }
-
-export const DEFAULT_REFLECTION_TAGS = [
-	'خستگی',
-	'کم‌خوابی',
-	'مشکلات اینترنت',
-	'اهمال‌کاری',
-	'بیرون بودن',
-	'انگیزه بالا',
-	'تمرکز عمیق',
-	'بحث سیاسی',
-	'مشکلات خانوادگی'
-] as const;
 
 
 ----------------------------------------------------------------
@@ -18032,34 +17680,11 @@ export function buildJalaliMonthGrid(
 ----------------------------------------------------------------
 
 ================================================================
-PATH: app/domain/tags.ts
-================================================================
-
-export function parseTagsJson(rawJson: string | null | undefined): string[] {
-	if (!rawJson) return [];
-	try {
-		const parsed = JSON.parse(rawJson);
-		return Array.isArray(parsed)
-			? parsed.filter((item): item is string => typeof item === 'string')
-			: [];
-	} catch {
-		return [];
-	}
-}
-
-
-----------------------------------------------------------------
-
-================================================================
 PATH: app/domain/schemas.ts
 ================================================================
 
 import { z } from 'zod';
-import {
-	CADENCE_DEFAULTS,
-	DEFAULT_HABIT_CATEGORY,
-	TIER_SCORES
-} from '~/domain/constants';
+import { CADENCE_DEFAULTS, TIER_SCORES } from '~/domain/constants';
 
 export const TrackingModeSchema = z.enum(['tiered', 'interval_cadence']);
 export type TrackingMode = z.infer<typeof TrackingModeSchema>;
@@ -18111,19 +17736,10 @@ export type NoteSmartFilter = z.infer<typeof NoteSmartFilterSchema>;
 export const HabitTimeSlotSchema = z.enum(['morning', 'day', 'night']);
 export type HabitTimeSlot = z.infer<typeof HabitTimeSlotSchema>;
 
-export const CalendarEventTypeSchema = z.enum([
-	'birthday',
-	'deadline',
-	'occasion',
-	'reminder'
-]);
-export type CalendarEventType = z.infer<typeof CalendarEventTypeSchema>;
-
 export const HabitEntitySchema = z.object({
 	id: z.string(),
 	parentId: z.string().nullable(),
 	title: z.string().min(1),
-	category: z.string().default(DEFAULT_HABIT_CATEGORY),
 	trackingMode: TrackingModeSchema,
 	timeSlot: HabitTimeSlotSchema.default('day'),
 	isSituational: z.boolean().default(false),
@@ -18201,9 +17817,7 @@ export type HabitLogItemInput = z.infer<typeof HabitLogItemInputSchema>;
 export const SaveDailyEntryInputSchema = z.object({
 	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string().max(10000).default(''),
 	journalText: z.string().max(100000).nullable().optional(),
-	tags: z.array(z.string().max(120)).max(100).default([]),
 	updatedAtIso: z.string().optional(),
 	logs: z.array(HabitLogItemInputSchema).max(500)
 });
@@ -18230,7 +17844,6 @@ export type SaveCadencePlanBatch = z.infer<typeof SaveCadencePlanBatchSchema>;
 export const CreateHabitInputSchema = z.object({
 	title: z.string().min(2, 'عنوان طرح باید حداقل ۲ کاراکتر باشد'),
 	parentId: z.string().nullable().default(null),
-	category: z.string().default(DEFAULT_HABIT_CATEGORY),
 	trackingMode: TrackingModeSchema,
 	timeSlot: HabitTimeSlotSchema.optional().default('day'),
 	isSituational: z.boolean().default(false),
@@ -18255,7 +17868,6 @@ export type CreateHabitInput = z.infer<typeof CreateHabitInputSchema>;
 export const MutateHabitStructureSchema = z.object({
 	habitId: z.string(),
 	title: z.string().min(2),
-	category: z.string().default(DEFAULT_HABIT_CATEGORY),
 	parentId: z.string().nullable(),
 	timeSlot: HabitTimeSlotSchema.optional(),
 	isSituational: z.boolean().default(false),
@@ -18335,7 +17947,6 @@ export type UpdateMediaInput = z.infer<typeof UpdateMediaInputSchema>;
 export const CalendarEventEntitySchema = z.object({
 	id: z.string(),
 	title: z.string().min(1),
-	eventType: CalendarEventTypeSchema,
 	isAnnual: z.boolean().default(false),
 	dateIso: z.string().nullable(),
 	jalaliMonth: z.number().int().min(1).max(12),
@@ -18349,7 +17960,6 @@ export type CalendarEventEntity = z.infer<typeof CalendarEventEntitySchema>;
 
 export const CreateCalendarEventInputSchema = z.object({
 	title: z.string().min(1, 'عنوان رویداد الزامی است'),
-	eventType: CalendarEventTypeSchema.default('occasion'),
 	isAnnual: z.boolean().default(false),
 	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	notes: z.string().optional()
@@ -18513,18 +18123,6 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('ADD_LIFECYCLE_EVENT'),
 		queuedAtIso: z.string(),
 		payload: LifecycleEventEntitySchema
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('UPSERT_REFLECTION_TAGS'),
-		queuedAtIso: z.string(),
-		payload: z.array(
-			z.object({
-				id: z.string(),
-				label: z.string(),
-				sortOrder: z.number().int()
-			})
-		)
 	})
 ]);
 export type SyncOutboxMutation = z.infer<typeof SyncOutboxMutationSchema>;
@@ -18539,9 +18137,7 @@ export type SyncRequestPayload = z.infer<typeof SyncRequestPayloadSchema>;
 export const LocalDailyEntryRecordSchema = z.object({
 	dateIso: z.string(),
 	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string(),
 	journalText: z.string().nullable(),
-	tags: z.array(z.string()),
 	updatedAtIso: z.string()
 });
 export type LocalDailyEntryRecord = z.infer<typeof LocalDailyEntryRecordSchema>;
@@ -18570,7 +18166,6 @@ export const LocalWorkspaceSnapshotSchema = z.object({
 	versionIso: z.string(),
 	syncedAtIso: z.string(),
 	habits: z.array(HabitEntitySchema),
-	availableTags: z.array(z.string()),
 	entries: z.array(WorkspaceEntryItemSchema),
 	logs: z.array(WorkspaceLogItemSchema),
 	cadencePlans: z.array(CadencePlanEntitySchema),
@@ -18610,7 +18205,6 @@ export type ServerSyncResponse = z.infer<typeof ServerSyncResponseSchema>;
 export const UpcomingEventBannerItemSchema = z.object({
 	id: z.string(),
 	title: z.string(),
-	eventType: CalendarEventTypeSchema,
 	isAnnual: z.boolean(),
 	isCompleted: z.boolean(),
 	occurrenceDateIso: z.string(),
@@ -18622,7 +18216,6 @@ export type UpcomingEventBannerItem = z.infer<typeof UpcomingEventBannerItemSche
 
 export const HabitHistoricalSpecSchema = z.object({
 	title: z.string(),
-	category: z.string(),
 	scheduleLabel: z.string().nullable(),
 	notes: z.string().nullable(),
 	bronzeDesc: z.string().nullable(),
@@ -18658,9 +18251,7 @@ export const CalendarDayAggregateSchema = z.object({
 	entry: z
 		.object({
 			dayStatus: DayStatusColorSchema,
-			reflectionNote: z.string(),
-			journalText: z.string().nullable(),
-			tags: z.array(z.string())
+			journalText: z.string().nullable()
 		})
 		.nullable(),
 	habitPerformances: z.array(DayHabitPerformanceItemSchema),
@@ -18708,19 +18299,14 @@ export type AnalyticsRawLog = z.infer<typeof AnalyticsRawLogSchema>;
 
 export const AnalyticsRawEntrySchema = z.object({
 	dateIso: z.string(),
-	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string(),
-	tags: z.array(z.string())
+	dayStatus: DayStatusColorSchema
 });
 export type AnalyticsRawEntry = z.infer<typeof AnalyticsRawEntrySchema>;
 
 export const RawCalendarDayEntrySchema = z.object({
 	dateIso: z.string(),
 	dayStatus: DayStatusColorSchema,
-	reflectionNote: z.string(),
-	journalText: z.string().nullable(),
-	tags: z.array(z.string()).optional(),
-	tagsJson: z.string().optional()
+	journalText: z.string().nullable()
 });
 export type RawCalendarDayEntry = z.infer<typeof RawCalendarDayEntrySchema>;
 
@@ -18730,13 +18316,6 @@ export const LocalHabitLogRecordSchema = HabitLogItemInputSchema.extend({
 	updatedAtIso: z.string()
 });
 export type LocalHabitLogRecord = z.infer<typeof LocalHabitLogRecordSchema>;
-
-export const LocalReflectionTagRecordSchema = z.object({
-	id: z.string(),
-	label: z.string(),
-	sortOrder: z.number()
-});
-export type LocalReflectionTagRecord = z.infer<typeof LocalReflectionTagRecordSchema>;
 
 export const SelectOptionSchema = z.object({
 	value: z.union([z.string(), z.number()]),
@@ -18792,7 +18371,7 @@ export type SyncStatusVisual = z.infer<typeof SyncStatusVisualSchema>;
 export const CadenceDraftItemSchema = z.object({
 	habitId: z.string(),
 	plannedIntervals: z.number().int().min(0),
-	plannedMinutesPerInterval: z.number().min(0),
+	plannedMinutesPerInterval: z.number().min(0).nullable(),
 	cadenceWindowMinutes: z.number().int().min(15)
 });
 export type CadenceDraftItem = z.infer<typeof CadenceDraftItemSchema>;
@@ -18876,7 +18455,6 @@ export const HabitDailyPointSchema = z.object({
 	actualMinutes: z.number().nullable(),
 	plannedMinutes: z.number().nullable(),
 	completedIntervals: z.number().nullable(),
-	dayTags: z.array(z.string()),
 	lifecycleEventsOnDay: z.array(HabitEvolutionItemSchema)
 });
 export type HabitDailyPoint = z.infer<typeof HabitDailyPointSchema>;
@@ -18904,15 +18482,6 @@ export const WeekdayPerformanceStatSchema = z.object({
 	avgScore: z.number()
 });
 export type WeekdayPerformanceStat = z.infer<typeof WeekdayPerformanceStatSchema>;
-
-export const TagCorrelationStatSchema = z.object({
-	tag: z.string(),
-	occurrences: z.number(),
-	avgScoreWithTag: z.number(),
-	successRateWithTag: z.number(),
-	impactDelta: z.number()
-});
-export type TagCorrelationStat = z.infer<typeof TagCorrelationStatSchema>;
 
 export const HabitComparisonRowSchema = z.object({
 	habit: HabitEntitySchema,
@@ -18961,7 +18530,6 @@ export const SelectedHabitAnalyticsSchema = z.object({
 	weekdayStats: z.array(WeekdayPerformanceStatSchema),
 	bestWeekday: WeekdayPerformanceStatSchema.nullable(),
 	weakestWeekday: WeekdayPerformanceStatSchema.nullable(),
-	tagCorrelations: z.array(TagCorrelationStatSchema),
 	evolutionTimeline: z.array(HabitEvolutionItemSchema)
 });
 export type SelectedHabitAnalytics = z.infer<typeof SelectedHabitAnalyticsSchema>;
@@ -18997,28 +18565,18 @@ export const DatabaseBackupPayloadSchema = z.object({
 					id: z.string(),
 					dateIso: z.string(),
 					dayStatus: DayStatusColorSchema,
-					reflectionNote: z.string().max(10000),
 					journalText: z.string().max(100000).nullable(),
-					tagsJson: z.string().max(10000),
 					updatedAtIso: z.string()
 				})
 			)
 			.max(50000),
-		habitLogs: z.array(WorkspaceLogItemSchema).max(200000),		cadencePlans: z.array(CadencePlanEntitySchema).max(50000),
+		habitLogs: z.array(WorkspaceLogItemSchema).max(200000),
+		cadencePlans: z.array(CadencePlanEntitySchema).max(50000),
 		books: z.array(BookEntitySchema).max(10000),
 		media: z.array(MediaEntitySchema).max(10000),
 		notes: z.array(NoteEntitySchema).max(10000),
 		calendarEvents: z.array(CalendarEventEntitySchema).max(10000),
-		lifecycleEvents: z.array(LifecycleEventEntitySchema).max(50000),
-		reflectionTags: z
-			.array(
-				z.object({
-					id: z.string(),
-					label: z.string().max(120),
-					sortOrder: z.number()
-				})
-			)
-			.max(1000)
+		lifecycleEvents: z.array(LifecycleEventEntitySchema).max(50000)
 	})
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
@@ -19039,7 +18597,6 @@ export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;
 
 export type BackupDailyEntryRow = DatabaseBackupPayload['data']['dailyEntries'][number];
 export type BackupHabitLogRow = DatabaseBackupPayload['data']['habitLogs'][number];
-export type BackupReflectionTagRow = DatabaseBackupPayload['data']['reflectionTags'][number];
 
 export const MergedBackupResultSchema = z.object({
 	habitsToUpsert: z.array(HabitEntitySchema),
@@ -19051,7 +18608,6 @@ export const MergedBackupResultSchema = z.object({
 	notesToUpsert: z.array(NoteEntitySchema),
 	calendarEventsToUpsert: z.array(CalendarEventEntitySchema),
 	lifecycleEventsToUpsert: z.array(LifecycleEventEntitySchema),
-	reflectionTagsToUpsert: ExistingWorkspaceDataSchema.shape.reflectionTags,
 	addedOrUpdatedCount: z.number().int(),
 	skippedDuplicatesCount: z.number().int()
 });

@@ -1,11 +1,11 @@
-import { eq, inArray, sql } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
 	dailyEntries,
-	habitLogs
+	habitLogs,
+	habits
 } from '~~/server/database/schema';
-import { getAllHabits } from '~~/server/repositories/habits.repo';
 import { recordServerDeletionTombstones } from '~~/server/repositories/sync.repo';
 import {
 	isDailyEntryEmpty,
@@ -20,6 +20,11 @@ import type {
 } from '~/domain/schemas';
 
 export type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
+
+export async function getAllHabits(): Promise<HabitEntity[]> {
+	await ensureDatabaseReady();
+	return db.select().from(habits).orderBy(asc(habits.sortOrder));
+}
 
 const MAX_CLOCK_SKEW_MS = 60 * 1000;
 
@@ -184,10 +189,7 @@ export async function saveDailyEntryAndLogs(
 						achievedTier: sql`excluded.achieved_tier`,
 						achievedRuleSnapshot: sql`excluded.achieved_rule_snapshot`,
 						habitSnapshotJson: sql`excluded.habit_snapshot_json`,
-						completedIntervals: sql`excluded.completed_intervals`,
 						actualMinutesPerInterval: sql`excluded.actual_minutes_per_interval`,
-						totalActualMinutes: sql`excluded.total_actual_minutes`,
-						plannedIntervalsSnapshot: sql`excluded.planned_intervals_snapshot`,
 						plannedMinutesSnapshot: sql`excluded.planned_minutes_snapshot`,
 						updatedAtIso: sql`excluded.updated_at_iso`
 					}
@@ -247,9 +249,7 @@ export async function saveCadencePlansForDate(
 				id: existing?.id ?? `plan:${input.targetDateIso}:${item.habitId}`,
 				dateIso: input.targetDateIso,
 				habitId: item.habitId,
-				plannedIntervals: item.plannedIntervals,
 				plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-				cadenceWindowMinutes: item.cadenceWindowMinutes,
 				updatedAtIso: itemUpdatedAtIso
 			});
 		}
@@ -271,9 +271,7 @@ export async function saveCadencePlansForDate(
 				.onConflictDoUpdate({
 					target: [cadencePlans.dateIso, cadencePlans.habitId],
 					set: {
-						plannedIntervals: sql`excluded.planned_intervals`,
 						plannedMinutesPerInterval: sql`excluded.planned_minutes_per_interval`,
-						cadenceWindowMinutes: sql`excluded.cadence_window_minutes`,
 						updatedAtIso: sql`excluded.updated_at_iso`
 					}
 				});

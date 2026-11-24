@@ -65,9 +65,7 @@ export const HabitEntitySchema = z.object({
 	silverDesc: z.string().nullable(),
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
-	defaultIntervals: z.number().int().min(0).max(96),
 	defaultMinutesPerInterval: z.number().min(0).max(1440),
-	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).max(1440),
 	sortOrder: z.number().int().default(0),
 	createdAtIso: z.string(),
 	updatedAtIso: z.string().nullable().optional()
@@ -102,9 +100,7 @@ export const CadencePlanEntitySchema = z.object({
 	id: z.string(),
 	dateIso: z.string(),
 	habitId: z.string(),
-	plannedIntervals: z.number().int().min(0).max(96),
 	plannedMinutesPerInterval: z.number().min(0).max(1440),
-	cadenceWindowMinutes: z.number().int().min(15).max(1440),
 	updatedAtIso: z.string().nullable().optional()
 });
 export type CadencePlanEntity = z.infer<typeof CadencePlanEntitySchema>;
@@ -120,10 +116,7 @@ export const HabitLogItemInputSchema = z.object({
 		.nullable(),
 	achievedRuleSnapshot: z.string().nullable().optional(),
 	habitSnapshotJson: z.string().nullable().optional(),
-	completedIntervals: z.number().int().min(0).max(96).nullable(),
 	actualMinutesPerInterval: z.number().min(0).max(1440).nullable(),
-	totalActualMinutes: z.number().min(0).max(1440).nullable(),
-	plannedIntervalsSnapshot: z.number().int().min(0).max(96).nullable(),
 	plannedMinutesSnapshot: z.number().min(0).max(1440).nullable(),
 	updatedAtIso: z.string().nullable().optional()
 });
@@ -140,15 +133,12 @@ export type SaveDailyEntryInput = z.infer<typeof SaveDailyEntryInputSchema>;
 
 export const SaveCadencePlanBatchSchema = z.object({
 	targetDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-	reason: z.string().max(1000).optional(),
 	updatedAtIso: z.string().optional(),
 	items: z
 		.array(
 			z.object({
 				habitId: z.string(),
-				plannedIntervals: z.number().int().min(0).max(96),
 				plannedMinutesPerInterval: z.number().min(0).max(1440),
-				cadenceWindowMinutes: z.number().int().min(15).max(1440),
 				updatedAtIso: z.string().optional()
 			})
 		)
@@ -168,14 +158,7 @@ export const CreateHabitInputSchema = z.object({
 	silverDesc: z.string().nullable().optional(),
 	goldDesc: z.string().nullable().optional(),
 	emergencyMinDesc: z.string().nullable().optional(),
-	defaultIntervals: z.number().int().min(0).max(96).default(CADENCE_DEFAULTS.INTERVALS),
 	defaultMinutesPerInterval: z.number().min(0).max(1440).default(CADENCE_DEFAULTS.MINUTES_PER_INTERVAL),
-	cadenceWindowMinutes: z
-		.number()
-		.int()
-		.min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES)
-		.max(1440)
-		.default(CADENCE_DEFAULTS.WINDOW_MINUTES),
 	reason: z.string().optional()
 });
 export type CreateHabitInput = z.infer<typeof CreateHabitInputSchema>;
@@ -194,7 +177,6 @@ export const MutateHabitStructureSchema = z.object({
 	goldDesc: z.string().nullable(),
 	emergencyMinDesc: z.string().nullable(),
 	defaultMinutesPerInterval: z.number().min(0).max(1440).optional(),
-	cadenceWindowMinutes: z.number().int().min(CADENCE_DEFAULTS.MIN_WINDOW_MINUTES).max(1440).optional(),
 	reason: z.string().min(2, 'نوشتن دلیل تغییر برای ثبت در تاریخچه الزامی است')
 });
 export type MutateHabitStructureInput = z.infer<typeof MutateHabitStructureSchema>;
@@ -443,7 +425,6 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 export type SyncOutboxMutation = z.infer<typeof SyncOutboxMutationSchema>;
 
 export const SyncRequestPayloadSchema = z.object({
-	clientId: z.string().max(128).default('default-client'),
 	knownServerVersionIso: z.string().max(64).nullable().default(null),
 	mutations: z.array(SyncOutboxMutationSchema).max(5000).default([])
 });
@@ -469,10 +450,7 @@ export const WorkspaceLogItemSchema = z.object({
 	achievedTier: z.number().nullable(),
 	achievedRuleSnapshot: z.string().nullable(),
 	habitSnapshotJson: z.string().nullable(),
-	completedIntervals: z.number().nullable(),
 	actualMinutesPerInterval: z.number().nullable(),
-	totalActualMinutes: z.number().nullable(),
-	plannedIntervalsSnapshot: z.number().nullable(),
 	plannedMinutesSnapshot: z.number().nullable(),
 	updatedAtIso: z.string().nullable()
 });
@@ -509,8 +487,6 @@ export const ServerSyncResponseSchema = z.object({
 	error: z.string().optional(),
 	appliedMutationIds: z.array(z.string()),
 	serverVersionIso: z.string(),
-	appBuildVersion: z.string().optional(),
-	hasRemoteUpdates: z.boolean(),
 	serverTimeIso: z.string(),
 	fullWorkspace: LocalWorkspaceSnapshotSchema.optional(),
 	deltaWorkspace: DeltaWorkspaceSnapshotSchema.optional()
@@ -520,12 +496,8 @@ export type ServerSyncResponse = z.infer<typeof ServerSyncResponseSchema>;
 export const UpcomingEventBannerItemSchema = z.object({
 	id: z.string(),
 	title: z.string(),
-	isAnnual: z.boolean(),
-	isCompleted: z.boolean(),
 	occurrenceDateIso: z.string(),
-	humanDateLabel: z.string(),
-	daysRemaining: z.number(),
-	notes: z.string().nullable()
+	daysRemaining: z.number()
 });
 export type UpcomingEventBannerItem = z.infer<typeof UpcomingEventBannerItemSchema>;
 
@@ -548,7 +520,6 @@ export const DayHabitPerformanceItemSchema = z.object({
 	achievedTier: z.number().nullable(),
 	achievedRule: z.string().nullable(),
 	actualMinutes: z.number().nullable(),
-	completedIntervals: z.number().nullable(),
 	plannedMinutes: z.number().nullable(),
 	isArchived: z.boolean(),
 	specSnapshot: HabitHistoricalSpecSchema
@@ -604,10 +575,7 @@ export const AnalyticsRawLogSchema = z.object({
 	achievedTier: z.number().nullable(),
 	achievedRuleSnapshot: z.string().nullable().optional(),
 	habitSnapshotJson: z.string().nullable().optional(),
-	completedIntervals: z.number().nullable().optional(),
 	actualMinutesPerInterval: z.number().nullable().optional(),
-	totalActualMinutes: z.number().nullable().optional(),
-	plannedIntervalsSnapshot: z.number().nullable().optional(),
 	plannedMinutesSnapshot: z.number().nullable().optional()
 });
 export type AnalyticsRawLog = z.infer<typeof AnalyticsRawLogSchema>;
@@ -666,11 +634,7 @@ export const JalaliMonthGridCellSchema = z.object({
 export type JalaliMonthGridCell = z.infer<typeof JalaliMonthGridCellSchema>;
 
 export const DayStatusMetaItemSchema = z.object({
-	value: DayStatusColorSchema,
-	label: z.string(),
-	shortBadgeLabel: z.string(),
-	dotClass: z.string(),
-	softBadgeClasses: z.string()
+	dotClass: z.string()
 });
 export type DayStatusMetaItem = z.infer<typeof DayStatusMetaItemSchema>;
 
@@ -685,15 +649,12 @@ export type SyncStatusVisual = z.infer<typeof SyncStatusVisualSchema>;
 
 export const CadenceDraftItemSchema = z.object({
 	habitId: z.string(),
-	plannedIntervals: z.number().int().min(0),
-	plannedMinutesPerInterval: z.number().min(0).nullable(),
-	cadenceWindowMinutes: z.number().int().min(15)
+	plannedMinutesPerInterval: z.number().min(0).nullable()
 });
 export type CadenceDraftItem = z.infer<typeof CadenceDraftItemSchema>;
 
 export const SyncMetaRecordSchema = z.object({
 	key: z.enum(['meta:sync', 'meta:theme']),
-	clientId: z.string(),
 	knownServerVersionIso: z.string().nullable(),
 	lastSyncedAtIso: z.string().nullable(),
 	themeMode: z.enum(['dark', 'light']).optional()
@@ -707,7 +668,6 @@ export const LocalAuthRecordSchema = z.object({
 	expiresAtIso: z.string(),
 	verifierSaltHex: z.string(),
 	passwordVerifierHex: z.string(),
-	sessionSignatureHex: z.string().optional(),
 	updatedAtIso: z.string()
 });
 export type LocalAuthRecord = z.infer<typeof LocalAuthRecordSchema>;
@@ -719,13 +679,11 @@ export const HabitLifecycleStateSnapshotSchema = z
 		scheduleLabel: z.string().nullable().optional(),
 		emergencyMinDesc: z.string().nullable().optional(),
 		defaultMinutesPerInterval: z.union([z.number(), z.string()]).nullable().optional(),
-		cadenceWindowMinutes: z.union([z.number(), z.string()]).nullable().optional(),
 		bronzeDesc: z.string().nullable().optional(),
 		silverDesc: z.string().nullable().optional(),
 		goldDesc: z.string().nullable().optional(),
 		status: z.string().nullable().optional(),
-		notes: z.string().nullable().optional(),
-		minutes: z.number().nullable().optional()
+		notes: z.string().nullable().optional()
 	})
 	.passthrough();
 export type HabitLifecycleStateSnapshot = z.infer<typeof HabitLifecycleStateSnapshotSchema>;
@@ -769,7 +727,6 @@ export const HabitDailyPointSchema = z.object({
 	ruleSnapshot: z.string().nullable(),
 	actualMinutes: z.number().nullable(),
 	plannedMinutes: z.number().nullable(),
-	completedIntervals: z.number().nullable(),
 	lifecycleEventsOnDay: z.array(HabitEvolutionItemSchema)
 });
 export type HabitDailyPoint = z.infer<typeof HabitDailyPointSchema>;
@@ -791,9 +748,6 @@ export const WeekdayPerformanceStatSchema = z.object({
 	weekdayIndex: z.number(),
 	weekdayLabel: z.string(),
 	loggedDays: z.number(),
-	successDays: z.number(),
-	goldDays: z.number(),
-	successRate: z.number(),
 	avgScore: z.number()
 });
 export type WeekdayPerformanceStat = z.infer<typeof WeekdayPerformanceStatSchema>;
@@ -808,13 +762,11 @@ export const HabitComparisonRowSchema = z.object({
 	silverCount: z.number(),
 	bronzeCount: z.number(),
 	failedCount: z.number(),
-	skippedCount: z.number(),
 	consistencyRate: z.number(),
 	avgQualityScore: z.number(),
 	currentStreak: z.number(),
 	bestStreak: z.number(),
-	trendDelta: z.number(),
-	lifecycleChangesCount: z.number()
+	trendDelta: z.number()
 });
 export type HabitComparisonRow = z.infer<typeof HabitComparisonRowSchema>;
 
@@ -831,7 +783,6 @@ export const SelectedHabitAnalyticsSchema = z.object({
 	silverCount: z.number(),
 	bronzeCount: z.number(),
 	failedCount: z.number(),
-	skippedCount: z.number(),
 	consistencyRate: z.number(),
 	goldRate: z.number(),
 	avgQualityScore: z.number(),
@@ -839,21 +790,15 @@ export const SelectedHabitAnalyticsSchema = z.object({
 	currentStreak: z.number(),
 	bestStreak: z.number(),
 	totalActualMinutes: z.number(),
-	totalPlannedMinutes: z.number(),
 	avgActualMinutes: z.number(),
 	avgPlannedMinutes: z.number(),
 	weekdayStats: z.array(WeekdayPerformanceStatSchema),
-	bestWeekday: WeekdayPerformanceStatSchema.nullable(),
-	weakestWeekday: WeekdayPerformanceStatSchema.nullable(),
 	evolutionTimeline: z.array(HabitEvolutionItemSchema)
 });
 export type SelectedHabitAnalytics = z.infer<typeof SelectedHabitAnalyticsSchema>;
 
 export const FullAnalyticsReportSchema = z.object({
 	range: AnalyticsTimeRangeSchema,
-	startDateIso: z.string(),
-	endDateIso: z.string(),
-	totalDaysInWindow: z.number(),
 	selectableHabits: z.array(
 		z.object({
 			habit: HabitEntitySchema,

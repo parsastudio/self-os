@@ -190,18 +190,6 @@
 	background-color: var(--bg-canvas);
 }
 
-@utility text-fg {
-	color: var(--text-primary);
-}
-
-@utility text-fg-secondary {
-	color: var(--text-secondary);
-}
-
-@utility text-fg-muted {
-	color: var(--text-muted);
-}
-
 @layer base {
 	html,
 	body {

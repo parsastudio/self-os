@@ -16,7 +16,6 @@ import {
 } from '~~/server/database/schema';
 import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
-import { DEMO_ID_PREFIX } from '~/domain/constants';
 import type { DatabaseBackupPayload } from '~/domain/schemas';
 
 const WORKSPACE_TABLES = [
@@ -57,60 +56,6 @@ export async function clearAllDatabaseRecords(): Promise<void> {
 		await tx.delete(syncState).where(like(syncState.id, 'del:%'));
 		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
-}
-
-export async function removeDemoSeedFromServer(): Promise<{ removedRecordsCount: number }> {
-	await ensureDatabaseReady();
-	let removed = 0;
-	const prefixPattern = `${DEMO_ID_PREFIX}%`;
-
-	const demoCleanupTargets: ReadonlyArray<{
-		table: PgTable;
-		idCol: PgColumn;
-		matchCol: PgColumn;
-		pattern: string;
-	}> = [
-		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.id, pattern: prefixPattern },
-		{ table: habitLogs, idCol: habitLogs.id, matchCol: habitLogs.habitId, pattern: prefixPattern },
-		{ table: dailyEntries, idCol: dailyEntries.id, matchCol: dailyEntries.id, pattern: prefixPattern },
-		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.id, pattern: prefixPattern },
-		{ table: cadencePlans, idCol: cadencePlans.id, matchCol: cadencePlans.habitId, pattern: prefixPattern },
-		{
-			table: habitLifecycleEvents,
-			idCol: habitLifecycleEvents.id,
-			matchCol: habitLifecycleEvents.id,
-			pattern: prefixPattern
-		},
-		{
-			table: habitLifecycleEvents,
-			idCol: habitLifecycleEvents.id,
-			matchCol: habitLifecycleEvents.habitId,
-			pattern: prefixPattern
-		},
-		{ table: habits, idCol: habits.id, matchCol: habits.id, pattern: prefixPattern },
-		{ table: books, idCol: books.id, matchCol: books.id, pattern: prefixPattern },
-		{ table: mediaLogs, idCol: mediaLogs.id, matchCol: mediaLogs.id, pattern: prefixPattern },
-		{ table: notes, idCol: notes.id, matchCol: notes.id, pattern: prefixPattern },
-		{
-			table: calendarEvents,
-			idCol: calendarEvents.id,
-			matchCol: calendarEvents.id,
-			pattern: prefixPattern
-		}
-	];
-
-	await db.transaction(async (tx) => {
-		for (const target of demoCleanupTargets) {
-			const deletedRows = await tx
-				.delete(target.table)
-				.where(like(target.matchCol, target.pattern))
-				.returning({ id: target.idCol });
-			removed += deletedRows.length;
-		}
-	});
-
-	await bumpServerStructuralVersion();
-	return { removedRecordsCount: removed };
 }
 
 export async function importDatabaseFromJson(

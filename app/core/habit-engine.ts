@@ -25,35 +25,15 @@ export function isDailyEntryEmpty(
 		input.logs.every(
 			(l) =>
 				(l.achievedTier === null || l.achievedTier === undefined) &&
-				(l.actualMinutesPerInterval === null || l.actualMinutesPerInterval === undefined) &&
-				(l.totalActualMinutes === null ||
-					l.totalActualMinutes === 0 ||
-					l.totalActualMinutes === undefined)
+				(l.actualMinutesPerInterval === null || l.actualMinutesPerInterval === undefined)
 		)
 	);
 }
 
 export function resolveEffectiveCadenceMinutes(
-	log:
-		| Partial<
-				Pick<
-					HabitLogItemInput,
-					'actualMinutesPerInterval' | 'totalActualMinutes' | 'completedIntervals'
-				>
-		  >
-		| null
-		| undefined
+	log: Partial<Pick<HabitLogItemInput, 'actualMinutesPerInterval'>> | null | undefined
 ): number {
-	if (!log) return 0;
-	const perInterval = log.actualMinutesPerInterval ?? 0;
-	const intervals = log.completedIntervals;
-	if (intervals !== null && intervals !== undefined && intervals > 0 && perInterval > 0) {
-		return Number((intervals * perInterval).toFixed(1));
-	}
-	if (log.totalActualMinutes !== null && log.totalActualMinutes !== undefined && log.totalActualMinutes > 0) {
-		return log.totalActualMinutes;
-	}
-	return perInterval;
+	return log?.actualMinutesPerInterval ?? 0;
 }
 
 export function serializeHabitSpecSnapshot(habit: HabitEntity): string {
@@ -142,10 +122,7 @@ export function shouldDiscardHabitLogItem(
 	habit: HabitEntity | undefined,
 	log: Pick<
 		HabitLogItemInput,
-		| 'achievedTier'
-		| 'plannedMinutesSnapshot'
-		| 'actualMinutesPerInterval'
-		| 'totalActualMinutes'
+		'achievedTier' | 'plannedMinutesSnapshot' | 'actualMinutesPerInterval'
 	>
 ): boolean {
 	const isUnloggedTiered =
@@ -156,8 +133,7 @@ export function shouldDiscardHabitLogItem(
 		habit?.trackingMode === 'interval_cadence' &&
 		(log.achievedTier === null || log.achievedTier === undefined) &&
 		(log.actualMinutesPerInterval === null || log.actualMinutesPerInterval === undefined) &&
-		(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0) &&
-		(!log.totalActualMinutes || log.totalActualMinutes <= 0);
+		(!log.plannedMinutesSnapshot || log.plannedMinutesSnapshot <= 0);
 
 	return isUnloggedTiered || isUnscheduledAndUnloggedCadence;
 }
@@ -170,7 +146,6 @@ export function resolveDailyHabitLogSnapshot(params: {
 		habitTitleSnapshot: string | null;
 		achievedRuleSnapshot: string | null;
 		habitSnapshotJson: string | null;
-		plannedIntervalsSnapshot: number | null;
 		plannedMinutesSnapshot: number | null;
 	} | null;
 	fallbackUpdatedAtIso: string;
@@ -205,11 +180,7 @@ export function resolveDailyHabitLogSnapshot(params: {
 		achievedTier: log.achievedTier,
 		achievedRuleSnapshot,
 		habitSnapshotJson,
-		completedIntervals: log.completedIntervals ?? null,
 		actualMinutesPerInterval: log.actualMinutesPerInterval ?? null,
-		totalActualMinutes: log.totalActualMinutes ?? null,
-		plannedIntervalsSnapshot:
-			log.plannedIntervalsSnapshot ?? previousLog?.plannedIntervalsSnapshot ?? null,
 		plannedMinutesSnapshot:
 			log.plannedMinutesSnapshot ?? previousLog?.plannedMinutesSnapshot ?? null,
 		updatedAtIso: log.updatedAtIso || fallbackUpdatedAtIso
@@ -684,8 +655,7 @@ export function extractLifecycleRuleDiffs(
 			...(isCadence
 				? ([
 						{ key: 'emergencyMinDesc', label: 'حداقل اضطراری' },
-						{ key: 'defaultMinutesPerInterval', label: 'دقیقه هدف در هر بازه' },
-						{ key: 'cadenceWindowMinutes', label: 'پنجره زمانی تکرار (دقیقه)' }
+						{ key: 'defaultMinutesPerInterval', label: 'دقیقه هدف روزانه' }
 					] as const)
 				: ([
 						{ key: 'bronzeDesc', label: 'شرط برنز (حداقل)' },
@@ -714,18 +684,6 @@ export function extractLifecycleRuleDiffs(
 					newValue: newVal || 'حذف‌شده'
 				});
 			}
-		}
-
-		if (
-			typeof prev.minutes === 'number' &&
-			typeof next.minutes === 'number' &&
-			prev.minutes !== next.minutes
-		) {
-			diffs.push({
-				fieldLabel: 'هدف روزانه (دقیقه)',
-				previousValue: `${prev.minutes} دقیقه`,
-				newValue: `${next.minutes} دقیقه`
-			});
 		}
 
 		return diffs;
@@ -759,9 +717,7 @@ export function buildCreatedHabitWithLifecycle(params: {
 		silverDesc: input.silverDesc?.trim() || null,
 		goldDesc: input.goldDesc?.trim() || null,
 		emergencyMinDesc: input.emergencyMinDesc?.trim() || null,
-		defaultIntervals: input.defaultIntervals,
 		defaultMinutesPerInterval: input.defaultMinutesPerInterval,
-		cadenceWindowMinutes: input.cadenceWindowMinutes,
 		sortOrder: maxSortOrder + 1,
 		createdAtIso: todayIso,
 		updatedAtIso: nowIso
@@ -802,10 +758,6 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		isCadence && input.defaultMinutesPerInterval !== undefined
 			? input.defaultMinutesPerInterval
 			: current.defaultMinutesPerInterval;
-	const nextCadenceWindow =
-		isCadence && input.cadenceWindowMinutes !== undefined
-			? input.cadenceWindowMinutes
-			: current.cadenceWindowMinutes;
 
 	let eventType: LifecycleEventEntity['eventType'] = 'UPDATED_RULES';
 	let summary = `ویرایش شرایط طرح «${input.title}»`;
@@ -822,13 +774,9 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		eventType = input.status === 'archived' ? 'DELETED' : 'STATUS_CHANGED';
 		const statusLabel = STATUS_LABELS_FA[input.status] ?? input.status;
 		summary = `تغییر وضعیت «${input.title}» به ${statusLabel}`;
-	} else if (
-		isCadence &&
-		(nextMinutesPerInterval !== current.defaultMinutesPerInterval ||
-			nextCadenceWindow !== current.cadenceWindowMinutes)
-	) {
+	} else if (isCadence && nextMinutesPerInterval !== current.defaultMinutesPerInterval) {
 		eventType = 'CADENCE_UPDATED';
-		summary = `تغییر بازه تکرارشونده «${input.title}»`;
+		summary = `تغییر هدف روزانه «${input.title}»`;
 	}
 
 	const updatedHabit: HabitEntity = {
@@ -845,7 +793,6 @@ export function buildUpdatedHabitWithLifecycle(params: {
 		goldDesc: isCadence ? null : (input.goldDesc?.trim() || null),
 		emergencyMinDesc: isCadence ? (input.emergencyMinDesc?.trim() || null) : null,
 		defaultMinutesPerInterval: nextMinutesPerInterval,
-		cadenceWindowMinutes: nextCadenceWindow,
 		updatedAtIso: nowIso
 	};
 

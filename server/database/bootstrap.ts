@@ -15,9 +15,7 @@ const BOOTSTRAP_DDL_SQL = `
 		silver_desc TEXT,
 		gold_desc TEXT,
 		emergency_min_desc TEXT,
-		default_intervals INTEGER NOT NULL DEFAULT 2,
 		default_minutes_per_interval DOUBLE PRECISION NOT NULL DEFAULT 10,
-		cadence_window_minutes INTEGER NOT NULL DEFAULT 60,
 		sort_order INTEGER NOT NULL DEFAULT 0,
 		created_at_iso TEXT NOT NULL,
 		updated_at_iso TEXT
@@ -27,9 +25,7 @@ const BOOTSTRAP_DDL_SQL = `
 		id TEXT PRIMARY KEY,
 		date_iso TEXT NOT NULL,
 		habit_id TEXT NOT NULL,
-		planned_intervals INTEGER NOT NULL,
 		planned_minutes_per_interval DOUBLE PRECISION NOT NULL,
-		cadence_window_minutes INTEGER NOT NULL DEFAULT 60,
 		updated_at_iso TEXT
 	);
 
@@ -49,10 +45,7 @@ const BOOTSTRAP_DDL_SQL = `
 		achieved_tier INTEGER,
 		achieved_rule_snapshot TEXT,
 		habit_snapshot_json TEXT,
-		completed_intervals INTEGER,
 		actual_minutes_per_interval DOUBLE PRECISION,
-		total_actual_minutes DOUBLE PRECISION,
-		planned_intervals_snapshot INTEGER,
 		planned_minutes_snapshot DOUBLE PRECISION,
 		updated_at_iso TEXT
 	);
@@ -165,8 +158,33 @@ export async function ensurePostgreSqlSchemaBootstrapped(
 		SELECT to_regclass('public.sync_state') AS reg,
 		       to_regclass('public.habits') AS habits_reg
 	`;
-	if (checkRows[0]?.reg && checkRows[0]?.habits_reg) {
+	if (!checkRows[0]?.reg || !checkRows[0]?.habits_reg) {
+		await sqlClient.unsafe(BOOTSTRAP_DDL_SQL);
 		return;
 	}
-	await sqlClient.unsafe(BOOTSTRAP_DDL_SQL);
+
+	const legacyCols = await sqlClient<{ exists_col: boolean }[]>`
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND (
+				(table_name = 'habits' AND column_name IN ('default_intervals', 'cadence_window_minutes'))
+				OR (table_name = 'cadence_plans' AND column_name IN ('planned_intervals', 'cadence_window_minutes'))
+				OR (table_name = 'habit_logs' AND column_name IN ('completed_intervals', 'total_actual_minutes', 'planned_intervals_snapshot'))
+			  )
+		) AS exists_col
+	`;
+
+	if (legacyCols[0]?.exists_col) {
+		await sqlClient.unsafe(`
+			ALTER TABLE habits DROP COLUMN IF EXISTS default_intervals;
+			ALTER TABLE habits DROP COLUMN IF EXISTS cadence_window_minutes;
+			ALTER TABLE cadence_plans DROP COLUMN IF EXISTS planned_intervals;
+			ALTER TABLE cadence_plans DROP COLUMN IF EXISTS cadence_window_minutes;
+			ALTER TABLE habit_logs DROP COLUMN IF EXISTS completed_intervals;
+			ALTER TABLE habit_logs DROP COLUMN IF EXISTS total_actual_minutes;
+			ALTER TABLE habit_logs DROP COLUMN IF EXISTS planned_intervals_snapshot;
+		`);
+	}
 }

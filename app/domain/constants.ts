@@ -8,12 +8,6 @@ import type {
 	MediaStatus
 } from '~/domain/schemas';
 
-export const DEMO_ID_PREFIX = 'demo:';
-
-export function isDemoRecordId(id: string | null | undefined): boolean {
-	return Boolean(id && id.startsWith(DEMO_ID_PREFIX));
-}
-
 export const TIER_SCORES = {
 	SKIPPED: -1,
 	FAILED: 0,
@@ -25,10 +19,7 @@ export const TIER_SCORES = {
 export const COMPOSITE_FULL_LABEL = 'کامل';
 
 export const CADENCE_DEFAULTS = {
-	INTERVALS: 1,
 	MINUTES_PER_INTERVAL: 10,
-	WINDOW_MINUTES: 60,
-	MIN_WINDOW_MINUTES: 15,
 	EMERGENCY_MINUTES: 2
 } as const;
 
@@ -48,25 +39,13 @@ export const CADENCE_SUCCESS_RATIOS = {
 
 export const DAY_STATUS_META: Record<DayStatusColor, DayStatusMetaItem> = {
 	optimal: {
-		value: 'optimal',
-		label: 'مطلوب',
-		shortBadgeLabel: 'مطلوب',
-		dotClass: 'bg-optimal',
-		softBadgeClasses: 'bg-optimal-soft text-optimal'
+		dotClass: 'bg-optimal'
 	},
 	partial: {
-		value: 'partial',
-		label: 'ترکیبی',
-		shortBadgeLabel: 'ترکیبی',
-		dotClass: 'bg-partial',
-		softBadgeClasses: 'bg-partial-soft text-partial'
+		dotClass: 'bg-partial'
 	},
 	failed: {
-		value: 'failed',
-		label: 'نامطلوب',
-		shortBadgeLabel: 'نامطلوب',
-		dotClass: 'bg-failed',
-		softBadgeClasses: 'bg-failed-soft text-failed'
+		dotClass: 'bg-failed'
 	}
 };
 

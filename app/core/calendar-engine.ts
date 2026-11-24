@@ -57,16 +57,11 @@ export function computeUpcomingEventsBanner(params: {
 		if (ev.isAnnual) {
 			for (const [iso, meta] of windowIsos.entries()) {
 				if (meta.jm === ev.jalaliMonth && meta.jd === ev.jalaliDay) {
-					const human = formatJalaliHuman(iso, todayIso);
 					upcoming.push({
 						id: ev.id,
 						title: ev.title,
-						isAnnual: true,
-						isCompleted: ev.isCompleted,
 						occurrenceDateIso: iso,
-						humanDateLabel: human.fullLabel,
-						daysRemaining: meta.diff,
-						notes: ev.notes
+						daysRemaining: meta.diff
 					});
 					break;
 				}
@@ -74,16 +69,11 @@ export function computeUpcomingEventsBanner(params: {
 		} else if (ev.dateIso) {
 			const diff = getDaysUntilIso(todayIso, ev.dateIso);
 			if (diff >= -1 && diff <= horizonDays) {
-				const human = formatJalaliHuman(ev.dateIso, todayIso);
 				upcoming.push({
 					id: ev.id,
 					title: ev.title,
-					isAnnual: false,
-					isCompleted: ev.isCompleted,
 					occurrenceDateIso: ev.dateIso,
-					humanDateLabel: human.fullLabel,
-					daysRemaining: diff,
-					notes: ev.notes
+					daysRemaining: diff
 				});
 			}
 		}
@@ -223,7 +213,6 @@ export function assembleJalaliMonthArchive(params: {
 				achievedTier: log.achievedTier,
 				achievedRule,
 				actualMinutes,
-				completedIntervals: log.completedIntervals ?? null,
 				plannedMinutes,
 				isArchived: h ? h.status === 'archived' : true,
 				specSnapshot

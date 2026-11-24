@@ -41,7 +41,7 @@ function resolveDateRangeWindow(
 	logs: AnalyticsRawLog[],
 	habits: HabitEntity[],
 	fallbackEndIso: string
-): { startIso: string; endIso: string; dateList: string[] } {
+): { dateList: string[] } {
 	let maxIso = fallbackEndIso;
 	let minIso = fallbackEndIso;
 
@@ -89,7 +89,7 @@ function resolveDateRangeWindow(
 		dateList.push(shiftIsoDate(startIso, i));
 	}
 
-	return { startIso, endIso, dateList };
+	return { dateList };
 }
 
 function averageRounded(values: ReadonlyArray<number>): number | null {
@@ -109,7 +109,6 @@ function evaluateSingleLeafHabitDay(
 	ruleSnapshot: string | null;
 	actualMinutes: number | null;
 	plannedMinutes: number | null;
-	completedIntervals: number | null;
 } {
 	if (habit.trackingMode === 'interval_cadence') {
 		const plannedMinutes =
@@ -117,7 +116,6 @@ function evaluateSingleLeafHabitDay(
 				? log.plannedMinutesSnapshot
 				: null;
 		const actualMinutes = log ? resolveEffectiveCadenceMinutes(log) : 0;
-		const completedIntervals = log?.completedIntervals ?? null;
 
 		if (!plannedMinutes && actualMinutes <= 0) {
 			return {
@@ -126,8 +124,7 @@ function evaluateSingleLeafHabitDay(
 				score: null,
 				ruleSnapshot: null,
 				actualMinutes: null,
-				plannedMinutes: null,
-				completedIntervals: null
+				plannedMinutes: null
 			};
 		}
 
@@ -138,8 +135,7 @@ function evaluateSingleLeafHabitDay(
 				score: 0,
 				ruleSnapshot: `۰ دقیقه از هدف ${plannedMinutes} دقیقه`,
 				actualMinutes: 0,
-				plannedMinutes,
-				completedIntervals
+				plannedMinutes
 			};
 		}
 
@@ -156,8 +152,7 @@ function evaluateSingleLeafHabitDay(
 					? `${actualMinutes} دقیقه (تکمیل هدف ${plannedMinutes} دقیقه)`
 					: `${actualMinutes} دقیقه انجام‌شده`,
 				actualMinutes,
-				plannedMinutes: effectiveTarget,
-				completedIntervals
+				plannedMinutes: effectiveTarget
 			};
 		}
 		if (ratio >= CADENCE_SUCCESS_RATIOS.SILVER_THRESHOLD) {
@@ -167,8 +162,7 @@ function evaluateSingleLeafHabitDay(
 				score,
 				ruleSnapshot: `${actualMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`,
 				actualMinutes,
-				plannedMinutes,
-				completedIntervals
+				plannedMinutes
 			};
 		}
 		return {
@@ -177,8 +171,7 @@ function evaluateSingleLeafHabitDay(
 			score: Math.max(QUALITY_SCORES.CADENCE_MIN_NONZERO, score),
 			ruleSnapshot: `${actualMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`,
 			actualMinutes,
-			plannedMinutes,
-			completedIntervals
+			plannedMinutes
 		};
 	}
 
@@ -189,8 +182,7 @@ function evaluateSingleLeafHabitDay(
 			score: null,
 			ruleSnapshot: null,
 			actualMinutes: null,
-			plannedMinutes: null,
-			completedIntervals: null
+			plannedMinutes: null
 		};
 	}
 
@@ -206,8 +198,7 @@ function evaluateSingleLeafHabitDay(
 			score: null,
 			ruleSnapshot: ruleSnapshot || 'امروز موقعیتش پیش نیامد',
 			actualMinutes: null,
-			plannedMinutes: null,
-			completedIntervals: null
+			plannedMinutes: null
 		};
 	}
 
@@ -218,8 +209,7 @@ function evaluateSingleLeafHabitDay(
 			score: QUALITY_SCORES.FAILED,
 			ruleSnapshot: ruleSnapshot || 'انجام نشد',
 			actualMinutes: null,
-			plannedMinutes: null,
-			completedIntervals: null
+			plannedMinutes: null
 		};
 	}
 
@@ -230,8 +220,7 @@ function evaluateSingleLeafHabitDay(
 			score: QUALITY_SCORES.GOLD,
 			ruleSnapshot,
 			actualMinutes: null,
-			plannedMinutes: null,
-			completedIntervals: null
+			plannedMinutes: null
 		};
 	}
 
@@ -242,8 +231,7 @@ function evaluateSingleLeafHabitDay(
 			score: QUALITY_SCORES.SILVER,
 			ruleSnapshot,
 			actualMinutes: null,
-			plannedMinutes: null,
-			completedIntervals: null
+			plannedMinutes: null
 		};
 	}
 
@@ -253,8 +241,7 @@ function evaluateSingleLeafHabitDay(
 		score: maxTier === 1 ? QUALITY_SCORES.BRONZE_MAX : QUALITY_SCORES.BRONZE_DEFAULT,
 		ruleSnapshot,
 		actualMinutes: null,
-		plannedMinutes: null,
-		completedIntervals: null
+		plannedMinutes: null
 	};
 }
 
@@ -280,8 +267,7 @@ function evaluateHabitDay(
 			score: null,
 			ruleSnapshot: null,
 			actualMinutes: null,
-			plannedMinutes: null,
-			completedIntervals: null
+			plannedMinutes: null
 		};
 	}
 
@@ -293,8 +279,7 @@ function evaluateHabitDay(
 			score: null,
 			ruleSnapshot: 'موقعیت زیرطرح‌ها پیش نیامد',
 			actualMinutes: null,
-			plannedMinutes: null,
-			completedIntervals: null
+			plannedMinutes: null
 		};
 	}
 
@@ -334,8 +319,7 @@ function evaluateHabitDay(
 		score: avgScore,
 		ruleSnapshot: summaryTokens.join(' • '),
 		actualMinutes: null,
-		plannedMinutes: null,
-		completedIntervals: null
+		plannedMinutes: null
 	};
 }
 
@@ -501,7 +485,7 @@ export function buildFullAnalyticsReport(params: {
 		dayMap.set(log.habitId, log);
 	}
 
-	const { startIso, endIso, dateList } = resolveDateRangeWindow(
+	const { dateList } = resolveDateRangeWindow(
 		range,
 		entries,
 		logs,
@@ -550,7 +534,6 @@ export function buildFullAnalyticsReport(params: {
 		let silverCount = 0;
 		let bronzeCount = 0;
 		let failedCount = 0;
-		let skippedCount = 0;
 
 		for (const dIso of dateList) {
 			const res = evaluateHabitDay(h, children, logsByDate.get(dIso));
@@ -559,7 +542,6 @@ export function buildFullAnalyticsReport(params: {
 			else if (res.outcome === 'silver') silverCount++;
 			else if (res.outcome === 'bronze') bronzeCount++;
 			else if (res.outcome === 'failed') failedCount++;
-			else if (res.outcome === 'skipped') skippedCount++;
 		}
 
 		const loggedDays = goldCount + silverCount + bronzeCount + failedCount;
@@ -587,11 +569,6 @@ export function buildFullAnalyticsReport(params: {
 			fallbackEndDateIso
 		);
 
-		const relevantIds = new Set([h.id, ...children.map((c) => c.id)]);
-		const lifecycleChangesCount = lifecycleEvents.filter(
-			(ev) => ev.habitId && relevantIds.has(ev.habitId)
-		).length;
-
 		return {
 			habit: h,
 			parentTitle: item.parentTitle,
@@ -602,13 +579,11 @@ export function buildFullAnalyticsReport(params: {
 			silverCount,
 			bronzeCount,
 			failedCount,
-			skippedCount,
 			consistencyRate,
 			avgQualityScore,
 			currentStreak,
 			bestStreak,
-			trendDelta,
-			lifecycleChangesCount
+			trendDelta
 		};
 	});
 
@@ -635,7 +610,6 @@ export function buildFullAnalyticsReport(params: {
 		let silverCount = 0;
 		let bronzeCount = 0;
 		let failedCount = 0;
-		let skippedCount = 0;
 		let totalActualMinutes = 0;
 		let totalPlannedMinutes = 0;
 		let cadenceLoggedDays = 0;
@@ -661,7 +635,6 @@ export function buildFullAnalyticsReport(params: {
 			else if (evalRes.outcome === 'silver') silverCount++;
 			else if (evalRes.outcome === 'bronze') bronzeCount++;
 			else if (evalRes.outcome === 'failed') failedCount++;
-			else if (evalRes.outcome === 'skipped') skippedCount++;
 
 			if (evalRes.actualMinutes !== null) {
 				totalActualMinutes += evalRes.actualMinutes;
@@ -682,7 +655,6 @@ export function buildFullAnalyticsReport(params: {
 				ruleSnapshot: evalRes.ruleSnapshot,
 				actualMinutes: evalRes.actualMinutes,
 				plannedMinutes: evalRes.plannedMinutes,
-				completedIntervals: evalRes.completedIntervals,
 				lifecycleEventsOnDay: eventsByDate.get(dIso) ?? []
 			});
 		}
@@ -716,8 +688,6 @@ export function buildFullAnalyticsReport(params: {
 			weekdayIndex: idx,
 			weekdayLabel: JALALI_GRID_WEEKDAYS[idx] ?? '',
 			loggedDays: 0,
-			successDays: 0,
-			goldDays: 0,
 			scoreSum: 0
 		}));
 
@@ -727,33 +697,14 @@ export function buildFullAnalyticsReport(params: {
 			if (!b) continue;
 			b.loggedDays++;
 			b.scoreSum += pt.score;
-			if (pt.outcome === 'gold' || pt.outcome === 'silver' || pt.outcome === 'bronze') {
-				b.successDays++;
-			}
-			if (pt.outcome === 'gold') {
-				b.goldDays++;
-			}
 		}
 
 		const weekdayStats: WeekdayPerformanceStat[] = weekdayBuckets.map((b) => ({
 			weekdayIndex: b.weekdayIndex,
 			weekdayLabel: b.weekdayLabel,
 			loggedDays: b.loggedDays,
-			successDays: b.successDays,
-			goldDays: b.goldDays,
-			successRate: b.loggedDays > 0 ? Math.round((b.successDays / b.loggedDays) * 100) : 0,
 			avgScore: b.loggedDays > 0 ? Math.round(b.scoreSum / b.loggedDays) : 0
 		}));
-
-		const activeWeekdays = weekdayStats.filter((w) => w.loggedDays > 0);
-		const bestWeekday =
-			activeWeekdays.length > 0
-				? [...activeWeekdays].sort((a, b) => b.avgScore - a.avgScore)[0]
-				: null;
-		const weakestWeekday =
-			activeWeekdays.length > 1
-				? [...activeWeekdays].sort((a, b) => a.avgScore - b.avgScore)[0]
-				: null;
 
 		selectedHabitReport = {
 			habit: targetHabit,
@@ -768,7 +719,6 @@ export function buildFullAnalyticsReport(params: {
 			silverCount,
 			bronzeCount,
 			failedCount,
-			skippedCount,
 			consistencyRate,
 			goldRate,
 			avgQualityScore,
@@ -776,7 +726,6 @@ export function buildFullAnalyticsReport(params: {
 			currentStreak,
 			bestStreak,
 			totalActualMinutes: Number(totalActualMinutes.toFixed(1)),
-			totalPlannedMinutes: Number(totalPlannedMinutes.toFixed(1)),
 			avgActualMinutes:
 				cadenceLoggedDays > 0
 					? Number((totalActualMinutes / cadenceLoggedDays).toFixed(1))
@@ -786,17 +735,12 @@ export function buildFullAnalyticsReport(params: {
 					? Number((totalPlannedMinutes / cadenceLoggedDays).toFixed(1))
 					: 0,
 			weekdayStats,
-			bestWeekday: bestWeekday ?? null,
-			weakestWeekday: weakestWeekday ?? null,
 			evolutionTimeline
 		};
 	}
 
 	return {
 		range,
-		startDateIso: startIso,
-		endDateIso: endIso,
-		totalDaysInWindow: dateList.length,
 		selectableHabits,
 		selectedHabitReport,
 		comparisonRows

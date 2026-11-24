@@ -3,7 +3,6 @@ import type { LocalAuthRecord } from '~/domain/schemas';
 
 const PBKDF2_V2_PREFIX = 'pbkdf2_v2:';
 const PBKDF2_V2_ITERATIONS = 120000;
-const PBKDF2_LEGACY_ITERATIONS = 100000;
 const CLIENT_SALT_BYTES = 32;
 
 function generateRandomSalt(length = CLIENT_SALT_BYTES): Uint8Array {
@@ -62,29 +61,6 @@ function timingSafeEqual(a: string, b: string): boolean {
 		diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
 	}
 	return diff === 0;
-}
-
-async function computeSessionSignatureHex(params: {
-	verifierHexWithPrefix: string;
-	verifierSaltHex: string;
-	expiresAtIso: string;
-}): Promise<string> {
-	const enc = new TextEncoder();
-	const rawVerifier = params.verifierHexWithPrefix.startsWith(PBKDF2_V2_PREFIX)
-		? params.verifierHexWithPrefix.slice(PBKDF2_V2_PREFIX.length)
-		: params.verifierHexWithPrefix;
-
-	const hmacKey = await crypto.subtle.importKey(
-		'raw',
-		enc.encode(rawVerifier),
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['sign']
-	);
-
-	const payload = `session:v2:${params.verifierSaltHex}:${params.expiresAtIso}`;
-	const sigBuffer = await crypto.subtle.sign('HMAC', hmacKey, enc.encode(payload));
-	return bytesToHex(new Uint8Array(sigBuffer));
 }
 
 function hasValidLocalSession(record: LocalAuthRecord | undefined, nowIso: string): boolean {
@@ -160,7 +136,6 @@ export function useClientAuth() {
 						...record,
 						isAuthenticated: false,
 						isPasswordConfigured: isPasswordConfigured.value,
-						sessionSignatureHex: undefined,
 						updatedAtIso: nowIso
 					});
 				} catch {
@@ -207,11 +182,6 @@ export function useClientAuth() {
 
 		const expiresAtIso = expiresAt.toISOString();
 		const passwordVerifierHex = `${PBKDF2_V2_PREFIX}${verifierHex}`;
-		const sessionSignatureHex = await computeSessionSignatureHex({
-			verifierHexWithPrefix: passwordVerifierHex,
-			verifierSaltHex: saltHex,
-			expiresAtIso
-		});
 
 		const record: LocalAuthRecord = {
 			key: 'auth:session',
@@ -220,7 +190,6 @@ export function useClientAuth() {
 			expiresAtIso,
 			verifierSaltHex: saltHex,
 			passwordVerifierHex,
-			sessionSignatureHex,
 			updatedAtIso: now.toISOString()
 		};
 
@@ -245,55 +214,26 @@ export function useClientAuth() {
 			};
 		}
 
-		const isV2 = record.passwordVerifierHex.startsWith(PBKDF2_V2_PREFIX);
-		const expectedHex = isV2
-			? record.passwordVerifierHex.slice(PBKDF2_V2_PREFIX.length)
-			: record.passwordVerifierHex;
-
-		const salt = hexToBytes(record.verifierSaltHex);
-		let isMatch = false;
-
-		if (isV2) {
-			const candidateFast = await deriveVerifierHex(password, salt, PBKDF2_V2_ITERATIONS);
-			if (timingSafeEqual(candidateFast, expectedHex)) {
-				isMatch = true;
-			} else {
-				const candidateOldV2 = await deriveVerifierHex(password, salt, 600000);
-				isMatch = timingSafeEqual(candidateOldV2, expectedHex);
-			}
-		} else {
-			const candidateLegacy = await deriveVerifierHex(password, salt, PBKDF2_LEGACY_ITERATIONS);
-			isMatch = timingSafeEqual(candidateLegacy, expectedHex);
+		if (!record.passwordVerifierHex.startsWith(PBKDF2_V2_PREFIX)) {
+			return {
+				success: false,
+				error: 'اطلاعات ورود محلی در این دستگاه قدیمی است. لطفاً یک‌بار در حالت آنلاین وارد شوید.'
+			};
 		}
 
-		if (!isMatch) {
+		const expectedHex = record.passwordVerifierHex.slice(PBKDF2_V2_PREFIX.length);
+		const salt = hexToBytes(record.verifierSaltHex);
+		const candidateHex = await deriveVerifierHex(password, salt, PBKDF2_V2_ITERATIONS);
+
+		if (!timingSafeEqual(candidateHex, expectedHex)) {
 			return { success: false, error: 'رمز عبور وارد شده نادرست است' };
 		}
 
 		const now = new Date();
 		const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
 
-		if (!isV2) {
-			const upgradedSalt = generateRandomSalt(CLIENT_SALT_BYTES);
-			const upgradedVerifier = await deriveVerifierHex(
-				password,
-				upgradedSalt,
-				PBKDF2_V2_ITERATIONS
-			);
-			record.verifierSaltHex = bytesToHex(upgradedSalt);
-			record.passwordVerifierHex = `${PBKDF2_V2_PREFIX}${upgradedVerifier}`;
-		}
-
-		const expiresAtIso = expiresAt.toISOString();
-		const sessionSignatureHex = await computeSessionSignatureHex({
-			verifierHexWithPrefix: record.passwordVerifierHex,
-			verifierSaltHex: record.verifierSaltHex,
-			expiresAtIso
-		});
-
 		record.isAuthenticated = true;
-		record.expiresAtIso = expiresAtIso;
-		record.sessionSignatureHex = sessionSignatureHex;
+		record.expiresAtIso = expiresAt.toISOString();
 		record.updatedAtIso = now.toISOString();
 
 		await db.localAuth.put(record);

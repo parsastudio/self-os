@@ -72,20 +72,18 @@ onUnmounted(() => {
 				:class="maxWidthClass"
 			>
 				<div class="flex items-center justify-between gap-2 border-b border-border px-5 py-4 sm:px-6">
-					<slot name="headerContent">
-						<div class="flex min-w-0 items-center gap-2.5">
-							<div
-								v-if="$slots.headerIcon"
-								class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent-border bg-accent-soft text-accent-text"
-							>
-								<slot name="headerIcon" />
-							</div>
-							<div class="min-w-0">
-								<h2 class="truncate text-base font-black text-fg sm:text-lg">{{ title }}</h2>
-								<p v-if="subtitle" class="mt-0.5 text-xs font-bold text-fg-secondary">{{ subtitle }}</p>
-							</div>
+					<div class="flex min-w-0 items-center gap-2.5">
+						<div
+							v-if="$slots.headerIcon"
+							class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent-border bg-accent-soft text-accent-text"
+						>
+							<slot name="headerIcon" />
 						</div>
-					</slot>
+						<div class="min-w-0">
+							<h2 class="truncate text-base font-black text-fg sm:text-lg">{{ title }}</h2>
+							<p v-if="subtitle" class="mt-0.5 text-xs font-bold text-fg-secondary">{{ subtitle }}</p>
+						</div>
+					</div>
 
 					<button
 						type="button"

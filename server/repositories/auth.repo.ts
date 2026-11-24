@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { eq, inArray, lt, notInArray } from 'drizzle-orm';
+import { eq, lt, ne } from 'drizzle-orm';
 import {
 	deleteCookie,
 	getCookie,
@@ -90,11 +90,6 @@ async function hashPasswordV2(password: string, saltHex: string): Promise<string
 	return `${SCRYPT_V2_PREFIX}${derivedKey.toString('hex')}`;
 }
 
-async function hashPasswordLegacyV1(password: string, saltHex: string): Promise<string> {
-	const derivedKey = await runScryptAsync(password, Buffer.from(saltHex, 'hex'), SCRYPT_KEYLEN);
-	return derivedKey.toString('hex');
-}
-
 function isWellFormedSessionToken(rawToken: string): boolean {
 	return SESSION_TOKEN_HEX_REGEX.test(rawToken);
 }
@@ -104,22 +99,6 @@ function hashSessionTokenV2(rawToken: string, hmacKey = getActiveSessionHmacKey(
 		.createHmac('sha256', hmacKey)
 		.update(rawToken.toLowerCase())
 		.digest('hex');
-}
-
-function hashSessionTokenLegacyV1(rawToken: string): string {
-	return crypto.createHash('sha256').update(rawToken).digest('hex');
-}
-
-function getCandidateSessionIds(rawToken: string): {
-	primaryId: string;
-	allCandidateIds: string[];
-} {
-	const activeKey = getActiveSessionHmacKey();
-	const primaryId = hashSessionTokenV2(rawToken, activeKey);
-	const defaultDomainId = hashSessionTokenV2(rawToken, DEFAULT_SESSION_HMAC_DOMAIN_KEY);
-	const legacyV1Id = hashSessionTokenLegacyV1(rawToken);
-	const allCandidateIds = Array.from(new Set([primaryId, defaultDomainId, legacyV1Id]));
-	return { primaryId, allCandidateIds };
 }
 
 export async function isPasswordConfigured(): Promise<boolean> {
@@ -167,48 +146,17 @@ export async function verifyPassword(password: string): Promise<boolean> {
 		.limit(1);
 
 	const record = rows[0];
-	if (!record) return false;
+	if (!record || !record.passwordHash.startsWith(SCRYPT_V2_PREFIX)) return false;
 
-	const isV2 = record.passwordHash.startsWith(SCRYPT_V2_PREFIX);
+	const storedHex = record.passwordHash.slice(SCRYPT_V2_PREFIX.length);
+	const candidateFull = await hashPasswordV2(password, record.passwordSalt);
+	const candidateHex = candidateFull.slice(SCRYPT_V2_PREFIX.length);
 
-	if (isV2) {
-		const storedHex = record.passwordHash.slice(SCRYPT_V2_PREFIX.length);
-		const candidateFull = await hashPasswordV2(password, record.passwordSalt);
-		const candidateHex = candidateFull.slice(SCRYPT_V2_PREFIX.length);
-
-		const expectedBuf = Buffer.from(storedHex, 'hex');
-		const candidateBuf = Buffer.from(candidateHex, 'hex');
-
-		if (expectedBuf.length !== candidateBuf.length) return false;
-		return crypto.timingSafeEqual(expectedBuf, candidateBuf);
-	}
-
-	// Legacy v1 verification + seamless background upgrade to scrypt$v2
-	const legacyCandidateHex = await hashPasswordLegacyV1(password, record.passwordSalt);
-	const expectedBuf = Buffer.from(record.passwordHash, 'hex');
-	const candidateBuf = Buffer.from(legacyCandidateHex, 'hex');
+	const expectedBuf = Buffer.from(storedHex, 'hex');
+	const candidateBuf = Buffer.from(candidateHex, 'hex');
 
 	if (expectedBuf.length !== candidateBuf.length) return false;
-	const isLegacyMatch = crypto.timingSafeEqual(expectedBuf, candidateBuf);
-
-	if (isLegacyMatch) {
-		try {
-			const newSaltHex = crypto.randomBytes(PASSWORD_SALT_BYTES).toString('hex');
-			const upgradedHash = await hashPasswordV2(password, newSaltHex);
-			await db
-				.update(appAuth)
-				.set({
-					passwordHash: upgradedHash,
-					passwordSalt: newSaltHex,
-					updatedAtIso: new Date().toISOString()
-				})
-				.where(eq(appAuth.id, AUTH_SINGLETON_ID));
-		} catch {
-			// Ignore non-fatal background rehash errors
-		}
-	}
-
-	return isLegacyMatch;
+	return crypto.timingSafeEqual(expectedBuf, candidateBuf);
 }
 
 export async function changeMasterPassword(
@@ -231,8 +179,8 @@ export async function changeMasterPassword(
 			.where(eq(appAuth.id, AUTH_SINGLETON_ID));
 
 		if (keepRawToken && isWellFormedSessionToken(keepRawToken)) {
-			const { allCandidateIds } = getCandidateSessionIds(keepRawToken);
-			await tx.delete(authSessions).where(notInArray(authSessions.id, allCandidateIds));
+			const currentSessionId = hashSessionTokenV2(keepRawToken);
+			await tx.delete(authSessions).where(ne(authSessions.id, currentSessionId));
 		} else {
 			await tx.delete(authSessions);
 		}
@@ -278,12 +226,12 @@ export async function validateAndExtendSession(
 		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
 	}
 	const nowIso = now.toISOString();
-	const { primaryId, allCandidateIds } = getCandidateSessionIds(rawToken);
+	const sessionId = hashSessionTokenV2(rawToken);
 
 	const rows = await db
 		.select()
 		.from(authSessions)
-		.where(inArray(authSessions.id, allCandidateIds))
+		.where(eq(authSessions.id, sessionId))
 		.limit(1);
 
 	const session = rows[0];
@@ -299,24 +247,9 @@ export async function validateAndExtendSession(
 	const newExpiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
 	const lastSeenMs = new Date(session.lastSeenAtIso).getTime();
 	const hoursSinceLastSeen = (now.getTime() - lastSeenMs) / (1000 * 60 * 60);
+	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1;
 
-	const needsKeyUpgrade = session.id !== primaryId;
-	const shouldRefreshCookie = forceRefresh || hoursSinceLastSeen >= 1 || needsKeyUpgrade;
-
-	if (needsKeyUpgrade) {
-		await db.transaction(async (tx) => {
-			await tx.delete(authSessions).where(eq(authSessions.id, session.id));
-			await tx
-				.insert(authSessions)
-				.values({
-					id: primaryId,
-					createdAtIso: session.createdAtIso,
-					expiresAtIso: newExpiresAt.toISOString(),
-					lastSeenAtIso: nowIso
-				})
-				.onConflictDoNothing();
-		});
-	} else if (shouldRefreshCookie) {
+	if (shouldRefreshCookie) {
 		await db
 			.update(authSessions)
 			.set({
@@ -337,8 +270,8 @@ export async function validateAndExtendSession(
 export async function revokeAuthSession(rawToken: string): Promise<void> {
 	if (!isWellFormedSessionToken(rawToken)) return;
 	await ensureDatabaseReady();
-	const { allCandidateIds } = getCandidateSessionIds(rawToken);
-	await db.delete(authSessions).where(inArray(authSessions.id, allCandidateIds));
+	const sessionId = hashSessionTokenV2(rawToken);
+	await db.delete(authSessions).where(eq(authSessions.id, sessionId));
 }
 
 export async function resolveEventAuthSession(

@@ -100,10 +100,7 @@ export function useLocalRepository() {
 			achievedTier: l.achievedTier,
 			achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
 			habitSnapshotJson: l.habitSnapshotJson ?? null,
-			completedIntervals: l.completedIntervals ?? null,
 			actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-			totalActualMinutes: l.totalActualMinutes ?? null,
-			plannedIntervalsSnapshot: l.plannedIntervalsSnapshot ?? null,
 			plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
 			updatedAtIso: l.updatedAtIso || fallbackNowIso
 		};
@@ -172,7 +169,6 @@ export function useLocalRepository() {
 									habitTitleSnapshot: prev.habitTitleSnapshot ?? null,
 									achievedRuleSnapshot: prev.achievedRuleSnapshot ?? null,
 									habitSnapshotJson: prev.habitSnapshotJson ?? null,
-									plannedIntervalsSnapshot: prev.plannedIntervalsSnapshot ?? null,
 									plannedMinutesSnapshot: prev.plannedMinutesSnapshot ?? null
 								}
 							: null,
@@ -217,9 +213,7 @@ export function useLocalRepository() {
 							id: planId,
 							dateIso: input.targetDateIso,
 							habitId: item.habitId,
-							plannedIntervals: item.plannedIntervals,
 							plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-							cadenceWindowMinutes: item.cadenceWindowMinutes,
 							updatedAtIso: nowIso
 						});
 					}
@@ -734,15 +728,14 @@ export function useLocalRepository() {
 
 	async function getSyncMeta(): Promise<SyncMetaRecord> {
 		const existing = await db.syncMeta.get('meta:sync');
-		if (existing && existing.clientId) {
+		if (existing) {
 			return existing;
 		}
 
 		const initialized: SyncMetaRecord = {
 			key: 'meta:sync',
-			clientId: existing?.clientId || generateId(),
-			knownServerVersionIso: existing?.knownServerVersionIso ?? null,
-			lastSyncedAtIso: existing?.lastSyncedAtIso ?? null
+			knownServerVersionIso: null,
+			lastSyncedAtIso: null
 		};
 		await db.syncMeta.put(initialized);
 		return initialized;
@@ -1092,8 +1085,6 @@ export function useLocalRepository() {
 		applyDeltaWorkspace,
 		exportBackupPayload: backupOps.exportBackupPayload,
 		restoreBackupPayload: backupOps.restoreBackupPayload,
-		injectDemoSeed: backupOps.injectDemoSeed,
-		removeDemoSeed: backupOps.removeDemoSeed,
 		clearLocalData
 	};
 }

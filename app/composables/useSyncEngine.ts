@@ -6,9 +6,6 @@ import { extractApiErrorInfo, type ServerSyncResponse, type SyncStatusVisual } f
 const status = ref<SyncStatusVisual>('synced');
 const pendingCount = ref(0);
 const isOnline = ref(true);
-const lastSyncedAtIso = ref<string | null>(null);
-const knownServerVersionIso = ref<string | null>(null);
-const lastErrorMessage = ref<string | null>(null);
 
 let isInitialized = false;
 let isSyncInFlight = false;
@@ -49,15 +46,11 @@ export function useSyncEngine() {
 
 		try {
 			const meta = await localRepo.getSyncMeta();
-			knownServerVersionIso.value = meta.knownServerVersionIso;
-			lastSyncedAtIso.value = meta.lastSyncedAtIso;
-
 			const mutations = await localRepo.getPendingMutations();
 			pendingCount.value = mutations.length;
 
 			if (mutations.length === 0 && !options?.checkRemoteUpdates) {
 				status.value = 'synced';
-				lastErrorMessage.value = null;
 				isSyncInFlight = false;
 				return true;
 			}
@@ -67,8 +60,7 @@ export function useSyncEngine() {
 			const data = await $fetch<ServerSyncResponse>('/api/sync', {
 				method: 'POST',
 				body: {
-					clientId: meta.clientId || 'nuxt-client',
-					knownServerVersionIso: knownServerVersionIso.value,
+					knownServerVersionIso: meta.knownServerVersionIso,
 					mutations
 				}
 			});
@@ -90,16 +82,12 @@ export function useSyncEngine() {
 				await localRepo.applyDeltaWorkspace(data.deltaWorkspace);
 			}
 
-			knownServerVersionIso.value = data.serverVersionIso;
-			lastSyncedAtIso.value = data.serverTimeIso;
-			lastErrorMessage.value = null;
 			retryAttempt = 0;
 
 			await localRepo.saveSyncMeta({
 				key: 'meta:sync',
-				clientId: meta.clientId || 'nuxt-client',
-				knownServerVersionIso: knownServerVersionIso.value,
-				lastSyncedAtIso: lastSyncedAtIso.value
+				knownServerVersionIso: data.serverVersionIso,
+				lastSyncedAtIso: data.serverTimeIso
 			});
 
 			const remaining = await refreshPendingCount();
@@ -122,7 +110,6 @@ export function useSyncEngine() {
 					retryTimer = null;
 				}
 				status.value = 'error';
-				lastErrorMessage.value = errorInfo.message;
 				await clientAuth.checkAuth(false, true);
 				if (!window.location.pathname.startsWith('/login')) {
 					await navigateTo({
@@ -133,7 +120,6 @@ export function useSyncEngine() {
 				return false;
 			}
 			status.value = navigator.onLine ? 'error' : 'offline';
-			lastErrorMessage.value = errorInfo.message;
 			scheduleRetry();
 			return false;
 		}
@@ -283,9 +269,6 @@ export function useSyncEngine() {
 		hasQueuedSyncDuringFlight = false;
 		retryAttempt = 0;
 		pendingCount.value = 0;
-		knownServerVersionIso.value = null;
-		lastSyncedAtIso.value = null;
-		lastErrorMessage.value = null;
 		status.value = 'synced';
 	}
 
@@ -293,13 +276,8 @@ export function useSyncEngine() {
 		status,
 		pendingCount,
 		isOnline,
-		lastSyncedAtIso,
-		knownServerVersionIso,
-		lastErrorMessage,
 		init,
 		reset,
-		syncNow,
-		notifyLocalMutationStaged,
-		refreshPendingCount
+		syncNow
 	};
 }
