@@ -4,7 +4,12 @@ import { useDexieLiveQuery } from '~/composables/useDexieLiveQuery';
 import { useLocalRepository } from '~/composables/useLocalRepository';
 import { detectNoteSmartSignals } from '~/core/note-signals';
 import { toPersianDigits } from '~/domain/calendar';
-import type { NoteEntity, NoteSmartFilter, UpsertNoteInput } from '~/domain/schemas';
+import type {
+	NoteEntity,
+	NoteNumberCopyPayload,
+	NoteSmartFilter,
+	UpsertNoteInput
+} from '~/domain/schemas';
 import { Hash, Link2, NotebookPen, Plus, Search } from 'lucide-vue-next';
 
 const db = useAppDatabase();
@@ -25,27 +30,62 @@ const isModalOpen = ref(false);
 const isSubmittingNote = ref(false);
 const editingNote = ref<NoteEntity | null>(null);
 const copiedNoteId = ref<string | null>(null);
+const copiedNumberKey = ref<string | null>(null);
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+let copyNumberResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+	if (!import.meta.client) return false;
+	if (navigator.clipboard?.writeText) {
+		try {
+			await navigator.clipboard.writeText(text);
+			return true;
+		} catch {
+			// Fallback for non-HTTPS local network contexts
+		}
+	}
+	try {
+		const textarea = document.createElement('textarea');
+		textarea.value = text;
+		textarea.setAttribute('readonly', '');
+		textarea.style.position = 'fixed';
+		textarea.style.opacity = '0';
+		document.body.appendChild(textarea);
+		textarea.select();
+		const ok = document.execCommand('copy');
+		document.body.removeChild(textarea);
+		return ok;
+	} catch {
+		return false;
+	}
+}
 
 async function handleCopyNote(note: NoteEntity) {
-	if (!import.meta.client || !navigator.clipboard) return;
-	try {
-		await navigator.clipboard.writeText(
-			note.title ? `${note.title}\n${note.content}` : note.content
-		);
-		copiedNoteId.value = note.id;
-		if (copyResetTimer) clearTimeout(copyResetTimer);
-		copyResetTimer = setTimeout(() => {
-			copiedNoteId.value = null;
-			copyResetTimer = null;
-		}, 1600);
-	} catch {
-		// ignore clipboard permission errors
-	}
+	const text = note.title ? `${note.title}\n${note.content}` : note.content;
+	if (!(await copyTextToClipboard(text))) return;
+
+	copiedNoteId.value = note.id;
+	if (copyResetTimer) clearTimeout(copyResetTimer);
+	copyResetTimer = setTimeout(() => {
+		copiedNoteId.value = null;
+		copyResetTimer = null;
+	}, 1600);
+}
+
+async function handleCopyNumber(payload: NoteNumberCopyPayload) {
+	if (!(await copyTextToClipboard(payload.value))) return;
+
+	copiedNumberKey.value = payload.key;
+	if (copyNumberResetTimer) clearTimeout(copyNumberResetTimer);
+	copyNumberResetTimer = setTimeout(() => {
+		copiedNumberKey.value = null;
+		copyNumberResetTimer = null;
+	}, 1600);
 }
 
 onUnmounted(() => {
 	if (copyResetTimer) clearTimeout(copyResetTimer);
+	if (copyNumberResetTimer) clearTimeout(copyNumberResetTimer);
 });
 
 const categories = computed(() => {
@@ -272,7 +312,9 @@ async function handleDeleteNote(noteId: string) {
 					:key="note.id"
 					:note="note"
 					:is-copied="copiedNoteId === note.id"
+					:copied-number-key="copiedNumberKey"
 					@copy="handleCopyNote"
+					@copy-number="handleCopyNumber"
 					@edit="openEditModal"
 					@toggle-pin="handleTogglePin"
 					@delete="handleDeleteNote"

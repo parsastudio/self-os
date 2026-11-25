@@ -301,6 +301,30 @@ export const UpsertNoteInputSchema = z.object({
 });
 export type UpsertNoteInput = z.infer<typeof UpsertNoteInputSchema>;
 
+export const NoteContentSegmentSchema = z.discriminatedUnion('kind', [
+	z.object({
+		kind: z.literal('text'),
+		raw: z.string()
+	}),
+	z.object({
+		kind: z.literal('number'),
+		raw: z.string(),
+		copyValue: z.string()
+	}),
+	z.object({
+		kind: z.literal('url'),
+		raw: z.string(),
+		href: z.string()
+	})
+]);
+export type NoteContentSegment = z.infer<typeof NoteContentSegmentSchema>;
+
+export const NoteNumberCopyPayloadSchema = z.object({
+	key: z.string(),
+	value: z.string()
+});
+export type NoteNumberCopyPayload = z.infer<typeof NoteNumberCopyPayloadSchema>;
+
 export const SetupPasswordInputSchema = z
 	.object({
 		password: z

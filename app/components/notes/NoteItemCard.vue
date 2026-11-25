@@ -1,26 +1,35 @@
 <script setup lang="ts">
-import { detectNoteSmartSignals } from '~/core/note-signals';
+import { detectNoteSmartSignals, parseNoteContentSegments } from '~/core/note-signals';
 import { isoToJalaliSlash, toPersianDigits } from '~/domain/calendar';
-import type { NoteEntity } from '~/domain/schemas';
+import type { NoteEntity, NoteNumberCopyPayload } from '~/domain/schemas';
 import { Check, Copy, ExternalLink, Pencil, Pin, Trash2 } from 'lucide-vue-next';
 
 interface Props {
 	note: NoteEntity;
 	isCopied?: boolean;
+	copiedNumberKey?: string | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-	isCopied: false
+	isCopied: false,
+	copiedNumberKey: null
 });
 
 const emit = defineEmits<{
 	(e: 'copy', note: NoteEntity): void;
+	(e: 'copyNumber', payload: NoteNumberCopyPayload): void;
 	(e: 'edit', note: NoteEntity): void;
 	(e: 'togglePin', noteId: string, isPinned: boolean): void;
 	(e: 'delete', noteId: string): void;
 }>();
 
+const isExpanded = ref(false);
+
 const signals = computed(() => detectNoteSmartSignals(`${props.note.title} ${props.note.content}`));
+const contentSegments = computed(() => parseNoteContentSegments(props.note.content));
+const isLongContent = computed(
+	() => props.note.content.length > 220 || props.note.content.split('\n').length > 5
+);
 </script>
 
 <template>
@@ -67,12 +76,62 @@ const signals = computed(() => detectNoteSmartSignals(`${props.note.title} ${pro
 
 			<h3 v-if="note.title" class="mt-3 text-base font-black leading-snug text-fg">{{ note.title }}</h3>
 
-			<p
-				dir="rtl"
-				class="mt-2.5 line-clamp-6 whitespace-pre-line break-words text-right text-xs leading-6 font-medium text-fg-secondary select-text"
-			>
-				{{ note.content }}
-			</p>
+			<div class="mt-2.5">
+				<p
+					dir="rtl"
+					class="whitespace-pre-line break-words text-right text-xs leading-6 font-medium text-fg-secondary select-text"
+					:class="{ 'line-clamp-6': isLongContent && !isExpanded }"
+				>
+					<template v-for="(seg, idx) in contentSegments" :key="`${note.id}:${idx}`">
+						<button
+							v-if="seg.kind === 'number'"
+							type="button"
+							dir="ltr"
+							class="mx-0.5 inline-flex items-center gap-1 rounded-lg border px-1.5 py-0.2 align-baseline font-mono text-[11px] font-extrabold transition active:scale-95"
+							:class="
+								copiedNumberKey === `${note.id}:${idx}`
+									? 'border-optimal-border bg-optimal-soft text-optimal'
+									: 'border-border bg-elevated text-accent-text hover:border-accent-border hover:bg-accent-soft'
+							"
+							:title="`کلیک برای کپی ${seg.copyValue}`"
+							@click.stop="
+								emit('copyNumber', {
+									key: `${note.id}:${idx}`,
+									value: seg.copyValue
+								})
+							"
+						>
+							<Check
+								v-if="copiedNumberKey === `${note.id}:${idx}`"
+								class="h-3 w-3 shrink-0"
+							/>
+							<Copy v-else class="h-2.5 w-2.5 shrink-0 opacity-75" />
+							<span>{{ seg.raw }}</span>
+						</button>
+						<a
+							v-else-if="seg.kind === 'url'"
+							:href="seg.href"
+							target="_blank"
+							rel="noopener noreferrer"
+							dir="ltr"
+							class="break-all text-accent-text underline decoration-accent-border/60 underline-offset-4 transition hover:opacity-80"
+							@click.stop
+						>
+							{{ seg.raw }}
+						</a>
+						<template v-else>{{ seg.raw }}</template>
+					</template>
+				</p>
+
+				<button
+					v-if="isLongContent"
+					type="button"
+					class="mt-1.5 text-[11px] font-extrabold text-accent-text hover:underline"
+					@click="isExpanded = !isExpanded"
+				>
+					{{ isExpanded ? 'بستن متن' : 'مشاهده کامل متن' }}
+				</button>
+			</div>
 		</div>
 
 		<div class="mt-4 flex items-center justify-between gap-2 border-t border-border pt-3 text-xs text-fg-muted">
