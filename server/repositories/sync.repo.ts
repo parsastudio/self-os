@@ -56,7 +56,7 @@ function mapLogRow(l: typeof habitLogs.$inferSelect) {
 }
 
 function resolveSafeIso(candidateIso?: string): string {
-	return normalizeTimestampIso(candidateIso, new Date().toISOString()) ?? new Date().toISOString();
+	return normalizeTimestampIso(candidateIso, new Date().toISOString());
 }
 
 export async function bumpServerStructuralVersion(
@@ -494,10 +494,9 @@ export async function processClientSyncRequest(
 		]);
 
 		const deletedBuckets: Record<
-			'habit' | 'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event' | 'person',
+			'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event' | 'person',
 			string[]
 		> = {
-			habit: [],
 			entry: [],
 			log: [],
 			plan: [],
@@ -510,7 +509,7 @@ export async function processClientSyncRequest(
 
 		for (const t of tombstoneRows) {
 			const match = t.id.match(
-				/^del:(habit|entry|log|plan|book|media|note|event|person):(.+)$/
+				/^del:(entry|log|plan|book|media|note|event|person):(.+)$/
 			);
 			if (match && match[1] && match[2]) {
 				const kind = match[1] as keyof typeof deletedBuckets;
@@ -531,7 +530,6 @@ export async function processClientSyncRequest(
 			calendarEvents: changedCalendarEvents,
 			lifecycleEvents: changedLifecycleEvents,
 			people: changedPeople,
-			deletedHabitIds: deletedBuckets.habit,
 			deletedEntryDates: deletedBuckets.entry,
 			deletedLogIds: deletedBuckets.log,
 			deletedPlanIds: deletedBuckets.plan,

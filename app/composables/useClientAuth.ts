@@ -81,17 +81,7 @@ export function useClientAuth() {
 		serverAuthenticated?: boolean,
 		serverPasswordConfigured?: boolean
 	): Promise<{ isAuthenticated: boolean; isPasswordConfigured: boolean }> {
-		if (!import.meta.client) {
-			return {
-				isAuthenticated: serverAuthenticated ?? false,
-				isPasswordConfigured: serverPasswordConfigured ?? true
-			};
-		}
-
 		const db = getAppDatabase();
-		if (!db) {
-			return { isAuthenticated: false, isPasswordConfigured: true };
-		}
 
 		let record: LocalAuthRecord | undefined;
 		try {
@@ -169,10 +159,9 @@ export function useClientAuth() {
 	}
 
 	async function saveClientCredential(password: string): Promise<void> {
-		if (!import.meta.client || !password.trim()) return;
+		if (!password.trim()) return;
 
 		const db = getAppDatabase();
-		if (!db) return;
 
 		const salt = generateRandomSalt(CLIENT_SALT_BYTES);
 		const saltHex = bytesToHex(salt);
@@ -201,10 +190,7 @@ export function useClientAuth() {
 	}
 
 	async function loginOffline(password: string): Promise<{ success: boolean; error?: string }> {
-		if (!import.meta.client) return { success: false, error: 'محیط نامعتبر است' };
-
 		const db = getAppDatabase();
-		if (!db) return { success: false, error: 'پایگاه داده در دسترس نیست' };
 
 		const record = await db.localAuth.get('auth:session');
 		if (!record || !record.passwordVerifierHex || !record.verifierSaltHex) {
@@ -244,7 +230,7 @@ export function useClientAuth() {
 	}
 
 	function verifyServerStatusInBackground(): void {
-		if (!import.meta.client || !navigator.onLine || hasVerifiedWithServerInSession || backgroundCheckInFlight) {
+		if (!navigator.onLine || hasVerifiedWithServerInSession || backgroundCheckInFlight) {
 			return;
 		}
 		backgroundCheckInFlight = true;
@@ -268,13 +254,6 @@ export function useClientAuth() {
 		isAuthenticated: boolean;
 		isPasswordConfigured: boolean;
 	}> {
-		if (!import.meta.client) {
-			return {
-				isAuthenticated: isAuthenticated.value,
-				isPasswordConfigured: isPasswordConfigured.value
-			};
-		}
-
 		if (isInitialized.value) {
 			verifyServerStatusInBackground();
 			return {
@@ -307,19 +286,14 @@ export function useClientAuth() {
 	}
 
 	async function logout(): Promise<void> {
-		if (!import.meta.client) return;
 		const db = getAppDatabase();
-		if (db) {
-			await db.localAuth.delete('auth:session');
-		}
+		await db.localAuth.delete('auth:session');
 		isAuthenticated.value = false;
 		hasVerifiedWithServerInSession = false;
 	}
 
 	return {
-		isAuthenticated,
 		isPasswordConfigured,
-		isInitialized,
 		checkAuth,
 		ensureSessionChecked,
 		saveClientCredential,

@@ -400,10 +400,6 @@ export const ChangePasswordInputSchema = z
 		path: ['confirmNewPassword']
 	});
 
-export const DemoSeedActionSchema = z.object({
-	action: z.enum(['inject', 'remove'])
-});
-
 export const BackupRestoreModeSchema = z.enum(['merge', 'replace']);
 export type BackupRestoreMode = z.infer<typeof BackupRestoreModeSchema>;
 
@@ -543,7 +539,6 @@ export const LocalWorkspaceSnapshotSchema = z.object({
 export type LocalWorkspaceSnapshot = z.infer<typeof LocalWorkspaceSnapshotSchema>;
 
 export const DeltaWorkspaceSnapshotSchema = LocalWorkspaceSnapshotSchema.extend({
-	deletedHabitIds: z.array(z.string()).default([]),
 	deletedEntryDates: z.array(z.string()).default([]),
 	deletedLogIds: z.array(z.string()).default([]),
 	deletedPlanIds: z.array(z.string()).default([]),
@@ -557,7 +552,6 @@ export type DeltaWorkspaceSnapshot = z.infer<typeof DeltaWorkspaceSnapshotSchema
 
 export const ServerSyncResponseSchema = z.object({
 	ok: z.boolean(),
-	error: z.string().optional(),
 	appliedMutationIds: z.array(z.string()),
 	serverVersionIso: z.string(),
 	serverTimeIso: z.string(),
@@ -605,7 +599,6 @@ export const CalendarDayAggregateSchema = z.object({
 	jy: z.number(),
 	jm: z.number(),
 	jd: z.number(),
-	weekdayLabel: z.string(),
 	fullHumanLabel: z.string(),
 	isToday: z.boolean(),
 	entry: z
@@ -772,13 +765,10 @@ export type HabitRuleDiffItem = z.infer<typeof HabitRuleDiffItemSchema>;
 
 export const HabitEvolutionItemSchema = z.object({
 	id: z.string(),
-	habitId: z.string().nullable(),
-	habitTitle: z.string(),
 	eventType: LifecycleEventTypeSchema,
 	eventTypeLabel: z.string(),
 	badgeClasses: z.string(),
 	effectiveDateIso: z.string(),
-	jalaliSlash: z.string(),
 	humanDateLabel: z.string(),
 	summary: z.string(),
 	reason: z.string().nullable(),
@@ -793,10 +783,8 @@ export const HabitDailyPointSchema = z.object({
 	dateIso: z.string(),
 	jalaliSlash: z.string(),
 	humanLabel: z.string(),
-	weekdayLabel: z.string(),
 	weekdayIndex: z.number(),
 	outcome: DayHabitOutcomeSchema,
-	tierLevel: z.number().nullable(),
 	score: z.number().nullable(),
 	rollingAvgScore: z.number().nullable(),
 	ruleSnapshot: z.string().nullable(),
@@ -830,7 +818,6 @@ export type WeekdayPerformanceStat = z.infer<typeof WeekdayPerformanceStatSchema
 export const HabitComparisonRowSchema = z.object({
 	habit: HabitEntitySchema,
 	parentTitle: z.string().nullable(),
-	isComposite: z.boolean(),
 	loggedDays: z.number(),
 	successDays: z.number(),
 	goldCount: z.number(),
@@ -840,7 +827,6 @@ export const HabitComparisonRowSchema = z.object({
 	consistencyRate: z.number(),
 	avgQualityScore: z.number(),
 	currentStreak: z.number(),
-	bestStreak: z.number(),
 	trendDelta: z.number()
 });
 export type HabitComparisonRow = z.infer<typeof HabitComparisonRowSchema>;
@@ -848,8 +834,6 @@ export type HabitComparisonRow = z.infer<typeof HabitComparisonRowSchema>;
 export const SelectedHabitAnalyticsSchema = z.object({
 	habit: HabitEntitySchema,
 	parentTitle: z.string().nullable(),
-	isComposite: z.boolean(),
-	childrenCount: z.number(),
 	maxSupportedTier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
 	dailySeries: z.array(HabitDailyPointSchema),
 	loggedDaysCount: z.number(),
@@ -878,7 +862,6 @@ export const FullAnalyticsReportSchema = z.object({
 		z.object({
 			habit: HabitEntitySchema,
 			parentTitle: z.string().nullable(),
-			isComposite: z.boolean(),
 			displayLabel: z.string()
 		})
 	),

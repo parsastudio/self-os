@@ -3,10 +3,8 @@ import { getAppDatabase } from '~/composables/useAppDatabase';
 const isDark = ref(true);
 
 async function loadThemeFromDb(): Promise<boolean> {
-	if (!import.meta.client) return true;
 	try {
 		const db = getAppDatabase();
-		if (!db) return true;
 		const record = await db.syncMeta.get('meta:theme');
 		if (record?.themeMode === 'light') return false;
 		if (record?.themeMode === 'dark') return true;
@@ -17,10 +15,8 @@ async function loadThemeFromDb(): Promise<boolean> {
 }
 
 async function persistThemeToDb(dark: boolean): Promise<void> {
-	if (!import.meta.client) return;
 	try {
 		const db = getAppDatabase();
-		if (!db) return;
 		await db.syncMeta.put({
 			key: 'meta:theme',
 			knownServerVersionIso: null,
@@ -34,7 +30,6 @@ async function persistThemeToDb(dark: boolean): Promise<void> {
 
 export function useTheme() {
 	function applyToDom() {
-		if (!import.meta.client) return;
 		const root = document.documentElement;
 		root.classList.toggle('dark', isDark.value);
 		root.style.colorScheme = isDark.value ? 'dark' : 'light';
@@ -45,7 +40,6 @@ export function useTheme() {
 	}
 
 	function init() {
-		if (!import.meta.client) return;
 		applyToDom();
 		void loadThemeFromDb().then((storedDark) => {
 			isDark.value = storedDark;
@@ -56,10 +50,6 @@ export function useTheme() {
 	function setTheme(dark: boolean) {
 		if (isDark.value === dark) {
 			applyToDom();
-			return;
-		}
-		if (!import.meta.client) {
-			isDark.value = dark;
 			return;
 		}
 

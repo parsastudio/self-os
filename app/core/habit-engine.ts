@@ -113,7 +113,7 @@ export function resolveHabitRuleSnapshot(
 		return habit.silverDesc?.trim() || habit.bronzeDesc?.trim() || null;
 	}
 	if (achievedTier === TIER_SCORES.BRONZE) {
-		return habit.bronzeDesc?.trim() || habit.emergencyMinDesc?.trim() || null;
+		return habit.bronzeDesc?.trim() || null;
 	}
 	return null;
 }
@@ -452,10 +452,8 @@ export function isHabitNodeCompleted(params: {
 	habitId: string;
 	habits: HabitEntity[];
 	logsByHabitId: Record<string, HabitLogItemInput>;
-	hasExistingEntry: boolean;
-	isDirty: boolean;
 }): boolean {
-	const { habitId, habits, logsByHabitId, hasExistingEntry, isDirty } = params;
+	const { habitId, habits, logsByHabitId } = params;
 	const habit = habits.find((h) => h.id === habitId);
 	if (!habit) return false;
 
@@ -476,15 +474,7 @@ export function isHabitNodeCompleted(params: {
 		return tier !== null && tier !== undefined;
 	}
 
-	const log = logsByHabitId[habit.id];
-	if (log?.achievedTier !== null && log?.achievedTier !== undefined) {
-		return true;
-	}
-	if (log?.actualMinutesPerInterval !== null && log?.actualMinutesPerInterval !== undefined) {
-		return hasExistingEntry || isDirty;
-	}
-	const actual = resolveEffectiveCadenceMinutes(log);
-	return actual > 0 && (hasExistingEntry || isDirty);
+	return false;
 }
 
 export function computeDailyCompletionStats(params: {

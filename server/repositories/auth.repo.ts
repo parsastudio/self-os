@@ -69,7 +69,7 @@ function runScryptAsync(
 	password: string,
 	saltBuffer: Buffer,
 	keylen: number,
-	options: crypto.ScryptOptions = {}
+	options: crypto.ScryptOptions
 ): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
 		crypto.scrypt(password, saltBuffer, keylen, options, (err, derivedKey) => {
@@ -94,9 +94,9 @@ function isWellFormedSessionToken(rawToken: string): boolean {
 	return SESSION_TOKEN_HEX_REGEX.test(rawToken);
 }
 
-function hashSessionTokenV2(rawToken: string, hmacKey = getActiveSessionHmacKey()): string {
+function hashSessionTokenV2(rawToken: string): string {
 	return crypto
-		.createHmac('sha256', hmacKey)
+		.createHmac('sha256', getActiveSessionHmacKey())
 		.update(rawToken.toLowerCase())
 		.digest('hex');
 }
@@ -189,13 +189,11 @@ export async function changeMasterPassword(
 
 export async function createAuthSession(): Promise<{
 	token: string;
-	expiresAt: Date;
 }> {
 	await ensureDatabaseReady();
 	const now = new Date();
 	const nowIso = now.toISOString();
-	const expiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
-	const expiresAtIso = expiresAt.toISOString();
+	const expiresAtIso = new Date(now.getTime() + SESSION_DURATION_MS).toISOString();
 
 	await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 
@@ -209,7 +207,7 @@ export async function createAuthSession(): Promise<{
 		lastSeenAtIso: nowIso
 	});
 
-	return { token: rawToken, expiresAt };
+	return { token: rawToken };
 }
 
 export async function validateAndExtendSession(
@@ -218,12 +216,11 @@ export async function validateAndExtendSession(
 ): Promise<{
 	valid: boolean;
 	shouldRefreshCookie: boolean;
-	expiresAt: Date;
 }> {
 	await ensureDatabaseReady();
 	const now = new Date();
 	if (!isWellFormedSessionToken(rawToken)) {
-		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
+		return { valid: false, shouldRefreshCookie: false };
 	}
 	const nowIso = now.toISOString();
 	const sessionId = hashSessionTokenV2(rawToken);
@@ -236,12 +233,12 @@ export async function validateAndExtendSession(
 
 	const session = rows[0];
 	if (!session) {
-		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
+		return { valid: false, shouldRefreshCookie: false };
 	}
 
 	if (session.expiresAtIso <= nowIso) {
 		await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
-		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
+		return { valid: false, shouldRefreshCookie: false };
 	}
 
 	const newExpiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
@@ -262,8 +259,7 @@ export async function validateAndExtendSession(
 
 	return {
 		valid: true,
-		shouldRefreshCookie,
-		expiresAt: newExpiresAt
+		shouldRefreshCookie
 	};
 }
 

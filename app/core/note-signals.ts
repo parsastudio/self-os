@@ -90,7 +90,7 @@ export function parseNoteContentSegments(text: string): NoteContentSegment[] {
 			!rawNumber.includes('.') &&
 			(/[a-zA-Z]/.test(prevChar) || /[a-zA-Z]/.test(nextChar));
 
-		if (!digitsOnly || isGluedShortAscii) {
+		if (isGluedShortAscii) {
 			pushText(rawNumber);
 		} else {
 			const copyValue = normalizeDigits(rawNumber).replace(/[-\s]/g, '');

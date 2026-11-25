@@ -22,15 +22,12 @@ export function useSyncEngine() {
 	const clientAuth = useClientAuth();
 
 	async function refreshPendingCount(): Promise<number> {
-		if (!import.meta.client) return 0;
 		const list = await localRepo.getPendingMutations();
 		pendingCount.value = list.length;
 		return list.length;
 	}
 
 	async function syncNow(options?: { checkRemoteUpdates?: boolean }): Promise<boolean> {
-		if (!import.meta.client) return false;
-
 		if (!navigator.onLine) {
 			isOnline.value = false;
 			status.value = 'offline';
@@ -64,10 +61,6 @@ export function useSyncEngine() {
 					mutations
 				}
 			});
-
-			if (!data.ok) {
-				throw new Error(data.error || 'خطا در پردازش بسته همگام‌سازی');
-			}
 
 			const appliedSet = new Set(data.appliedMutationIds);
 			const appliedSnapshots = mutations
@@ -141,7 +134,6 @@ export function useSyncEngine() {
 	}
 
 	async function notifyLocalMutationStaged(): Promise<void> {
-		if (!import.meta.client) return;
 		await refreshPendingCount();
 
 		if (!navigator.onLine) {
@@ -162,7 +154,7 @@ export function useSyncEngine() {
 	}
 
 	function init() {
-		if (!import.meta.client || isInitialized) return;
+		if (isInitialized) return;
 		isInitialized = true;
 		isOnline.value = navigator.onLine;
 

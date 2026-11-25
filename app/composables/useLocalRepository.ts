@@ -1098,11 +1098,6 @@ export function useLocalRepository() {
 						.map((m) => m.payload.targetDateIso)
 				);
 
-				if (delta.deletedHabitIds.length > 0) {
-					await db.habits.bulkDelete(
-						delta.deletedHabitIds.filter((id) => !pendingIds.has(`habit:${id}`))
-					);
-				}
 				if (delta.deletedEntryDates.length > 0) {
 					await db.dailyEntries.bulkDelete(
 						delta.deletedEntryDates.filter((dateIso) => !pendingDailyDates.has(dateIso))

@@ -76,6 +76,14 @@ export function toPersianDigits(input: string | number): string {
 
 export function normalizeTimestampIso(
 	iso: string | null | undefined,
+	fallbackIso: string
+): string;
+export function normalizeTimestampIso(
+	iso: string | null | undefined,
+	fallbackIso?: string
+): string | null;
+export function normalizeTimestampIso(
+	iso: string | null | undefined,
 	fallbackIso?: string
 ): string | null {
 	if (!iso) return fallbackIso ?? null;

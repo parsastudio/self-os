@@ -212,7 +212,6 @@ export async function saveCadencePlansForDate(
 ): Promise<void> {
 	await ensureDatabaseReady();
 	const nowMs = Date.now();
-	const nowIso = new Date(nowMs).toISOString();
 	const batchUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
 
 	const applyOperations = async (tx: DbExecutor) => {

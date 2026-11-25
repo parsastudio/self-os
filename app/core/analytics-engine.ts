@@ -61,10 +61,6 @@ function resolveDateRangeWindow(
 		}
 	}
 
-	if (minIso > maxIso) {
-		minIso = maxIso;
-	}
-
 	const endIso = maxIso;
 	let startIso = endIso;
 
@@ -104,7 +100,6 @@ function evaluateSingleLeafHabitDay(
 	log: AnalyticsRawLog | undefined
 ): {
 	outcome: DayHabitOutcome;
-	tierLevel: number | null;
 	score: number | null;
 	ruleSnapshot: string | null;
 	actualMinutes: number | null;
@@ -120,7 +115,6 @@ function evaluateSingleLeafHabitDay(
 		if (!plannedMinutes && actualMinutes <= 0) {
 			return {
 				outcome: 'unlogged',
-				tierLevel: null,
 				score: null,
 				ruleSnapshot: null,
 				actualMinutes: null,
@@ -131,7 +125,6 @@ function evaluateSingleLeafHabitDay(
 		if (actualMinutes <= 0) {
 			return {
 				outcome: 'failed',
-				tierLevel: 0,
 				score: 0,
 				ruleSnapshot: `۰ دقیقه از هدف ${plannedMinutes} دقیقه`,
 				actualMinutes: 0,
@@ -146,7 +139,6 @@ function evaluateSingleLeafHabitDay(
 		if (ratio >= CADENCE_SUCCESS_RATIOS.GOLD_THRESHOLD) {
 			return {
 				outcome: 'gold',
-				tierLevel: 3,
 				score: QUALITY_SCORES.GOLD,
 				ruleSnapshot: plannedMinutes
 					? `${actualMinutes} دقیقه (تکمیل هدف ${plannedMinutes} دقیقه)`
@@ -158,7 +150,6 @@ function evaluateSingleLeafHabitDay(
 		if (ratio >= CADENCE_SUCCESS_RATIOS.SILVER_THRESHOLD) {
 			return {
 				outcome: 'silver',
-				tierLevel: 2,
 				score,
 				ruleSnapshot: `${actualMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`,
 				actualMinutes,
@@ -167,7 +158,6 @@ function evaluateSingleLeafHabitDay(
 		}
 		return {
 			outcome: 'bronze',
-			tierLevel: 1,
 			score: Math.max(QUALITY_SCORES.CADENCE_MIN_NONZERO, score),
 			ruleSnapshot: `${actualMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`,
 			actualMinutes,
@@ -178,7 +168,6 @@ function evaluateSingleLeafHabitDay(
 	if (!log || log.achievedTier === null || log.achievedTier === undefined) {
 		return {
 			outcome: 'unlogged',
-			tierLevel: null,
 			score: null,
 			ruleSnapshot: null,
 			actualMinutes: null,
@@ -194,7 +183,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier === TIER_SCORES.SKIPPED) {
 		return {
 			outcome: 'skipped',
-			tierLevel: -1,
 			score: null,
 			ruleSnapshot: ruleSnapshot || 'امروز موقعیتش پیش نیامد',
 			actualMinutes: null,
@@ -205,7 +193,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier === TIER_SCORES.FAILED) {
 		return {
 			outcome: 'failed',
-			tierLevel: 0,
 			score: QUALITY_SCORES.FAILED,
 			ruleSnapshot: ruleSnapshot || 'انجام نشد',
 			actualMinutes: null,
@@ -216,7 +203,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier >= maxTier || tier === TIER_SCORES.GOLD) {
 		return {
 			outcome: 'gold',
-			tierLevel: 3,
 			score: QUALITY_SCORES.GOLD,
 			ruleSnapshot,
 			actualMinutes: null,
@@ -227,7 +213,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier === TIER_SCORES.SILVER) {
 		return {
 			outcome: 'silver',
-			tierLevel: 2,
 			score: QUALITY_SCORES.SILVER,
 			ruleSnapshot,
 			actualMinutes: null,
@@ -237,7 +222,6 @@ function evaluateSingleLeafHabitDay(
 
 	return {
 		outcome: 'bronze',
-		tierLevel: 1,
 		score: maxTier === 1 ? QUALITY_SCORES.BRONZE_MAX : QUALITY_SCORES.BRONZE_DEFAULT,
 		ruleSnapshot,
 		actualMinutes: null,
@@ -263,7 +247,6 @@ function evaluateHabitDay(
 	if (loggedChildren.length === 0) {
 		return {
 			outcome: 'unlogged' as DayHabitOutcome,
-			tierLevel: null,
 			score: null,
 			ruleSnapshot: null,
 			actualMinutes: null,
@@ -271,11 +254,15 @@ function evaluateHabitDay(
 		};
 	}
 
-	const scoredChildren = loggedChildren.filter((r) => r.evalResult.score !== null);
-	if (scoredChildren.length === 0) {
+	const scoredChildrenScores: number[] = [];
+	for (const r of loggedChildren) {
+		if (r.evalResult.score !== null) {
+			scoredChildrenScores.push(r.evalResult.score);
+		}
+	}
+	if (scoredChildrenScores.length === 0) {
 		return {
 			outcome: 'skipped' as DayHabitOutcome,
-			tierLevel: -1,
 			score: null,
 			ruleSnapshot: 'موقعیت زیرطرح‌ها پیش نیامد',
 			actualMinutes: null,
@@ -283,20 +270,17 @@ function evaluateHabitDay(
 		};
 	}
 
-	const avgScore =
-		averageRounded(scoredChildren.map((r) => r.evalResult.score ?? 0)) ?? 0;
+	let scoreSum = 0;
+	for (const s of scoredChildrenScores) scoreSum += s;
+	const avgScore = Math.round(scoreSum / scoredChildrenScores.length);
 
 	let outcome: DayHabitOutcome = 'bronze';
-	let tierLevel = 1;
 	if (avgScore === 0) {
 		outcome = 'failed';
-		tierLevel = 0;
 	} else if (avgScore >= 88) {
 		outcome = 'gold';
-		tierLevel = 3;
 	} else if (avgScore >= 55) {
 		outcome = 'silver';
-		tierLevel = 2;
 	}
 
 	const summaryTokens = loggedChildren.map((r) => {
@@ -315,7 +299,6 @@ function evaluateHabitDay(
 
 	return {
 		outcome,
-		tierLevel,
 		score: avgScore,
 		ruleSnapshot: summaryTokens.join(' • '),
 		actualMinutes: null,
@@ -365,13 +348,10 @@ function buildEvolutionTimelineForHabit(
 
 		return {
 			id: ev.id,
-			habitId: ev.habitId,
-			habitTitle: ev.habitTitleSnapshot,
 			eventType: ev.eventType,
 			eventTypeLabel: meta.label,
 			badgeClasses: meta.badgeClasses,
 			effectiveDateIso: ev.effectiveDateIso,
-			jalaliSlash: isoToJalaliSlash(ev.effectiveDateIso),
 			humanDateLabel: human.fullLabel,
 			summary: ev.summary,
 			reason: ev.reason,
@@ -384,9 +364,9 @@ function buildEvolutionTimelineForHabit(
 }
 
 function computeStreaksFromSeries(
-	series: ReadonlyArray<{ dateIso?: string; outcome: DayHabitOutcome }>,
-	habitCreatedDateIso?: string,
-	graceEndDateIso?: string
+	series: ReadonlyArray<{ dateIso: string; outcome: DayHabitOutcome }>,
+	habitCreatedDateIso: string,
+	graceEndDateIso: string
 ): {
 	currentStreak: number;
 	bestStreak: number;
@@ -412,7 +392,7 @@ function computeStreaksFromSeries(
 		} else if (pt.outcome === 'unlogged') {
 			if (isFinalDay) continue;
 			const isAfterCreation =
-				!habitCreatedDateIso || !pt.dateIso || pt.dateIso >= habitCreatedDateIso;
+				!habitCreatedDateIso || pt.dateIso >= habitCreatedDateIso;
 			if (hasSeenFirstActivity && isAfterCreation) {
 				running = 0;
 			}
@@ -431,7 +411,7 @@ function computeStreaksFromSeries(
 		} else if (
 			out === 'unlogged' &&
 			i === series.length - 1 &&
-			(!graceEndDateIso || pt.dateIso === graceEndDateIso)
+			pt.dateIso === graceEndDateIso
 		) {
 			continue;
 		} else {
@@ -506,15 +486,12 @@ export function buildFullAnalyticsReport(params: {
 
 	const selectableHabits = sortedHabits.map((h) => {
 		const parent = h.parentId ? habitById.get(h.parentId) : null;
-		const children = childrenByParentId.get(h.id) ?? [];
-		const isComposite = children.length > 0;
 		const prefix = parent ? `↳ ${h.title}` : h.title;
 		const suffix = h.status === 'archived' ? ' (بایگانی)' : '';
 
 		return {
 			habit: h,
 			parentTitle: parent?.title ?? null,
-			isComposite,
 			displayLabel: `${prefix}${suffix}`
 		};
 	});
@@ -523,6 +500,8 @@ export function buildFullAnalyticsReport(params: {
 		(selectedHabitId ? habitById.get(selectedHabitId) : null) ??
 		selectableHabits[0]?.habit ??
 		null;
+
+	const streaksByHabitId = new Map<string, { currentStreak: number; bestStreak: number }>();
 
 	const comparisonRows: HabitComparisonRow[] = selectableHabits.map((item) => {
 		const h = item.habit;
@@ -563,16 +542,16 @@ export function buildFullAnalyticsReport(params: {
 						dateIso: dIso,
 						outcome: evaluateHabitDay(h, children, logsByDate.get(dIso)).outcome
 					}));
-		const { currentStreak, bestStreak } = computeStreaksFromSeries(
+		const streaks = computeStreaksFromSeries(
 			fullStreakSeries,
 			habitCreatedDateIso,
 			fallbackEndDateIso
 		);
+		streaksByHabitId.set(h.id, streaks);
 
 		return {
 			habit: h,
 			parentTitle: item.parentTitle,
-			isComposite: item.isComposite,
 			loggedDays,
 			successDays,
 			goldCount,
@@ -581,8 +560,7 @@ export function buildFullAnalyticsReport(params: {
 			failedCount,
 			consistencyRate,
 			avgQualityScore,
-			currentStreak,
-			bestStreak,
+			currentStreak: streaks.currentStreak,
 			trendDelta
 		};
 	});
@@ -617,7 +595,6 @@ export function buildFullAnalyticsReport(params: {
 		for (const dIso of dateList) {
 			const dt = isoToDate(dIso);
 			const weekdayIndex = getPersianWeekdayIndex(dt);
-			const weekdayLabel = JALALI_GRID_WEEKDAYS[weekdayIndex] ?? '';
 			const human = formatJalaliHuman(dIso, todayIso);
 
 			const evalRes = evaluateHabitDay(
@@ -646,10 +623,8 @@ export function buildFullAnalyticsReport(params: {
 				dateIso: dIso,
 				jalaliSlash: isoToJalaliSlash(dIso),
 				humanLabel: human.fullLabel,
-				weekdayLabel,
 				weekdayIndex,
 				outcome: evalRes.outcome,
-				tierLevel: evalRes.tierLevel,
 				score: evalRes.score,
 				rollingAvgScore,
 				ruleSnapshot: evalRes.ruleSnapshot,
@@ -670,19 +645,10 @@ export function buildFullAnalyticsReport(params: {
 
 		const trendDelta = computeTrendDelta(recentValidScores, avgQualityScore);
 
-		const targetComparisonRow = comparisonRows.find(
-			(r) => r.habit.id === targetHabit.id
-		);
-		const { currentStreak, bestStreak } = targetComparisonRow
-			? {
-					currentStreak: targetComparisonRow.currentStreak,
-					bestStreak: targetComparisonRow.bestStreak
-				}
-			: computeStreaksFromSeries(
-					dailySeries,
-					targetHabit.createdAtIso ? targetHabit.createdAtIso.slice(0, 10) : '',
-					fallbackEndDateIso
-				);
+		const { currentStreak, bestStreak } = streaksByHabitId.get(targetHabit.id) ?? {
+			currentStreak: 0,
+			bestStreak: 0
+		};
 
 		const weekdayBuckets = Array.from({ length: 7 }, (_, idx) => ({
 			weekdayIndex: idx,
@@ -709,8 +675,6 @@ export function buildFullAnalyticsReport(params: {
 		selectedHabitReport = {
 			habit: targetHabit,
 			parentTitle: parent?.title ?? null,
-			isComposite: children.length > 0,
-			childrenCount: children.length,
 			maxSupportedTier: getMaxSupportedTier(targetHabit),
 			dailySeries,
 			loggedDaysCount,

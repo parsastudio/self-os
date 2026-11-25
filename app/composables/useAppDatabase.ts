@@ -75,12 +75,8 @@ export class PersonalOSDatabase extends Dexie {
 }
 
 let dbInstance: PersonalOSDatabase | null = null;
-let ssrNoopDbProxy: PersonalOSDatabase | null = null;
 
-export function getAppDatabase(): PersonalOSDatabase | null {
-	if (!import.meta.client) {
-		return null;
-	}
+export function getAppDatabase(): PersonalOSDatabase {
 	if (!dbInstance) {
 		dbInstance = new PersonalOSDatabase();
 	}
@@ -88,15 +84,5 @@ export function getAppDatabase(): PersonalOSDatabase | null {
 }
 
 export function useAppDatabase(): PersonalOSDatabase {
-	const db = getAppDatabase();
-	if (db) {
-		return db;
-	}
-	if (!ssrNoopDbProxy) {
-		const recursiveNoop: unknown = new Proxy(() => Promise.resolve([]), {
-			get: () => recursiveNoop
-		});
-		ssrNoopDbProxy = recursiveNoop as PersonalOSDatabase;
-	}
-	return ssrNoopDbProxy;
+	return getAppDatabase();
 }

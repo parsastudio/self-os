@@ -4,7 +4,6 @@ import type { SelectOption } from '~/domain/schemas';
 
 interface Props {
 	id?: string;
-	name?: string;
 	modelValue: string | number;
 	options: ReadonlyArray<SelectOption>;
 	disabled?: boolean;
@@ -14,7 +13,6 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
 	id: undefined,
-	name: undefined,
 	disabled: false,
 	triggerClass: '',
 	placeholder: 'انتخاب کنید'
@@ -92,8 +90,6 @@ onUnmounted(() => {
 
 <template>
 	<div ref="containerEl" class="relative w-full">
-		<input v-if="name" type="hidden" :name="name" :value="modelValue" />
-
 		<button
 			:id="id"
 			type="button"

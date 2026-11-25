@@ -364,18 +364,14 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		}
 	}
 
-	if (import.meta.client) {
-		onMounted(() => {
-			document.addEventListener('visibilitychange', handlePageVisibilityFlush);
-			window.addEventListener('pagehide', handlePageHideFlush);
-		});
-	}
+	onMounted(() => {
+		document.addEventListener('visibilitychange', handlePageVisibilityFlush);
+		window.addEventListener('pagehide', handlePageHideFlush);
+	});
 
 	onScopeDispose(() => {
-		if (import.meta.client) {
-			document.removeEventListener('visibilitychange', handlePageVisibilityFlush);
-			window.removeEventListener('pagehide', handlePageHideFlush);
-		}
+		document.removeEventListener('visibilitychange', handlePageVisibilityFlush);
+		window.removeEventListener('pagehide', handlePageHideFlush);
 		if (pendingSavePayload || isDirty.value) {
 			void flushPendingSave(isDirty.value);
 		}
@@ -618,9 +614,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		return isHabitNodeCompleted({
 			habitId,
 			habits: effectiveHabitsForDate.value,
-			logsByHabitId: logsByHabitId.value,
-			hasExistingEntry: Boolean(entry.value),
-			isDirty: isDirty.value
+			logsByHabitId: logsByHabitId.value
 		});
 	}
 
@@ -639,9 +633,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		people,
 		tree,
 		schedulableCadenceHabits,
-		applicableHabits,
 		journalText,
-		manualDayStatus,
 		logsByHabitId,
 		tomorrowPlansByHabitId,
 		tomorrowIso,
@@ -651,7 +643,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		completionStats,
 		markAllOptimalFiveSecond,
 		setTierScore,
-		setTierExplicit,
 		setParentGroupAllTier,
 		clearDay,
 		updateCadenceActual,

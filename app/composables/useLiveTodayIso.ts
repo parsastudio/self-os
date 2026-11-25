@@ -18,36 +18,33 @@ function handleVisibilityOrFocus() {
 }
 
 export function useLiveTodayIso() {
-	if (import.meta.client) {
-		refreshTodayIso();
+	refreshTodayIso();
 
-		onMounted(() => {
-			activeSubscribers++;
-			if (activeSubscribers === 1) {
-				window.addEventListener('focus', handleVisibilityOrFocus);
-				document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-				checkIntervalId = setInterval(refreshTodayIso, 30 * 1000);
-			}
-		});
+	onMounted(() => {
+		activeSubscribers++;
+		if (activeSubscribers === 1) {
+			window.addEventListener('focus', handleVisibilityOrFocus);
+			document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+			checkIntervalId = setInterval(refreshTodayIso, 30 * 1000);
+		}
+	});
 
-		onScopeDispose(() => {
-			activeSubscribers = Math.max(0, activeSubscribers - 1);
-			if (activeSubscribers === 0) {
-				window.removeEventListener('focus', handleVisibilityOrFocus);
-				document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-				if (checkIntervalId) {
-					clearInterval(checkIntervalId);
-					checkIntervalId = null;
-				}
+	onScopeDispose(() => {
+		activeSubscribers = Math.max(0, activeSubscribers - 1);
+		if (activeSubscribers === 0) {
+			window.removeEventListener('focus', handleVisibilityOrFocus);
+			document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+			if (checkIntervalId) {
+				clearInterval(checkIntervalId);
+				checkIntervalId = null;
 			}
-		});
-	}
+		}
+	});
 
 	const yesterdayIso = computed(() => shiftIsoDate(liveTodayIso.value, -1));
 
 	return {
 		todayIso: readonly(liveTodayIso),
-		yesterdayIso,
-		refreshTodayIso
+		yesterdayIso
 	};
 }

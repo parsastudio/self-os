@@ -258,7 +258,6 @@ export function assembleJalaliMonthArchive(params: {
 			jy: cell.jy,
 			jm: cell.jm,
 			jd: cell.jd,
-			weekdayLabel: cell.weekdayLabel,
 			fullHumanLabel: human.fullLabel,
 			isToday: cell.isToday,
 			entry: rawEntry
@@ -283,9 +282,6 @@ export function assembleJalaliMonthArchive(params: {
 				: (jalaliPartsToIso({ jy, jm, jd: 1 }) ?? startIso);
 
 	return {
-		year: grid.year,
-		month: grid.month,
-		monthName: grid.monthName,
 		leadingEmptyCells: grid.leadingEmptyCells,
 		selectedIso: defaultSelectedIso,
 		days: daysAggregate

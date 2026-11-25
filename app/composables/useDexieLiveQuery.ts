@@ -16,16 +16,12 @@ export function useDexieLiveQuery<T>(
 	initialValue: T,
 	deps?: WatchSource | WatchSource[]
 ): DexieLiveQueryRef<T> {
-	const isLoading = ref<boolean>(Boolean(import.meta.client));
+	const isLoading = ref(true);
 	const error = ref<string | null>(null);
 	const state = Object.assign(shallowRef<T>(initialValue), {
 		isLoading,
 		error
 	}) as DexieLiveQueryRef<T>;
-
-	if (!import.meta.client) {
-		return state;
-	}
 
 	let subscription: Subscription | null = null;
 	let hasResolvedInitial = false;
