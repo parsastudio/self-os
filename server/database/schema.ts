@@ -219,6 +219,27 @@ export const authSessions = pgTable(
 	(t) => [index('idx_auth_sessions_expires_at').on(t.expiresAtIso)]
 );
 
+export const people = pgTable(
+	'people',
+	{
+		id: text('id').primaryKey(),
+		name: text('name').notNull(),
+		relation: text('relation').notNull().default('آشنا'),
+		contactInfo: text('contact_info'),
+		birthdayYear: integer('birthday_year'),
+		birthdayMonth: integer('birthday_month'),
+		birthdayDay: integer('birthday_day'),
+		notes: text('notes'),
+		isPinned: boolean('is_pinned').notNull().default(false),
+		createdAtIso: text('created_at_iso').notNull(),
+		updatedAtIso: text('updated_at_iso').notNull()
+	},
+	(t) => [
+		index('idx_people_updated_at').on(t.updatedAtIso),
+		index('idx_people_birthday').on(t.birthdayMonth, t.birthdayDay)
+	]
+);
+
 export const syncState = pgTable('sync_state', {
 	id: text('id').primaryKey(),
 	structuralVersionIso: text('structural_version_iso').notNull()

@@ -302,6 +302,91 @@ export function getDaysUntilIso(fromIso: string, targetIso: string): number {
 	return Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+export function parseFlexibleJalaliBirthday(input: string): {
+	year: number | null;
+	month: number;
+	day: number;
+} | null {
+	const cleaned = normalizeDigits(input.trim());
+	if (!cleaned) return null;
+
+	const fullMatch = cleaned.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+	if (fullMatch) {
+		const year = Number(fullMatch[1]);
+		const month = Number(fullMatch[2]);
+		const day = Number(fullMatch[3]);
+		if (year < 1250 || year > 1450) return null;
+		if (!jalaali.isValidJalaaliDate(year, month, day)) return null;
+		return { year, month, day };
+	}
+
+	const shortMatch = cleaned.match(/^(\d{1,2})[/-](\d{1,2})$/);
+	if (shortMatch) {
+		const month = Number(shortMatch[1]);
+		const day = Number(shortMatch[2]);
+		if (!jalaali.isValidJalaaliDate(1403, month, day)) return null;
+		return { year: null, month, day };
+	}
+
+	return null;
+}
+
+export function formatJalaliBirthdayInput(params: {
+	year: number | null;
+	month: number | null;
+	day: number | null;
+}): string {
+	if (!params.month || !params.day) return '';
+	const md = `${padZero(params.month)}/${padZero(params.day)}`;
+	return params.year ? `${params.year}/${md}` : md;
+}
+
+export function formatJalaliBirthdayHuman(params: {
+	year: number | null;
+	month: number;
+	day: number;
+}): string {
+	const monthName = PERSIAN_MONTHS[params.month - 1] ?? '';
+	const base = `${toPersianDigits(params.day)} ${monthName}`;
+	return params.year ? `${base} ${toPersianDigits(params.year)}` : base;
+}
+
+export function computeJalaliAge(params: {
+	birthYear: number;
+	birthMonth: number;
+	birthDay: number;
+	referenceIso?: string;
+}): number {
+	const refParts = isoToJalaliParts(params.referenceIso ?? getTodayIso());
+	let age = refParts.jy - params.birthYear;
+	if (
+		refParts.jm < params.birthMonth ||
+		(refParts.jm === params.birthMonth && refParts.jd < params.birthDay)
+	) {
+		age -= 1;
+	}
+	return Math.max(0, age);
+}
+
+export function getDaysUntilNextJalaliBirthday(params: {
+	birthMonth: number;
+	birthDay: number;
+	todayIso?: string;
+}): number {
+	const todayIso = params.todayIso ?? getTodayIso();
+	const todayParts = isoToJalaliParts(todayIso);
+	const isLaterOrTodayThisYear =
+		params.birthMonth > todayParts.jm ||
+		(params.birthMonth === todayParts.jm && params.birthDay >= todayParts.jd);
+
+	const targetYear = isLaterOrTodayThisYear ? todayParts.jy : todayParts.jy + 1;
+	const maxDay = jalaali.jalaaliMonthLength(targetYear, params.birthMonth);
+	const safeDay = Math.min(params.birthDay, maxDay);
+	const targetIso =
+		jalaliPartsToIso({ jy: targetYear, jm: params.birthMonth, jd: safeDay }) ?? todayIso;
+	return getDaysUntilIso(todayIso, targetIso);
+}
+
 export function buildJalaliMonthGrid(
 	jy: number,
 	jm: number,

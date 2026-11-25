@@ -126,6 +126,20 @@ const BOOTSTRAP_DDL_SQL = `
 		last_seen_at_iso TEXT NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS people (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		relation TEXT NOT NULL DEFAULT 'آشنا',
+		contact_info TEXT,
+		birthday_year INTEGER,
+		birthday_month INTEGER,
+		birthday_day INTEGER,
+		notes TEXT,
+		is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+		created_at_iso TEXT NOT NULL,
+		updated_at_iso TEXT NOT NULL
+	);
+
 	CREATE TABLE IF NOT EXISTS sync_state (
 		id TEXT PRIMARY KEY,
 		structural_version_iso TEXT NOT NULL
@@ -148,6 +162,8 @@ const BOOTSTRAP_DDL_SQL = `
 	CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date_iso);
 	CREATE INDEX IF NOT EXISTS idx_calendar_events_jalali ON calendar_events(jalali_month, jalali_day);
 	CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at_iso);
+	CREATE INDEX IF NOT EXISTS idx_people_updated_at ON people(updated_at_iso);
+	CREATE INDEX IF NOT EXISTS idx_people_birthday ON people(birthday_month, birthday_day);
 	CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at_iso);
 `;
 
@@ -185,6 +201,29 @@ export async function ensurePostgreSqlSchemaBootstrapped(
 			ALTER TABLE habit_logs DROP COLUMN IF EXISTS completed_intervals;
 			ALTER TABLE habit_logs DROP COLUMN IF EXISTS total_actual_minutes;
 			ALTER TABLE habit_logs DROP COLUMN IF EXISTS planned_intervals_snapshot;
+		`);
+	}
+
+	const peopleCheck = await sqlClient<{ people_reg: string | null }[]>`
+		SELECT to_regclass('public.people') AS people_reg
+	`;
+	if (!peopleCheck[0]?.people_reg) {
+		await sqlClient.unsafe(`
+			CREATE TABLE IF NOT EXISTS people (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				relation TEXT NOT NULL DEFAULT 'آشنا',
+				contact_info TEXT,
+				birthday_year INTEGER,
+				birthday_month INTEGER,
+				birthday_day INTEGER,
+				notes TEXT,
+				is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+				created_at_iso TEXT NOT NULL,
+				updated_at_iso TEXT NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_people_updated_at ON people(updated_at_iso);
+			CREATE INDEX IF NOT EXISTS idx_people_birthday ON people(birthday_month, birthday_day);
 		`);
 	}
 }

@@ -21,7 +21,8 @@ export function createLocalBackupOperations(
 			allMedia,
 			allNotes,
 			allEvents,
-			allLifecycle
+			allLifecycle,
+			allPeople
 		] = await Promise.all([
 			db.habits.toArray(),
 			db.dailyEntries.toArray(),
@@ -31,7 +32,8 @@ export function createLocalBackupOperations(
 			db.media.toArray(),
 			db.notes.toArray(),
 			db.calendarEvents.toArray(),
-			db.lifecycleEvents.toArray()
+			db.lifecycleEvents.toArray(),
+			db.people.toArray()
 		]);
 
 		return {
@@ -59,7 +61,8 @@ export function createLocalBackupOperations(
 				media: allMedia,
 				notes: allNotes,
 				calendarEvents: allEvents,
-				lifecycleEvents: allLifecycle
+				lifecycleEvents: allLifecycle,
+				people: allPeople
 			}
 		};
 	}
@@ -80,7 +83,8 @@ export function createLocalBackupOperations(
 			media: [],
 			notes: [],
 			calendarEvents: [],
-			lifecycleEvents: []
+			lifecycleEvents: [],
+			people: []
 		};
 		const currentSnapshot = mode === 'replace' ? { data: emptyData } : await exportBackupPayload();
 		const merged = computeSmartBackupMerge(currentSnapshot.data, payload.data);
@@ -224,6 +228,17 @@ export function createLocalBackupOperations(
 							kind: 'ADD_LIFECYCLE_EVENT',
 							queuedAtIso: nowIso,
 							payload: clonePlain(lc)
+						});
+					}
+				}
+				if (merged.peopleToUpsert.length > 0) {
+					await db.people.bulkPut(merged.peopleToUpsert);
+					for (const person of merged.peopleToUpsert) {
+						stagedMutations.push({
+							id: `person:${person.id}`,
+							kind: 'UPSERT_PERSON',
+							queuedAtIso: nowIso,
+							payload: clonePlain(person)
 						});
 					}
 				}

@@ -14,6 +14,7 @@ import type {
 	DayHabitPerformanceItem,
 	HabitEntity,
 	MediaEntity,
+	PersonEntity,
 	RawCalendarDayEntry,
 	UpcomingEventBannerItem
 } from '~/domain/schemas';
@@ -25,14 +26,16 @@ import {
 
 export function computeUpcomingEventsBanner(params: {
 	allEvents: CalendarEventEntity[];
+	allPeople?: PersonEntity[];
 	referenceDateIso: string;
 	todayIso: string;
 	horizonDays?: number;
 }): {
 	todayAndUpcoming: UpcomingEventBannerItem[];
 	selectedDayEvents: CalendarEventEntity[];
+	selectedDayBirthdays: PersonEntity[];
 } {
-	const { allEvents, referenceDateIso, todayIso, horizonDays = 7 } = params;
+	const { allEvents, allPeople = [], referenceDateIso, todayIso, horizonDays = 7 } = params;
 
 	const selectedParts = isoToJalaliParts(referenceDateIso);
 	const selectedDayEvents = allEvents.filter((ev) => {
@@ -41,6 +44,11 @@ export function computeUpcomingEventsBanner(params: {
 		}
 		return ev.dateIso === referenceDateIso;
 	});
+
+	const selectedDayBirthdays = allPeople.filter(
+		(person) =>
+			person.birthdayMonth === selectedParts.jm && person.birthdayDay === selectedParts.jd
+	);
 
 	const windowIsos = new Map<string, { jm: number; jd: number; diff: number }>();
 	for (let offset = 0; offset <= horizonDays; offset++) {
@@ -61,7 +69,8 @@ export function computeUpcomingEventsBanner(params: {
 						id: ev.id,
 						title: ev.title,
 						occurrenceDateIso: iso,
-						daysRemaining: meta.diff
+						daysRemaining: meta.diff,
+						kind: 'event'
 					});
 					break;
 				}
@@ -73,8 +82,25 @@ export function computeUpcomingEventsBanner(params: {
 					id: ev.id,
 					title: ev.title,
 					occurrenceDateIso: ev.dateIso,
-					daysRemaining: diff
+					daysRemaining: diff,
+					kind: 'event'
 				});
+			}
+		}
+	}
+
+	for (const person of allPeople) {
+		if (!person.birthdayMonth || !person.birthdayDay) continue;
+		for (const [iso, meta] of windowIsos.entries()) {
+			if (meta.jm === person.birthdayMonth && meta.jd === person.birthdayDay) {
+				upcoming.push({
+					id: `bday:${person.id}`,
+					title: `تولد ${person.name}`,
+					occurrenceDateIso: iso,
+					daysRemaining: meta.diff,
+					kind: 'birthday'
+				});
+				break;
 			}
 		}
 	}
@@ -83,7 +109,8 @@ export function computeUpcomingEventsBanner(params: {
 
 	return {
 		todayAndUpcoming: upcoming,
-		selectedDayEvents
+		selectedDayEvents,
+		selectedDayBirthdays
 	};
 }
 
@@ -96,6 +123,7 @@ export function assembleJalaliMonthArchive(params: {
 	entriesInMonth: RawCalendarDayEntry[];
 	logsInMonth: AnalyticsRawLog[];
 	eventsInMonth: CalendarEventEntity[];
+	allPeople?: PersonEntity[];
 	booksInMonth: BookEntity[];
 	mediaInMonth: MediaEntity[];
 }) {
@@ -108,6 +136,7 @@ export function assembleJalaliMonthArchive(params: {
 		entriesInMonth,
 		logsInMonth,
 		eventsInMonth,
+		allPeople = [],
 		booksInMonth,
 		mediaInMonth
 	} = params;
@@ -130,6 +159,10 @@ export function assembleJalaliMonthArchive(params: {
 	const datedEventsByIso = Map.groupBy(
 		eventsInMonth.filter((ev) => !ev.isAnnual && Boolean(ev.dateIso)),
 		(ev) => ev.dateIso!
+	);
+	const birthdaysByJalaliKey = Map.groupBy(
+		allPeople.filter((p) => Boolean(p.birthdayMonth && p.birthdayDay)),
+		(p) => `${p.birthdayMonth}-${p.birthdayDay}`
 	);
 
 	const booksActivityByIso = new Map<string, CalendarDayAggregate['booksActivity']>();
@@ -172,6 +205,7 @@ export function assembleJalaliMonthArchive(params: {
 					? annualDayEvents
 					: specificDayEvents;
 
+		const birthdays = birthdaysByJalaliKey.get(`${cell.jm}-${cell.jd}`) ?? [];
 		const booksActivity = booksActivityByIso.get(cell.iso) ?? [];
 		const mediaActivity = mediaActivityByIso.get(cell.iso) ?? [];
 
@@ -235,6 +269,7 @@ export function assembleJalaliMonthArchive(params: {
 				: null,
 			habitPerformances,
 			events: dayEvents,
+			birthdays,
 			booksActivity,
 			mediaActivity
 		};

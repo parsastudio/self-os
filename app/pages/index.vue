@@ -86,6 +86,7 @@ onUnmounted(() => {
 const bannerCalculation = computed(() =>
 	computeUpcomingEventsBanner({
 		allEvents: tracker.calendarEvents.value,
+		allPeople: tracker.people.value,
 		referenceDateIso: currentDateIso.value,
 		todayIso: todayIso.value,
 		horizonDays: 7
@@ -93,6 +94,7 @@ const bannerCalculation = computed(() =>
 );
 
 const activeSelectedDayEvents = computed(() => bannerCalculation.value.selectedDayEvents);
+const activeSelectedDayBirthdays = computed(() => bannerCalculation.value.selectedDayBirthdays);
 const upcomingBannerItems = computed(() => bannerCalculation.value.todayAndUpcoming);
 
 const timeSlotOrder: ReadonlyArray<{
@@ -147,6 +149,7 @@ const groupedTieredSections = computed(() => {
 		<TrackerUpcomingEventsBanner
 			:upcoming-items="upcomingBannerItems"
 			:selected-day-events="activeSelectedDayEvents"
+			:selected-day-birthdays="activeSelectedDayBirthdays"
 			:current-date-iso="currentDateIso"
 			@toggle-complete="handleToggleCalendarEvent"
 			@open-calendar-date="(iso) => router.push({ path: '/calendar', query: { date: iso } })"

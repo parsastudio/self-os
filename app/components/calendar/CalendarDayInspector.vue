@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { toPersianDigits } from '~/domain/calendar';
+import { computeJalaliAge, toPersianDigits } from '~/domain/calendar';
 import { getDayStatusMeta, getTierBadgeMeta } from '~/domain/constants';
 import type { CalendarDayAggregate, CalendarEventEntity } from '~/domain/schemas';
 import {
 	ArrowLeft,
 	BookOpen,
+	Cake,
 	Check,
 	Clapperboard,
 	Eye,
@@ -28,6 +29,7 @@ const emit = defineEmits<{
 	(e: 'deleteEvent', eventId: string): void;
 	(e: 'openTrackerDate', dateIso: string): void;
 	(e: 'inspectPerformances', habitId?: string): void;
+	(e: 'openPeople'): void;
 }>();
 
 const expandedNoteEventIds = ref<Set<string>>(new Set());
@@ -175,6 +177,49 @@ function toggleNoteExpand(eventId: string) {
 							{{ expandedNoteEventIds.has(ev.id) ? 'بستن متن' : 'نمایش کامل توضیحات' }}
 						</button>
 					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- تولدهای ثبت‌شده در این روز -->
+		<div v-if="day.birthdays.length > 0" class="space-y-2.5 border-t border-border pt-4">
+			<div class="flex items-center justify-between gap-2">
+				<h3 class="text-xs font-extrabold text-fg-secondary">تولدهای این روز</h3>
+				<button
+					type="button"
+					class="text-[11px] font-extrabold text-accent-text hover:underline"
+					@click="emit('openPeople')"
+				>
+					مدیریت افراد ←
+				</button>
+			</div>
+
+			<div class="space-y-2">
+				<div
+					v-for="person in day.birthdays"
+					:key="person.id"
+					class="flex items-center justify-between gap-2 rounded-2xl border border-gold-border bg-gold-soft px-3.5 py-2.5 text-xs"
+				>
+					<div class="flex items-center gap-2 font-extrabold text-fg">
+						<Cake class="h-4 w-4 shrink-0 text-gold-text" />
+						<span>تولد {{ person.name }}</span>
+						<span class="rounded-lg border border-gold-border bg-surface px-2 py-0.5 text-[10px] font-bold text-gold-text">
+							{{ person.relation }}
+						</span>
+					</div>
+					<span v-if="person.birthdayYear" class="font-mono text-xs font-black text-gold-text">
+						{{
+							toPersianDigits(
+								computeJalaliAge({
+									birthYear: person.birthdayYear,
+									birthMonth: day.jm,
+									birthDay: day.jd,
+									referenceIso: day.iso
+								})
+							)
+						}}
+						ساله
+					</span>
 				</div>
 			</div>
 		</div>

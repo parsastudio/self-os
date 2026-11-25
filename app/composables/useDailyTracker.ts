@@ -38,6 +38,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const dayCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(dateIso.value).toArray(), [], dateIso);
 	const tomorrowCadencePlans = useDexieLiveQuery(() => db.cadencePlans.where('dateIso').equals(tomorrowIso.value).toArray(), [], tomorrowIso);
 	const calendarEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
+	const people = useDexieLiveQuery(() => db.people.toArray(), []);
 	const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
 	// Local mutable state
@@ -635,6 +636,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		entry,
 		allEntries,
 		calendarEvents,
+		people,
 		tree,
 		schedulableCadenceHabits,
 		applicableHabits,

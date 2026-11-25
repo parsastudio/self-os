@@ -124,6 +124,7 @@ const monthLogs = useDexieLiveQuery(
 	monthIsoBounds
 );
 const allEvents = useDexieLiveQuery(() => db.calendarEvents.toArray(), []);
+const allPeople = useDexieLiveQuery(() => db.people.toArray(), []);
 const monthBooks = useDexieLiveQuery(
 	async () => {
 		const { startIso, endIso } = monthIsoBounds.value;
@@ -198,6 +199,7 @@ const archiveData = computed(() =>
 		entriesInMonth: monthEntries.value,
 		logsInMonth: monthLogs.value,
 		eventsInMonth: allEvents.value,
+		allPeople: allPeople.value,
 		booksInMonth: monthBooks.value,
 		mediaInMonth: monthMedia.value
 	})
@@ -361,6 +363,7 @@ function goToToday() {
 					@delete-event="handleDeleteEvent"
 					@open-tracker-date="(iso) => router.push({ path: '/', query: { date: iso } })"
 					@inspect-performances="openPerformanceModal"
+					@open-people="router.push('/people')"
 				/>
 			</div>
 		</div>

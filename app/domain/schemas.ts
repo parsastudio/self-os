@@ -325,6 +325,36 @@ export const NoteNumberCopyPayloadSchema = z.object({
 });
 export type NoteNumberCopyPayload = z.infer<typeof NoteNumberCopyPayloadSchema>;
 
+export const PersonSortBySchema = z.enum(['pinned_newest', 'upcoming_birthday', 'name_asc']);
+export type PersonSortBy = z.infer<typeof PersonSortBySchema>;
+
+export const PersonEntitySchema = z.object({
+	id: z.string(),
+	name: z.string().min(1),
+	relation: z.string().default('آشنا'),
+	contactInfo: z.string().nullable(),
+	birthdayYear: z.number().int().min(1250).max(1450).nullable(),
+	birthdayMonth: z.number().int().min(1).max(12).nullable(),
+	birthdayDay: z.number().int().min(1).max(31).nullable(),
+	notes: z.string().nullable(),
+	isPinned: z.boolean().default(false),
+	createdAtIso: z.string(),
+	updatedAtIso: z.string()
+});
+export type PersonEntity = z.infer<typeof PersonEntitySchema>;
+
+export const UpsertPersonInputSchema = z.object({
+	personId: z.string().optional(),
+	name: z.string().min(1, 'نام فرد الزامی است').max(120),
+	relation: z.string().max(60).default('آشنا'),
+	contactInfo: z.string().max(250).optional(),
+	birthdayYear: z.number().int().min(1250).max(1450).nullable().optional(),
+	birthdayMonth: z.number().int().min(1).max(12).nullable().optional(),
+	birthdayDay: z.number().int().min(1).max(31).nullable().optional(),
+	notes: z.string().max(10000).optional()
+});
+export type UpsertPersonInput = z.infer<typeof UpsertPersonInputSchema>;
+
 export const SetupPasswordInputSchema = z
 	.object({
 		password: z
@@ -440,6 +470,18 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 	}),
 	z.object({
 		id: z.string(),
+		kind: z.literal('UPSERT_PERSON'),
+		queuedAtIso: z.string(),
+		payload: PersonEntitySchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('DELETE_PERSON'),
+		queuedAtIso: z.string(),
+		payload: z.object({ personId: z.string() })
+	}),
+	z.object({
+		id: z.string(),
 		kind: z.literal('UPSERT_HABIT'),
 		queuedAtIso: z.string(),
 		payload: HabitEntitySchema
@@ -495,7 +537,8 @@ export const LocalWorkspaceSnapshotSchema = z.object({
 	media: z.array(MediaEntitySchema),
 	notes: z.array(NoteEntitySchema),
 	calendarEvents: z.array(CalendarEventEntitySchema),
-	lifecycleEvents: z.array(LifecycleEventEntitySchema)
+	lifecycleEvents: z.array(LifecycleEventEntitySchema),
+	people: z.array(PersonEntitySchema).default([])
 });
 export type LocalWorkspaceSnapshot = z.infer<typeof LocalWorkspaceSnapshotSchema>;
 
@@ -507,7 +550,8 @@ export const DeltaWorkspaceSnapshotSchema = LocalWorkspaceSnapshotSchema.extend(
 	deletedBookIds: z.array(z.string()).default([]),
 	deletedMediaIds: z.array(z.string()).default([]),
 	deletedNoteIds: z.array(z.string()).default([]),
-	deletedEventIds: z.array(z.string()).default([])
+	deletedEventIds: z.array(z.string()).default([]),
+	deletedPersonIds: z.array(z.string()).default([])
 });
 export type DeltaWorkspaceSnapshot = z.infer<typeof DeltaWorkspaceSnapshotSchema>;
 
@@ -526,7 +570,8 @@ export const UpcomingEventBannerItemSchema = z.object({
 	id: z.string(),
 	title: z.string(),
 	occurrenceDateIso: z.string(),
-	daysRemaining: z.number()
+	daysRemaining: z.number(),
+	kind: z.enum(['event', 'birthday']).default('event')
 });
 export type UpcomingEventBannerItem = z.infer<typeof UpcomingEventBannerItemSchema>;
 
@@ -571,6 +616,7 @@ export const CalendarDayAggregateSchema = z.object({
 		.nullable(),
 	habitPerformances: z.array(DayHabitPerformanceItemSchema),
 	events: z.array(CalendarEventEntitySchema),
+	birthdays: z.array(PersonEntitySchema).default([]),
 	booksActivity: z.array(
 		z.object({
 			book: BookEntitySchema,
@@ -865,7 +911,8 @@ export const DatabaseBackupPayloadSchema = z.object({
 		media: z.array(MediaEntitySchema).max(10000),
 		notes: z.array(NoteEntitySchema).max(10000),
 		calendarEvents: z.array(CalendarEventEntitySchema).max(10000),
-		lifecycleEvents: z.array(LifecycleEventEntitySchema).max(50000)
+		lifecycleEvents: z.array(LifecycleEventEntitySchema).max(50000),
+		people: z.array(PersonEntitySchema).max(10000).default([])
 	})
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
@@ -897,6 +944,7 @@ export const MergedBackupResultSchema = z.object({
 	notesToUpsert: z.array(NoteEntitySchema),
 	calendarEventsToUpsert: z.array(CalendarEventEntitySchema),
 	lifecycleEventsToUpsert: z.array(LifecycleEventEntitySchema),
+	peopleToUpsert: z.array(PersonEntitySchema),
 	addedOrUpdatedCount: z.number().int(),
 	skippedDuplicatesCount: z.number().int()
 });

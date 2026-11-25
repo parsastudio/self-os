@@ -6,7 +6,7 @@ import {
 } from '~/domain/calendar';
 import { getDayStatusMeta } from '~/domain/constants';
 import type { CalendarDayAggregate } from '~/domain/schemas';
-import { BookHeart, BookOpen, CalendarClock, Clapperboard } from 'lucide-vue-next';
+import { BookHeart, BookOpen, Cake, CalendarClock, Clapperboard } from 'lucide-vue-next';
 
 interface Props {
 	leadingEmptyCells: number;
@@ -88,6 +88,13 @@ function getDayCellClasses(day: CalendarDayAggregate, isSelected: boolean): stri
 				</div>
 
 				<div class="mt-auto flex w-full items-center justify-start gap-1">
+					<span
+						v-if="day.birthdays.length > 0"
+						class="flex h-4 w-4 shrink-0 items-center justify-center rounded-md bg-gold text-on-solid shadow-2xs"
+						:title="day.birthdays.map((b) => `تولد ${b.name}`).join('، ')"
+					>
+						<Cake class="h-2.5 w-2.5" />
+					</span>
 					<span
 						v-if="day.events.length > 0"
 						class="flex h-4 w-4 shrink-0 items-center justify-center rounded-md bg-accent text-accent-fg shadow-2xs"

@@ -22,6 +22,7 @@ const navItems = [
 	{ href: '/calendar', label: 'تقویم' },
 	{ href: '/memories', label: 'خاطرات' },
 	{ href: '/notes', label: 'یادداشت‌ها' },
+	{ href: '/people', label: 'افراد' },
 	{ href: '/architect', label: 'طرح‌ها' },
 	{ href: '/books', label: 'کتابخانه' },
 	{ href: '/media', label: 'فیلم و انیمه' }

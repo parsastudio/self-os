@@ -10,6 +10,7 @@ import type {
 	LocalHabitLogRecord,
 	MediaEntity,
 	NoteEntity,
+	PersonEntity,
 	SyncMetaRecord,
 	SyncOutboxMutation
 } from '~/domain/schemas';
@@ -24,6 +25,7 @@ export class PersonalOSDatabase extends Dexie {
 	notes!: Table<NoteEntity, string>;
 	calendarEvents!: Table<CalendarEventEntity, string>;
 	lifecycleEvents!: Table<LifecycleEventEntity, string>;
+	people!: Table<PersonEntity, string>;
 	syncOutbox!: Table<SyncOutboxMutation, string>;
 	syncMeta!: Table<SyncMetaRecord, string>;
 	localAuth!: Table<LocalAuthRecord, string>;
@@ -31,7 +33,7 @@ export class PersonalOSDatabase extends Dexie {
 	constructor() {
 		super('newlife_dexie_db');
 
-		this.version(2).stores({
+		this.version(3).stores({
 			habits: 'id, parentId, status, sortOrder, trackingMode, timeSlot, updatedAtIso',
 			dailyEntries: 'dateIso, dayStatus, updatedAtIso',
 			habitLogs: 'id, dateIso, habitId, [dateIso+habitId], updatedAtIso',
@@ -41,6 +43,7 @@ export class PersonalOSDatabase extends Dexie {
 			notes: 'id, category, isPinned, updatedAtIso',
 			calendarEvents: 'id, dateIso, [jalaliMonth+jalaliDay], isCompleted, updatedAtIso',
 			lifecycleEvents: 'id, habitId, effectiveDateIso, createdAtIso',
+			people: 'id, relation, isPinned, [birthdayMonth+birthdayDay], updatedAtIso',
 			syncOutbox: 'id, queuedAtIso, kind',
 			syncMeta: 'key',
 			localAuth: 'key'
@@ -57,7 +60,8 @@ export class PersonalOSDatabase extends Dexie {
 			this.media,
 			this.notes,
 			this.calendarEvents,
-			this.lifecycleEvents
+			this.lifecycleEvents,
+			this.people
 		];
 	}
 

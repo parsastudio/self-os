@@ -12,6 +12,7 @@ import {
 	habits,
 	mediaLogs,
 	notes,
+	people,
 	syncState
 } from '~~/server/database/schema';
 import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
@@ -27,7 +28,8 @@ const WORKSPACE_TABLES = [
 	books,
 	mediaLogs,
 	calendarEvents,
-	notes
+	notes,
+	people
 ] as const;
 
 async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
@@ -82,7 +84,8 @@ export async function importDatabaseFromJson(
 			media: await tx.select().from(mediaLogs),
 			notes: await tx.select().from(notes),
 			calendarEvents: await tx.select().from(calendarEvents),
-			lifecycleEvents: await tx.select().from(habitLifecycleEvents)
+			lifecycleEvents: await tx.select().from(habitLifecycleEvents),
+			people: await tx.select().from(people)
 		};
 
 		const merged = computeSmartBackupMerge(existingData, data);
@@ -138,6 +141,7 @@ export async function importDatabaseFromJson(
 			habitLifecycleEvents.id,
 			merged.lifecycleEventsToUpsert
 		);
+		await batchUpsertRows(people, people.id, merged.peopleToUpsert);
 		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
 

@@ -11,7 +11,8 @@ import type {
 	LifecycleEventEntity,
 	MediaEntity,
 	MergedBackupResult,
-	NoteEntity
+	NoteEntity,
+	PersonEntity
 } from '~/domain/schemas';
 
 function normText(str: string | null | undefined): string {
@@ -309,6 +310,25 @@ export function computeSmartBackupMerge(
 		}
 	}
 
+	// 10. People (Deduplicate by ID or by normalized Name + Relation + Birthday)
+	const peopleMerge = mergeCollectionBySignature<PersonEntity>({
+		existingItems: existing.people ?? [],
+		incomingItems: incoming.people ?? [],
+		getSignature: (p) =>
+			`${normText(p.name)}|${normText(p.relation)}|${p.birthdayMonth ?? ''}-${p.birthdayDay ?? ''}`,
+		isIdentical: (ext, inc) =>
+			normText(ext.name) === normText(inc.name) &&
+			normText(ext.relation) === normText(inc.relation) &&
+			normText(ext.contactInfo) === normText(inc.contactInfo) &&
+			ext.birthdayYear === inc.birthdayYear &&
+			ext.birthdayMonth === inc.birthdayMonth &&
+			ext.birthdayDay === inc.birthdayDay &&
+			normText(ext.notes) === normText(inc.notes) &&
+			ext.isPinned === inc.isPinned
+	});
+	const peopleToUpsert = peopleMerge.toUpsert;
+	skippedDuplicatesCount += peopleMerge.skippedCount;
+
 	const addedOrUpdatedCount =
 		habitsToUpsert.length +
 		dailyEntriesToUpsert.length +
@@ -318,7 +338,8 @@ export function computeSmartBackupMerge(
 		mediaToUpsert.length +
 		notesToUpsert.length +
 		calendarEventsToUpsert.length +
-		lifecycleEventsToUpsert.length;
+		lifecycleEventsToUpsert.length +
+		peopleToUpsert.length;
 
 	return {
 		habitsToUpsert,
@@ -330,6 +351,7 @@ export function computeSmartBackupMerge(
 		notesToUpsert,
 		calendarEventsToUpsert,
 		lifecycleEventsToUpsert,
+		peopleToUpsert,
 		addedOrUpdatedCount,
 		skippedDuplicatesCount
 	};

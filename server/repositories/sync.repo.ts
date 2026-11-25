@@ -10,6 +10,7 @@ import {
 	habits,
 	mediaLogs,
 	notes,
+	people,
 	syncState
 } from '~~/server/database/schema';
 import {
@@ -132,6 +133,8 @@ export async function getServerMaxVersionIso(): Promise<string> {
 			SELECT MAX(updated_at_iso) AS ts FROM media_logs
 			UNION ALL
 			SELECT MAX(updated_at_iso) AS ts FROM calendar_events
+			UNION ALL
+			SELECT MAX(updated_at_iso) AS ts FROM people
 			UNION ALL
 			SELECT MAX(created_at_iso) AS ts FROM habit_lifecycle_events
 			UNION ALL
@@ -351,6 +354,34 @@ export async function processClientSyncRequest(
 							setWhere: sql`${habits.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${habits.updatedAtIso}`
 						});
 					preloadedHabitMap.set(payload.id, payload);
+				} else if (mutation.kind === 'UPSERT_PERSON') {
+					const effectiveIso = clampClientTimestampIso(mutation.payload.updatedAtIso, nowMs);
+					const tombstoneKey = `del:person:${mutation.payload.id}`;
+					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
+						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
+						await tx
+							.insert(people)
+							.values(payload)
+							.onConflictDoUpdate({
+								target: people.id,
+								set: payload,
+								setWhere: sql`excluded.updated_at_iso >= ${people.updatedAtIso}`
+							});
+						await clearTombstoneIfPresent(tombstoneKey);
+					}
+				} else if (mutation.kind === 'DELETE_PERSON') {
+					const existing = await tx
+						.select({ updatedAtIso: people.updatedAtIso })
+						.from(people)
+						.where(eq(people.id, mutation.payload.personId))
+						.limit(1);
+					await applyTombstonedDelete({
+						tombstoneKey: `del:person:${mutation.payload.personId}`,
+						existingUpdatedAtIso: existing[0]?.updatedAtIso,
+						safeQueuedIso,
+						executeDelete: () =>
+							tx.delete(people).where(eq(people.id, mutation.payload.personId))
+					});
 				} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
 					const payload = {
 						...mutation.payload,
@@ -398,6 +429,7 @@ export async function processClientSyncRequest(
 			changedNotes,
 			changedCalendarEvents,
 			changedLifecycleEvents,
+			changedPeople,
 			tombstoneRows
 		] = await Promise.all([
 			db
@@ -447,6 +479,11 @@ export async function processClientSyncRequest(
 				.orderBy(desc(habitLifecycleEvents.createdAtIso)),
 			db
 				.select()
+				.from(people)
+				.where(gt(people.updatedAtIso, normalizedKnownIso))
+				.orderBy(desc(people.isPinned), desc(people.updatedAtIso)),
+			db
+				.select()
 				.from(syncState)
 				.where(
 					and(
@@ -457,7 +494,7 @@ export async function processClientSyncRequest(
 		]);
 
 		const deletedBuckets: Record<
-			'habit' | 'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event',
+			'habit' | 'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event' | 'person',
 			string[]
 		> = {
 			habit: [],
@@ -467,11 +504,14 @@ export async function processClientSyncRequest(
 			book: [],
 			media: [],
 			note: [],
-			event: []
+			event: [],
+			person: []
 		};
 
 		for (const t of tombstoneRows) {
-			const match = t.id.match(/^del:(habit|entry|log|plan|book|media|note|event):(.+)$/);
+			const match = t.id.match(
+				/^del:(habit|entry|log|plan|book|media|note|event|person):(.+)$/
+			);
 			if (match && match[1] && match[2]) {
 				const kind = match[1] as keyof typeof deletedBuckets;
 				deletedBuckets[kind].push(match[2]);
@@ -490,6 +530,7 @@ export async function processClientSyncRequest(
 			notes: changedNotes,
 			calendarEvents: changedCalendarEvents,
 			lifecycleEvents: changedLifecycleEvents,
+			people: changedPeople,
 			deletedHabitIds: deletedBuckets.habit,
 			deletedEntryDates: deletedBuckets.entry,
 			deletedLogIds: deletedBuckets.log,
@@ -497,7 +538,8 @@ export async function processClientSyncRequest(
 			deletedBookIds: deletedBuckets.book,
 			deletedMediaIds: deletedBuckets.media,
 			deletedNoteIds: deletedBuckets.note,
-			deletedEventIds: deletedBuckets.event
+			deletedEventIds: deletedBuckets.event,
+			deletedPersonIds: deletedBuckets.person
 		};
 
 		return {
@@ -518,7 +560,8 @@ export async function processClientSyncRequest(
 		allMedia,
 		allNotes,
 		allCalendarEvents,
-		allLifecycleEvents
+		allLifecycleEvents,
+		allPeople
 	] = await Promise.all([
 		db.select().from(dailyEntries).orderBy(desc(dailyEntries.dateIso)),
 		db.select().from(habitLogs).orderBy(desc(habitLogs.dateIso)),
@@ -534,7 +577,11 @@ export async function processClientSyncRequest(
 		db
 			.select()
 			.from(habitLifecycleEvents)
-			.orderBy(desc(habitLifecycleEvents.createdAtIso))
+			.orderBy(desc(habitLifecycleEvents.createdAtIso)),
+		db
+			.select()
+			.from(people)
+			.orderBy(desc(people.isPinned), desc(people.updatedAtIso))
 	]);
 
 	const fullWorkspace: LocalWorkspaceSnapshot = {
@@ -548,7 +595,8 @@ export async function processClientSyncRequest(
 		media: allMedia,
 		notes: allNotes,
 		calendarEvents: allCalendarEvents,
-		lifecycleEvents: allLifecycleEvents
+		lifecycleEvents: allLifecycleEvents,
+		people: allPeople
 	};
 
 	return {

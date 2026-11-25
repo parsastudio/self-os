@@ -33,6 +33,7 @@ import type {
 	MediaStatus,
 	MutateHabitStructureInput,
 	NoteEntity,
+	PersonEntity,
 	SaveCadencePlanBatch,
 	SaveDailyEntryInput,
 	SyncMetaRecord,
@@ -40,7 +41,8 @@ import type {
 	UpdateBookInput,
 	UpdateCalendarEventInput,
 	UpdateMediaInput,
-	UpsertNoteInput
+	UpsertNoteInput,
+	UpsertPersonInput
 } from '~/domain/schemas';
 
 const mutationStagedListeners = new Set<() => void>();
@@ -738,6 +740,110 @@ export function useLocalRepository() {
 		}
 	};
 
+	const people = {
+		async create(input: UpsertPersonInput): Promise<PersonEntity> {
+			const nowIso = new Date().toISOString();
+			const hasBirthday = Boolean(input.birthdayMonth && input.birthdayDay);
+			const newPerson: PersonEntity = {
+				id: generateId(),
+				name: input.name.normalize('NFKC').trim(),
+				relation: input.relation.normalize('NFKC').trim() || 'آشنا',
+				contactInfo: input.contactInfo?.normalize('NFKC').trim() || null,
+				birthdayYear: hasBirthday ? (input.birthdayYear ?? null) : null,
+				birthdayMonth: hasBirthday ? (input.birthdayMonth ?? null) : null,
+				birthdayDay: hasBirthday ? (input.birthdayDay ?? null) : null,
+				notes: input.notes?.normalize('NFKC').trim() || null,
+				isPinned: false,
+				createdAtIso: nowIso,
+				updatedAtIso: nowIso
+			};
+
+			await stageMutation(
+				{
+					id: `person:${newPerson.id}`,
+					kind: 'UPSERT_PERSON',
+					queuedAtIso: nowIso,
+					payload: newPerson
+				},
+				async () => {
+					await db.people.put(newPerson);
+				}
+			);
+
+			return newPerson;
+		},
+
+		async update(personId: string, input: UpsertPersonInput): Promise<void> {
+			const existing = await db.people.get(personId);
+			if (!existing) return;
+
+			const nowIso = new Date().toISOString();
+			const hasBirthday = Boolean(input.birthdayMonth && input.birthdayDay);
+			const updated: PersonEntity = {
+				...existing,
+				name: input.name.normalize('NFKC').trim(),
+				relation: input.relation.normalize('NFKC').trim() || 'آشنا',
+				contactInfo: input.contactInfo?.normalize('NFKC').trim() || null,
+				birthdayYear: hasBirthday ? (input.birthdayYear ?? null) : null,
+				birthdayMonth: hasBirthday ? (input.birthdayMonth ?? null) : null,
+				birthdayDay: hasBirthday ? (input.birthdayDay ?? null) : null,
+				notes: input.notes?.normalize('NFKC').trim() || null,
+				updatedAtIso: nowIso
+			};
+
+			await stageMutation(
+				{
+					id: `person:${personId}`,
+					kind: 'UPSERT_PERSON',
+					queuedAtIso: nowIso,
+					payload: updated
+				},
+				async () => {
+					await db.people.put(updated);
+				}
+			);
+		},
+
+		async togglePin(personId: string, isPinned: boolean): Promise<void> {
+			const existing = await db.people.get(personId);
+			if (!existing) return;
+
+			const nowIso = new Date().toISOString();
+			const updated: PersonEntity = {
+				...existing,
+				isPinned,
+				updatedAtIso: nowIso
+			};
+
+			await stageMutation(
+				{
+					id: `person:${personId}`,
+					kind: 'UPSERT_PERSON',
+					queuedAtIso: nowIso,
+					payload: updated
+				},
+				async () => {
+					await db.people.put(updated);
+				}
+			);
+		},
+
+		async delete(personId: string): Promise<void> {
+			const nowIso = new Date().toISOString();
+			await stageMutation(
+				{
+					id: `person:${personId}`,
+					kind: 'DELETE_PERSON',
+					queuedAtIso: nowIso,
+					payload: { personId }
+				},
+				async () => {
+					await db.people.delete(personId);
+				}
+			);
+		}
+	};
+
 	async function getSyncMeta(): Promise<SyncMetaRecord> {
 		const existing = await db.syncMeta.get('meta:sync');
 		if (existing) {
@@ -830,6 +936,14 @@ export function useLocalRepository() {
 			);
 			if (eventsToDelete.length > 0) await db.calendarEvents.bulkDelete(eventsToDelete);
 
+			const serverPeople = ws.people ?? [];
+			const serverPersonIds = new Set(serverPeople.map((p) => p.id));
+			const localPersonIds = await db.people.toCollection().primaryKeys();
+			const peopleToDelete = localPersonIds.filter(
+				(id) => !serverPersonIds.has(id) && !pendingIds.has(`person:${id}`)
+			);
+			if (peopleToDelete.length > 0) await db.people.bulkDelete(peopleToDelete);
+
 			const serverPlanIds = new Set(ws.cadencePlans.map((c) => c.id));
 			const allLocalPlans = await db.cadencePlans.toArray();
 			const plansToDelete = allLocalPlans
@@ -902,6 +1016,15 @@ export function useLocalRepository() {
 			);
 			await db.lifecycleEvents.bulkPut(
 				ws.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
+			);
+
+			const localPeopleMap = new Map((await db.people.toArray()).map((p) => [p.id, p]));
+			await db.people.bulkPut(
+				serverPeople.filter(
+					(p) =>
+						!pendingIds.has(`person:${p.id}`) &&
+						isServerRecordNewerOrEqual(p.updatedAtIso, localPeopleMap.get(p.id)?.updatedAtIso)
+				)
 			);
 
 			// Reconcile cleared daily entries and logs
@@ -1011,6 +1134,11 @@ export function useLocalRepository() {
 						delta.deletedEventIds.filter((id) => !pendingIds.has(`event:${id}`))
 					);
 				}
+				if (delta.deletedPersonIds.length > 0) {
+					await db.people.bulkDelete(
+						delta.deletedPersonIds.filter((id) => !pendingIds.has(`person:${id}`))
+					);
+				}
 
 				if (delta.habits.length > 0) {
 					await db.habits.bulkPut(
@@ -1051,6 +1179,11 @@ export function useLocalRepository() {
 						delta.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
 					);
 				}
+				if (delta.people.length > 0) {
+					await db.people.bulkPut(
+						delta.people.filter((p) => !pendingIds.has(`person:${p.id}`))
+					);
+				}
 				if (delta.entries.length > 0) {
 					await db.dailyEntries.bulkPut(
 						delta.entries
@@ -1089,6 +1222,7 @@ export function useLocalRepository() {
 		media,
 		notes,
 		calendar,
+		people,
 		getSyncMeta,
 		saveSyncMeta,
 		getPendingMutations,

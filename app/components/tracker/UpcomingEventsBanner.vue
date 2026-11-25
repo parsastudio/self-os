@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { toPersianDigits } from '~/domain/calendar';
-import type { CalendarEventEntity, UpcomingEventBannerItem } from '~/domain/schemas';
-import { BellRing, CalendarDays, Check } from 'lucide-vue-next';
+import type { CalendarEventEntity, PersonEntity, UpcomingEventBannerItem } from '~/domain/schemas';
+import { BellRing, Cake, CalendarDays, Check } from 'lucide-vue-next';
 
 interface Props {
 	upcomingItems?: UpcomingEventBannerItem[];
 	selectedDayEvents?: Array<Pick<CalendarEventEntity, 'id' | 'title' | 'isAnnual' | 'isCompleted'>>;
+	selectedDayBirthdays?: Array<Pick<PersonEntity, 'id' | 'name'>>;
 	currentDateIso: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
 	upcomingItems: () => [],
-	selectedDayEvents: () => []
+	selectedDayEvents: () => [],
+	selectedDayBirthdays: () => []
 });
 
 const emit = defineEmits<{
@@ -20,7 +22,10 @@ const emit = defineEmits<{
 }>();
 
 const hasAnythingToShow = computed(
-	() => props.upcomingItems.length > 0 || props.selectedDayEvents.length > 0
+	() =>
+		props.upcomingItems.length > 0 ||
+		props.selectedDayEvents.length > 0 ||
+		props.selectedDayBirthdays.length > 0
 );
 
 function getRelativeText(days: number): string {
@@ -70,14 +75,40 @@ function getRelativeText(days: number): string {
 			</div>
 
 			<button
-				v-for="item in upcomingItems.filter((u) => !selectedDayEvents.some((s) => s.id === u.id))"
+				v-for="bday in selectedDayBirthdays"
+				:key="`today-bday-${bday.id}`"
+				type="button"
+				class="flex items-center gap-1.5 rounded-2xl border border-gold-border bg-gold-soft px-3 py-1.5 text-xs font-extrabold text-gold-text transition hover:opacity-90"
+				@click="emit('openCalendarDate', currentDateIso)"
+			>
+				<Cake class="h-3.5 w-3.5 shrink-0" />
+				<span>تولد {{ bday.name }}</span>
+			</button>
+
+			<button
+				v-for="item in upcomingItems.filter(
+					(u) =>
+						!selectedDayEvents.some((s) => s.id === u.id) &&
+						!selectedDayBirthdays.some((b) => `bday:${b.id}` === u.id)
+				)"
 				:key="item.id + item.occurrenceDateIso"
 				type="button"
-				class="flex items-center gap-2 rounded-2xl border border-border bg-elevated px-3 py-1.5 text-xs font-bold text-fg transition hover:border-border-strong"
+				class="flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-xs font-bold transition hover:border-border-strong"
+				:class="
+					item.kind === 'birthday'
+						? 'border-gold-border bg-gold-soft text-gold-text'
+						: 'border-border bg-elevated text-fg'
+				"
 				@click="emit('openCalendarDate', item.occurrenceDateIso)"
 			>
-				<span class="h-2 w-2 shrink-0 rounded-full bg-accent"></span>
-				<span class="font-extrabold text-accent-text"> {{ getRelativeText(item.daysRemaining) }}: </span>
+				<Cake v-if="item.kind === 'birthday'" class="h-3.5 w-3.5 shrink-0" />
+				<span v-else class="h-2 w-2 shrink-0 rounded-full bg-accent"></span>
+				<span
+					class="font-extrabold"
+					:class="item.kind === 'birthday' ? 'text-gold-text' : 'text-accent-text'"
+				>
+					{{ getRelativeText(item.daysRemaining) }}:
+				</span>
 				<span>{{ item.title }}</span>
 			</button>
 		</div>
