@@ -11,7 +11,11 @@ import {
 	jalaliPartsToIso,
 	toPersianDigits
 } from '~/domain/calendar';
-import type { CreateCalendarEventInput } from '~/domain/schemas';
+import type {
+	CalendarEventEntity,
+	CreateCalendarEventInput,
+	UpdateCalendarEventInput
+} from '~/domain/schemas';
 import { BookHeart, Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 
 const route = useRoute();
@@ -19,13 +23,42 @@ const router = useRouter();
 const db = useAppDatabase();
 const localRepo = useLocalRepository();
 const { todayIso } = useLiveTodayIso();
+const isEventModalOpen = ref(false);
+const editingEvent = ref<CalendarEventEntity | null>(null);
 const isSubmittingCalendarEvent = ref(false);
 
-async function handleCreateEvent(payload: CreateCalendarEventInput) {
+function openCreateEventModal() {
+	editingEvent.value = null;
+	isEventModalOpen.value = true;
+}
+
+function openEditEventModal(ev: CalendarEventEntity) {
+	editingEvent.value = ev;
+	isEventModalOpen.value = true;
+}
+
+function closeEventModal() {
+	isEventModalOpen.value = false;
+	editingEvent.value = null;
+}
+
+async function handleSaveEvent(payload: CreateCalendarEventInput | UpdateCalendarEventInput) {
 	if (isSubmittingCalendarEvent.value) return;
 	isSubmittingCalendarEvent.value = true;
 	try {
-		await localRepo.calendar.create(payload);
+		if ('eventId' in payload) {
+			await localRepo.calendar.update(payload);
+		} else {
+			await localRepo.calendar.create(payload);
+		}
+		const targetParts = isoToJalaliParts(payload.dateIso);
+		closeEventModal();
+		if (targetParts.jy !== currentYear.value || targetParts.jm !== currentMonth.value) {
+			userSelectedIso.value = null;
+			await router.push({ query: { date: payload.dateIso } });
+		} else {
+			userSelectedIso.value = payload.dateIso;
+		}
 	} finally {
 		isSubmittingCalendarEvent.value = false;
 	}
@@ -322,8 +355,8 @@ function goToToday() {
 				<CalendarDayInspector
 					v-if="selectedDay"
 					:day="selectedDay"
-					:is-submitting-event="isSubmittingCalendarEvent"
-					@create-event="handleCreateEvent"
+					@open-create-event="openCreateEventModal"
+					@open-edit-event="openEditEventModal"
 					@toggle-event-complete="handleToggleEventComplete"
 					@delete-event="handleDeleteEvent"
 					@open-tracker-date="(iso) => router.push({ path: '/', query: { date: iso } })"
@@ -331,6 +364,16 @@ function goToToday() {
 				/>
 			</div>
 		</div>
+
+		<LazyCalendarEventUpsertModal
+			v-if="isEventModalOpen && selectedDay"
+			:key="editingEvent?.id ?? `new:${selectedDay.iso}`"
+			:default-date-iso="selectedDay.iso"
+			:editing-event="editingEvent"
+			:is-submitting="isSubmittingCalendarEvent"
+			@submit="handleSaveEvent"
+			@close="closeEventModal"
+		/>
 
 		<LazyCalendarDayPerformanceModal
 			v-if="isPerformanceModalOpen && selectedDay"

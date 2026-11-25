@@ -38,6 +38,7 @@ import type {
 	SyncMetaRecord,
 	SyncOutboxMutation,
 	UpdateBookInput,
+	UpdateCalendarEventInput,
 	UpdateMediaInput,
 	UpsertNoteInput
 } from '~/domain/schemas';
@@ -652,38 +653,49 @@ export function useLocalRepository() {
 		}
 	};
 
+	async function upsertCalendarEventInternal(
+		input: CreateCalendarEventInput & { eventId?: string }
+	): Promise<CalendarEventEntity> {
+		const existing = input.eventId ? await db.calendarEvents.get(input.eventId) : undefined;
+		const parts = isoToJalaliParts(input.dateIso);
+		const isAnnual = Boolean(input.isAnnual);
+		const nowIso = new Date().toISOString();
+
+		const entity: CalendarEventEntity = {
+			id: existing?.id ?? input.eventId ?? generateId(),
+			title: input.title.normalize('NFKC').trim(),
+			isAnnual,
+			dateIso: isAnnual ? null : input.dateIso,
+			jalaliMonth: parts.jm,
+			jalaliDay: parts.jd,
+			isCompleted: isAnnual ? false : (existing?.isCompleted ?? false),
+			notes: input.notes?.normalize('NFKC').trim() || null,
+			createdAtIso: existing?.createdAtIso ?? nowIso,
+			updatedAtIso: nowIso
+		};
+
+		await stageMutation(
+			{
+				id: `event:${entity.id}`,
+				kind: 'UPSERT_CALENDAR_EVENT',
+				queuedAtIso: nowIso,
+				payload: entity
+			},
+			async () => {
+				await db.calendarEvents.put(entity);
+			}
+		);
+
+		return entity;
+	}
+
 	const calendar = {
 		async create(input: CreateCalendarEventInput): Promise<CalendarEventEntity> {
-			const parts = isoToJalaliParts(input.dateIso);
-			const isAnnual = Boolean(input.isAnnual);
-			const nowIso = new Date().toISOString();
+			return upsertCalendarEventInternal(input);
+		},
 
-			const newEvent: CalendarEventEntity = {
-				id: generateId(),
-				title: input.title.trim(),
-				isAnnual,
-				dateIso: isAnnual ? null : input.dateIso,
-				jalaliMonth: parts.jm,
-				jalaliDay: parts.jd,
-				isCompleted: false,
-				notes: input.notes?.trim() || null,
-				createdAtIso: nowIso,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `event:${newEvent.id}`,
-					kind: 'UPSERT_CALENDAR_EVENT',
-					queuedAtIso: nowIso,
-					payload: newEvent
-				},
-				async () => {
-					await db.calendarEvents.put(newEvent);
-				}
-			);
-
-			return newEvent;
+		async update(input: UpdateCalendarEventInput): Promise<void> {
+			await upsertCalendarEventInternal(input);
 		},
 
 		async toggleComplete(eventId: string, isCompleted: boolean): Promise<void> {

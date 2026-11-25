@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { toPersianDigits } from '~/domain/calendar';
 import { getDayStatusMeta, getTierBadgeMeta } from '~/domain/constants';
-import type { CalendarDayAggregate, CreateCalendarEventInput } from '~/domain/schemas';
+import type { CalendarDayAggregate, CalendarEventEntity } from '~/domain/schemas';
 import {
 	ArrowLeft,
 	BookOpen,
 	Check,
 	Clapperboard,
 	Eye,
+	FileText,
+	Pencil,
 	Plus,
 	Star,
 	Trash2
@@ -15,40 +17,33 @@ import {
 
 interface Props {
 	day: CalendarDayAggregate;
-	isSubmittingEvent?: boolean;
 }
 
-const props = withDefaults(defineProps<Props>(), {
-	isSubmittingEvent: false
-});
+defineProps<Props>();
 
 const emit = defineEmits<{
-	(e: 'createEvent', payload: CreateCalendarEventInput): void;
+	(e: 'openCreateEvent'): void;
+	(e: 'openEditEvent', event: CalendarEventEntity): void;
 	(e: 'toggleEventComplete', eventId: string, isCompleted: boolean): void;
 	(e: 'deleteEvent', eventId: string): void;
 	(e: 'openTrackerDate', dateIso: string): void;
 	(e: 'inspectPerformances', habitId?: string): void;
 }>();
 
-const isAnnualChecked = ref(false);
-const showAddEventForm = ref(false);
-const eventTitleInput = ref('');
-const eventNotesInput = ref('');
+const expandedNoteEventIds = ref<Set<string>>(new Set());
 
-function handleAddEvent() {
-	if (!eventTitleInput.value.trim() || props.isSubmittingEvent) return;
+function isLongNote(notes: string): boolean {
+	return notes.length > 140 || notes.split('\n').length > 3;
+}
 
-	emit('createEvent', {
-		title: eventTitleInput.value.trim(),
-		isAnnual: isAnnualChecked.value,
-		dateIso: props.day.iso,
-		notes: eventNotesInput.value.trim() || undefined
-	});
-
-	eventTitleInput.value = '';
-	eventNotesInput.value = '';
-	isAnnualChecked.value = false;
-	showAddEventForm.value = false;
+function toggleNoteExpand(eventId: string) {
+	const next = new Set(expandedNoteEventIds.value);
+	if (next.has(eventId)) {
+		next.delete(eventId);
+	} else {
+		next.add(eventId);
+	}
+	expandedNoteEventIds.value = next;
 }
 </script>
 
@@ -70,7 +65,7 @@ function handleAddEvent() {
 				<button
 					type="button"
 					class="flex h-10 items-center gap-1.5 rounded-2xl bg-accent px-3.5 text-xs font-extrabold text-accent-fg shadow-xs transition hover:opacity-90"
-					@click="showAddEventForm = !showAddEventForm"
+					@click="emit('openCreateEvent')"
 				>
 					<Plus class="h-4 w-4" />
 					<span>ثبت رویداد</span>
@@ -88,54 +83,6 @@ function handleAddEvent() {
 			</div>
 		</div>
 
-		<!-- فرم افزودن رویداد به این تاریخ -->
-		<form
-			v-if="showAddEventForm"
-			class="space-y-3 rounded-2xl border border-accent-border bg-accent-soft p-4"
-			@submit.prevent="handleAddEvent"
-		>
-			<div>
-				<input
-					v-model="eventTitleInput"
-					required
-					placeholder="مثلاً: تولد، تحویل پروژه، سالگرد..."
-					class="h-10 w-full rounded-xl border border-border bg-surface px-3.5 text-xs font-bold text-fg placeholder:font-normal placeholder:text-fg-muted focus:border-border-strong focus:outline-none"
-				/>
-			</div>
-
-			<div>
-				<input
-					v-model="eventNotesInput"
-					placeholder="توضیح کوتاه (اختیاری)..."
-					class="h-9 w-full rounded-xl border border-border bg-surface px-3.5 text-xs text-fg placeholder:text-fg-muted focus:border-border-strong focus:outline-none"
-				/>
-			</div>
-
-			<div class="flex flex-wrap items-center justify-between gap-2 pt-1">
-				<label class="flex cursor-pointer items-center gap-2 text-xs font-bold text-fg">
-					<input v-model="isAnnualChecked" type="checkbox" class="h-4 w-4 rounded accent-accent" />
-					<span>تکرار هرساله در همین تاریخ شمسی</span>
-				</label>
-
-				<div class="flex items-center gap-1.5">
-					<button
-						type="button"
-						class="h-9 rounded-xl px-3 text-xs font-bold text-fg-secondary hover:bg-surface"
-						@click="showAddEventForm = false"
-					>
-						لغو
-					</button>
-					<button
-						type="submit"
-						:disabled="isSubmittingEvent"
-						class="h-9 rounded-xl bg-accent px-4 text-xs font-extrabold text-accent-fg disabled:opacity-60"
-					>
-						{{ isSubmittingEvent ? 'در حال ثبت...' : 'ذخیره رویداد' }}
-					</button>
-				</div>
-			</div>
-		</form>
-
 		<!-- فهرست رویدادهای این روز -->
 		<div class="space-y-3">
 			<h3 class="text-xs font-extrabold text-fg-secondary">رویدادها و مناسبت‌های این روز</h3>
@@ -145,42 +92,87 @@ function handleAddEvent() {
 			>
 				رویداد یا مناسبتی برای این تاریخ ثبت نشده است.
 			</div>
-			<div v-else class="space-y-2">
+			<div v-else class="space-y-2.5">
 				<div
 					v-for="ev in day.events"
 					:key="ev.id"
-					class="flex items-center justify-between gap-3 rounded-2xl border border-accent-border bg-accent-soft p-3 text-accent-text"
+					class="rounded-2xl border border-accent-border bg-accent-soft p-3.5 text-accent-text"
 				>
-					<div class="min-w-0 space-y-0.5">
-						<div class="flex flex-wrap items-center gap-2">
-							<span class="text-sm font-black text-fg" :class="{ 'line-through opacity-75': ev.isCompleted }">
-								{{ ev.title }}
-							</span>
-							<span v-if="ev.isAnnual" class="rounded-lg border border-current px-2 py-0.5 text-[10px] font-extrabold">
-								هرساله
-							</span>
+					<div class="flex items-start justify-between gap-3">
+						<div class="min-w-0 flex-1 pt-0.5">
+							<div class="flex flex-wrap items-center gap-2">
+								<span
+									class="text-sm font-black text-fg"
+									:class="{ 'line-through opacity-75': ev.isCompleted }"
+								>
+									{{ ev.title }}
+								</span>
+								<span
+									v-if="ev.isAnnual"
+									class="rounded-lg border border-current px-2 py-0.5 text-[10px] font-extrabold"
+								>
+									هرساله
+								</span>
+							</div>
 						</div>
-						<p v-if="ev.notes" class="text-xs opacity-90">{{ ev.notes }}</p>
+
+						<div class="flex shrink-0 items-center gap-1.5">
+							<button
+								v-if="!ev.isAnnual"
+								type="button"
+								class="flex h-8 w-8 items-center justify-center rounded-xl border border-current bg-surface text-fg transition hover:scale-105 active:scale-95"
+								:title="ev.isCompleted ? 'انجام شد' : 'علامت انجام شدن'"
+								@click="emit('toggleEventComplete', ev.id, !ev.isCompleted)"
+							>
+								<Check
+									class="h-4 w-4"
+									:class="ev.isCompleted ? 'text-optimal' : 'text-fg-muted'"
+								/>
+							</button>
+
+							<button
+								type="button"
+								class="flex h-8 w-8 items-center justify-center rounded-xl bg-surface text-fg-muted transition hover:text-fg active:scale-95"
+								title="ویرایش رویداد و جزئیات"
+								@click="emit('openEditEvent', ev)"
+							>
+								<Pencil class="h-3.5 w-3.5" />
+							</button>
+
+							<button
+								type="button"
+								class="flex h-8 w-8 items-center justify-center rounded-xl bg-surface text-fg-muted transition hover:text-failed active:scale-95"
+								title="حذف رویداد"
+								@click="emit('deleteEvent', ev.id)"
+							>
+								<Trash2 class="h-3.5 w-3.5" />
+							</button>
+						</div>
 					</div>
 
-					<div class="flex shrink-0 items-center gap-1.5">
-						<button
-							v-if="!ev.isAnnual"
-							type="button"
-							class="flex h-8 w-8 items-center justify-center rounded-xl border border-current bg-surface text-fg transition hover:scale-105 active:scale-95"
-							:title="ev.isCompleted ? 'انجام شد' : 'علامت انجام شدن'"
-							@click="emit('toggleEventComplete', ev.id, !ev.isCompleted)"
+					<div
+						v-if="ev.notes"
+						class="mt-2.5 rounded-xl border border-border bg-surface px-3 py-2.5 text-fg"
+					>
+						<div class="mb-1 flex items-center gap-1.5 text-[11px] font-extrabold text-fg-secondary">
+							<FileText class="h-3 w-3 text-accent-text" />
+							<span>جزئیات و توضیحات</span>
+						</div>
+						<p
+							class="whitespace-pre-line break-words text-xs leading-6 text-fg-secondary select-text"
+							:class="{
+								'line-clamp-3': isLongNote(ev.notes) && !expandedNoteEventIds.has(ev.id)
+							}"
 						>
-							<Check class="h-4 w-4" :class="ev.isCompleted ? 'text-optimal' : 'text-fg-muted'" />
-						</button>
-
+							{{ ev.notes }}
+						</p>
 						<button
+							v-if="isLongNote(ev.notes)"
 							type="button"
-							class="flex h-8 w-8 items-center justify-center rounded-xl bg-surface text-fg-muted transition hover:text-failed active:scale-95"
-							title="حذف رویداد"
-							@click="emit('deleteEvent', ev.id)"
+							class="mt-1.5 text-[11px] font-extrabold text-accent-text hover:underline"
+							@click="toggleNoteExpand(ev.id)"
 						>
-							<Trash2 class="h-4 w-4" />
+							{{ expandedNoteEventIds.has(ev.id) ? 'بستن متن' : 'نمایش کامل توضیحات' }}
 						</button>
 					</div>
 				</div>

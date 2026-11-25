@@ -256,12 +256,17 @@ export const CalendarEventEntitySchema = z.object({
 export type CalendarEventEntity = z.infer<typeof CalendarEventEntitySchema>;
 
 export const CreateCalendarEventInputSchema = z.object({
-	title: z.string().min(1, 'عنوان رویداد الزامی است'),
+	title: z.string().min(1, 'عنوان رویداد الزامی است').max(200),
 	isAnnual: z.boolean().default(false),
 	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-	notes: z.string().optional()
+	notes: z.string().max(10000).optional()
 });
 export type CreateCalendarEventInput = z.infer<typeof CreateCalendarEventInputSchema>;
+
+export const UpdateCalendarEventInputSchema = CreateCalendarEventInputSchema.extend({
+	eventId: z.string().min(1)
+});
+export type UpdateCalendarEventInput = z.infer<typeof UpdateCalendarEventInputSchema>;
 
 export const LifecycleEventEntitySchema = z.object({
 	id: z.string(),
