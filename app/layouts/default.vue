@@ -17,21 +17,17 @@ const theme = useTheme();
 
 const isLoginPage = computed(() => route.path.startsWith('/login'));
 
-const navItems = [
-	{ href: '/', label: 'ثبت روزانه' },
-	{ href: '/calendar', label: 'تقویم' },
-	{ href: '/memories', label: 'خاطرات' },
-	{ href: '/notes', label: 'یادداشت‌ها' },
-	{ href: '/people', label: 'افراد' },
-	{ href: '/architect', label: 'طرح‌ها' },
-	{ href: '/books', label: 'کتابخانه' },
-	{ href: '/media', label: 'فیلم و انیمه' }
-];
-
 const allAppRoutes = [
-	...navItems.map((i) => i.href),
+	'/',
+	'/calendar',
+	'/notes',
+	'/people',
+	'/architect',
 	'/analytics',
 	'/timeline',
+	'/memories',
+	'/books',
+	'/media',
 	'/settings',
 	'/login'
 ];
@@ -52,36 +48,13 @@ onMounted(() => {
 		setTimeout(warmUpRoutes, 800);
 	}
 });
-
-function isActive(href: string, currentPath: string): boolean {
-	if (href === '/') return currentPath === '/';
-	if (href === '/architect' && currentPath.startsWith('/analytics')) return true;
-	return currentPath.startsWith(href);
-}
 </script>
 
 <template>
 	<div class="min-h-screen bg-base text-fg">
 		<header class="sticky top-0 z-30 border-b border-border bg-surface">
 			<div class="mx-auto flex max-w-4xl items-center justify-between gap-2.5 px-3.5 py-3 sm:gap-4 sm:px-6 sm:py-4">
-				<nav
-					v-if="!isLoginPage"
-					class="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] sm:gap-2 [&::-webkit-scrollbar]:hidden"
-				>
-					<NuxtLink
-						v-for="item in navItems"
-						:key="item.href"
-						:to="item.href"
-						class="shrink-0 rounded-2xl px-3 py-2 text-xs font-extrabold transition sm:px-4 sm:py-2.5 sm:text-sm"
-						:class="
-							isActive(item.href, route.path)
-								? 'border border-accent-border bg-accent-soft text-accent-text shadow-xs'
-								: 'text-fg-secondary hover:bg-elevated hover:text-fg'
-						"
-					>
-						{{ item.label }}
-					</NuxtLink>
-				</nav>
+				<LayoutHeaderNav v-if="!isLoginPage" :current-path="route.path" />
 				<div v-else class="text-sm font-black text-fg">ردیابی طرح‌ها</div>
 
 				<div class="flex shrink-0 items-center gap-2">
