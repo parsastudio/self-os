@@ -94,11 +94,13 @@ export function createLocalBackupOperations(
 
 	async function restoreBackupPayload(
 		payload: DatabaseBackupPayload,
-		options?: { mode?: 'merge' | 'replace'; skipOutboxStaging?: boolean }
+		options?: { mode?: 'merge' | 'replace' }
 	): Promise<{ addedOrUpdatedCount: number; skippedDuplicatesCount: number }> {
 		const mode = options?.mode ?? 'merge';
-		const skipOutboxStaging = Boolean(options?.skipOutboxStaging);
-		const nowIso = new Date().toISOString();
+		const nowMs = Date.now();
+		const clearIso = new Date(nowMs - 1).toISOString();
+		const nowIso = new Date(nowMs).toISOString();
+		const bumpIso = new Date(nowMs + 1).toISOString();
 		const emptyData: DatabaseBackupPayload['data'] = {
 			habits: [],
 			dailyEntries: [],
@@ -118,11 +120,17 @@ export function createLocalBackupOperations(
 			'rw',
 			db.workspaceAndSyncTables,
 			async () => {
+				const stagedMutations: SyncOutboxMutation[] = [];
+
 				if (mode === 'replace') {
 					await Promise.all(db.workspaceAndSyncTables.map((t) => t.clear()));
+					stagedMutations.push({
+						id: 'workspace:clear',
+						kind: 'CLEAR_WORKSPACE',
+						queuedAtIso: clearIso,
+						payload: { clearedAtIso: clearIso }
+					});
 				}
-
-				const stagedMutations: SyncOutboxMutation[] = [];
 
 				if (merged.habitsToUpsert.length > 0) {
 					await db.habits.bulkPut(merged.habitsToUpsert);
@@ -252,15 +260,22 @@ export function createLocalBackupOperations(
 					stagedMutations,
 					toPayload: (record) => ({ collection: 'people', record })
 				});
-				if (!skipOutboxStaging && stagedMutations.length > 0) {
+				if (mode === 'merge' && merged.addedOrUpdatedCount > 0) {
+					stagedMutations.push({
+						id: 'workspace:bump',
+						kind: 'BUMP_STRUCTURAL_VERSION',
+						queuedAtIso: bumpIso,
+						payload: { versionIso: bumpIso }
+					});
+				}
+
+				if (stagedMutations.length > 0) {
 					await db.syncOutbox.bulkPut(stagedMutations);
 				}
 			}
 		);
 
-		if (!skipOutboxStaging) {
-			notifyMutationsStaged();
-		}
+		notifyMutationsStaged();
 
 		return {
 			addedOrUpdatedCount: merged.addedOrUpdatedCount,

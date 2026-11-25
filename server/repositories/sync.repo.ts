@@ -14,7 +14,11 @@ import {
 	people,
 	syncState
 } from '~~/server/database/schema';
-import { buildConflictUpdateSet } from '~~/server/repositories/backup.repo';
+import {
+	buildConflictUpdateSet,
+	bumpServerStructuralVersion,
+	clearAllDatabaseRecords
+} from '~~/server/repositories/backup.repo';
 import {
 	clampClientTimestampIso,
 	clearDailyEntryOnServer,
@@ -258,31 +262,6 @@ function mapLogRow(l: typeof habitLogs.$inferSelect) {
 	};
 }
 
-function resolveSafeIso(candidateIso?: string): string {
-	return normalizeTimestampIso(candidateIso, new Date().toISOString());
-}
-
-export async function bumpServerStructuralVersion(
-	iso?: string,
-	txExecutor?: DbExecutor
-): Promise<void> {
-	const effectiveIso = resolveSafeIso(iso);
-	await ensureDatabaseReady();
-	const executor = txExecutor ?? db;
-	await executor
-		.insert(syncState)
-		.values({
-			id: SYNC_STATE_SINGLETON_ID,
-			structuralVersionIso: effectiveIso
-		})
-		.onConflictDoUpdate({
-			target: syncState.id,
-			set: {
-				structuralVersionIso: sql`GREATEST(${syncState.structuralVersionIso}, excluded.structural_version_iso)`
-			}
-		});
-}
-
 async function getFullResetVersionIso(): Promise<string> {
 	await ensureDatabaseReady();
 	const rows = await db
@@ -341,15 +320,33 @@ export async function processClientSyncRequest(
 			compareTimestampsIso(a.queuedAtIso, b.queuedAtIso)
 		);
 
-		const allHabitsList = await getAllHabits();
-		const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
+		const needsHabitsPreload = sortedMutations.some(
+			(m) =>
+				m.kind === 'SAVE_DAILY_ENTRY' ||
+				(m.kind === 'UPSERT_HABIT_LOG' &&
+					(!m.payload.habitTitleSnapshot || !m.payload.habitSnapshotJson))
+		);
+		const preloadedHabitMap = needsHabitsPreload
+			? new Map((await getAllHabits()).map((h) => [h.id, h]))
+			: undefined;
 		const nowMs = Date.now();
 
 		await db.transaction(async (tx) => {
 			for (const mutation of sortedMutations) {
 				const safeQueuedIso = clampClientTimestampIso(mutation.queuedAtIso, nowMs);
 
-				if (mutation.kind === 'SAVE_DAILY_ENTRY') {
+				if (mutation.kind === 'CLEAR_WORKSPACE') {
+					await clearAllDatabaseRecords(
+						clampClientTimestampIso(mutation.payload.clearedAtIso, nowMs),
+						tx
+					);
+					preloadedHabitMap?.clear();
+				} else if (mutation.kind === 'BUMP_STRUCTURAL_VERSION') {
+					await bumpServerStructuralVersion(
+						clampClientTimestampIso(mutation.payload.versionIso, nowMs),
+						tx
+					);
+				} else if (mutation.kind === 'SAVE_DAILY_ENTRY') {
 					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'UPSERT_DAILY_ENTRY') {
 					await upsertDailyEntryMetadata(mutation.payload, tx);
@@ -386,7 +383,7 @@ export async function processClientSyncRequest(
 							set: payload,
 							setWhere: sql`${habits.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${habits.updatedAtIso}`
 						});
-					preloadedHabitMap.set(payload.id, payload);
+					preloadedHabitMap?.set(payload.id, payload);
 				} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
 					const payload = {
 						...mutation.payload,

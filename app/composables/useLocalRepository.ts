@@ -1184,6 +1184,22 @@ export function useLocalRepository() {
 		});
 	}
 
+	async function clearWorkspace(): Promise<void> {
+		const clearedAtIso = new Date().toISOString();
+		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+			await Promise.all(db.workspaceAndSyncTables.map((table) => table.clear()));
+			await db.syncOutbox.put({
+				id: 'workspace:clear',
+				kind: 'CLEAR_WORKSPACE',
+				queuedAtIso: clearedAtIso,
+				payload: { clearedAtIso }
+			});
+		});
+		for (const listener of mutationStagedListeners) {
+			listener();
+		}
+	}
+
 	const backupOps = createLocalBackupOperations(db, () => {
 		for (const listener of mutationStagedListeners) {
 			listener();
@@ -1206,6 +1222,7 @@ export function useLocalRepository() {
 		applyDeltaWorkspace,
 		exportBackupPayload: backupOps.exportBackupPayload,
 		restoreBackupPayload: backupOps.restoreBackupPayload,
-		clearLocalData
+		clearLocalData,
+		clearWorkspace
 	};
 }

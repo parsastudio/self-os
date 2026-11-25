@@ -532,6 +532,22 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('ADD_LIFECYCLE_EVENT'),
 		queuedAtIso: z.string(),
 		payload: LifecycleEventEntitySchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('CLEAR_WORKSPACE'),
+		queuedAtIso: z.string(),
+		payload: z.object({
+			clearedAtIso: z.string()
+		})
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('BUMP_STRUCTURAL_VERSION'),
+		queuedAtIso: z.string(),
+		payload: z.object({
+			versionIso: z.string()
+		})
 	})
 ]);
 export type SyncOutboxMutation = z.infer<typeof SyncOutboxMutationSchema>;
@@ -949,17 +965,6 @@ export const DatabaseBackupPayloadSchema = z.object({
 	})
 });
 export type DatabaseBackupPayload = z.infer<typeof DatabaseBackupPayloadSchema>;
-
-export const BackupImportRequestSchema = z.union([
-	z.object({
-		mode: BackupRestoreModeSchema.default('merge'),
-		payload: DatabaseBackupPayloadSchema
-	}),
-	DatabaseBackupPayloadSchema.transform((payload) => ({
-		mode: 'merge' as const,
-		payload
-	}))
-]);
 
 export const ExistingWorkspaceDataSchema = DatabaseBackupPayloadSchema.shape.data;
 export type ExistingWorkspaceData = z.infer<typeof ExistingWorkspaceDataSchema>;

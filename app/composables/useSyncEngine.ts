@@ -3,6 +3,8 @@ import { useClientAuth } from '~/composables/useClientAuth';
 import { onLocalMutationStaged, useLocalRepository } from '~/composables/useLocalRepository';
 import { extractApiErrorInfo, type ServerSyncResponse, type SyncStatusVisual } from '~/domain/schemas';
 
+const MAX_MUTATIONS_PER_SYNC_BATCH = 500;
+
 const status = ref<SyncStatusVisual>('synced');
 const pendingCount = ref(0);
 const isOnline = ref(true);
@@ -43,8 +45,9 @@ export function useSyncEngine() {
 
 		try {
 			const meta = await localRepo.getSyncMeta();
-			const mutations = await localRepo.getPendingMutations();
-			pendingCount.value = mutations.length;
+			const allPending = await localRepo.getPendingMutations();
+			pendingCount.value = allPending.length;
+			const mutations = allPending.slice(0, MAX_MUTATIONS_PER_SYNC_BATCH);
 
 			if (mutations.length === 0 && !options?.checkRemoteUpdates) {
 				status.value = 'synced';

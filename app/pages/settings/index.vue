@@ -97,36 +97,9 @@ async function importBackup() {
 		}
 
 		const mode = backupRestoreMode.value;
-		let addedCount = 0;
-		let skippedCount = 0;
-
-		if (navigator.onLine) {
-			const serverRes = await $fetch<{
-				success: boolean;
-				importedCount: number;
-				skippedCount: number;
-			}>('/api/backup/import', {
-				method: 'POST',
-				body: {
-					mode,
-					payload: parsed.data
-				}
-			});
-			const localRes = await localRepo.restoreBackupPayload(parsed.data, {
-				mode,
-				skipOutboxStaging: true
-			});
-			addedCount = serverRes.importedCount ?? localRes.addedOrUpdatedCount;
-			skippedCount = serverRes.skippedCount ?? localRes.skippedDuplicatesCount;
-			void syncEngine.syncNow({ checkRemoteUpdates: true });
-		} else {
-			const localRes = await localRepo.restoreBackupPayload(parsed.data, {
-				mode,
-				skipOutboxStaging: false
-			});
-			addedCount = localRes.addedOrUpdatedCount;
-			skippedCount = localRes.skippedDuplicatesCount;
-		}
+		const localRes = await localRepo.restoreBackupPayload(parsed.data, { mode });
+		const addedCount = localRes.addedOrUpdatedCount;
+		const skippedCount = localRes.skippedDuplicatesCount;
 
 		const addedLabel = toPersianDigits(addedCount);
 		const skippedLabel = toPersianDigits(skippedCount);
@@ -156,17 +129,7 @@ async function handleClearAllData() {
 	importMessage.value = null;
 
 	try {
-		await localRepo.clearLocalData();
-		syncEngine.reset();
-
-		if (navigator.onLine) {
-			try {
-				await $fetch('/api/backup/clear', { method: 'POST' });
-				void syncEngine.syncNow({ checkRemoteUpdates: true });
-			} catch {
-				// ignore if offline
-			}
-		}
+		await localRepo.clearWorkspace();
 
 		isConfirmingClearAll.value = false;
 		importMessage.value = {

@@ -331,11 +331,11 @@ export async function upsertSingleHabitLog(
 	await ensureDatabaseReady();
 	const nowMs = Date.now();
 	const logUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
-	const habitMap =
-		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
+	const hasPrecomputedClientSnapshot = Boolean(
+		input.habitTitleSnapshot && input.habitSnapshotJson
+	);
 
 	const applyOperation = async (tx: DbExecutor) => {
-		const habit = habitMap.get(input.habitId);
 		const existingRows = await tx
 			.select()
 			.from(habitLogs)
@@ -347,7 +347,12 @@ export async function upsertSingleHabitLog(
 			return;
 		}
 
-		if (shouldDiscardHabitLogItem(habit, input)) {
+		const isUnloggedPayload =
+			(input.achievedTier === null || input.achievedTier === undefined) &&
+			(input.actualMinutesPerInterval === null || input.actualMinutesPerInterval === undefined) &&
+			(!input.plannedMinutesSnapshot || input.plannedMinutesSnapshot <= 0);
+
+		if (isUnloggedPayload) {
 			if (prev && prev.deletedAtIso === null) {
 				await tx
 					.update(habitLogs)
@@ -360,15 +365,48 @@ export async function upsertSingleHabitLog(
 			return;
 		}
 
-		const resolvedLogValues = resolveDailyHabitLogSnapshot({
-			habit,
-			log: {
-				...input,
+		let resolvedLogValues: Omit<
+			typeof habitLogs.$inferInsert,
+			'id' | 'dateIso' | 'habitId' | 'deletedAtIso'
+		>;
+
+		if (hasPrecomputedClientSnapshot) {
+			resolvedLogValues = {
+				habitTitleSnapshot: input.habitTitleSnapshot ?? null,
+				achievedTier: input.achievedTier,
+				achievedRuleSnapshot: input.achievedRuleSnapshot ?? null,
+				habitSnapshotJson: input.habitSnapshotJson ?? null,
+				actualMinutesPerInterval: input.actualMinutesPerInterval ?? null,
+				plannedMinutesSnapshot:
+					input.plannedMinutesSnapshot ?? prev?.plannedMinutesSnapshot ?? null,
 				updatedAtIso: logUpdatedAtIso
-			},
-			previousLog: prev && prev.deletedAtIso === null ? prev : null,
-			fallbackUpdatedAtIso: logUpdatedAtIso
-		});
+			};
+		} else {
+			const habitMap =
+				preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
+			const habit = habitMap.get(input.habitId);
+			if (shouldDiscardHabitLogItem(habit, input)) {
+				if (prev && prev.deletedAtIso === null) {
+					await tx
+						.update(habitLogs)
+						.set({
+							deletedAtIso: logUpdatedAtIso,
+							updatedAtIso: logUpdatedAtIso
+						})
+						.where(eq(habitLogs.id, prev.id));
+				}
+				return;
+			}
+			resolvedLogValues = resolveDailyHabitLogSnapshot({
+				habit,
+				log: {
+					...input,
+					updatedAtIso: logUpdatedAtIso
+				},
+				previousLog: prev && prev.deletedAtIso === null ? prev : null,
+				fallbackUpdatedAtIso: logUpdatedAtIso
+			});
+		}
 
 		await tx
 			.insert(habitLogs)

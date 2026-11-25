@@ -1,5 +1,5 @@
-import { getTableColumns, isNull, sql } from 'drizzle-orm';
-import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
+import { getTableColumns, sql } from 'drizzle-orm';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import type { DbExecutor } from '~~/server/repositories/daily-tracker.repo';
 import {
@@ -15,9 +15,9 @@ import {
 	people,
 	syncState
 } from '~~/server/database/schema';
-import { bumpServerStructuralVersion } from '~~/server/repositories/sync.repo';
-import { computeSmartBackupMerge } from '~/core/backup-merger';
-import type { DatabaseBackupPayload } from '~/domain/schemas';
+import { normalizeTimestampIso } from '~/domain/calendar';
+
+const SYNC_STATE_SINGLETON_ID = 'singleton';
 
 const WORKSPACE_TABLES = [
 	habitLogs,
@@ -32,12 +32,6 @@ const WORKSPACE_TABLES = [
 	people
 ] as const;
 
-async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
-	for (const table of WORKSPACE_TABLES) {
-		await tx.delete(table);
-	}
-}
-
 export function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
 	const cols = getTableColumns(table);
 	const excludeSet = new Set(excludeKeys);
@@ -51,102 +45,43 @@ export function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = [
 	return updateSet;
 }
 
-export async function clearAllDatabaseRecords(): Promise<void> {
+export async function bumpServerStructuralVersion(
+	iso?: string,
+	txExecutor?: DbExecutor
+): Promise<void> {
+	const effectiveIso = normalizeTimestampIso(iso, new Date().toISOString());
 	await ensureDatabaseReady();
-	await db.transaction(async (tx) => {
-		await truncateAllWorkspaceTables(tx);
-		await tx.delete(syncState);
-		await bumpServerStructuralVersion(new Date().toISOString(), tx);
-	});
+	const executor = txExecutor ?? db;
+	await executor
+		.insert(syncState)
+		.values({
+			id: SYNC_STATE_SINGLETON_ID,
+			structuralVersionIso: effectiveIso
+		})
+		.onConflictDoUpdate({
+			target: syncState.id,
+			set: {
+				structuralVersionIso: sql`GREATEST(${syncState.structuralVersionIso}, excluded.structural_version_iso)`
+			}
+		});
 }
 
-export async function importDatabaseFromJson(
-	payload: DatabaseBackupPayload,
-	mode: 'replace' | 'merge' = 'merge'
-): Promise<{ importedRecordsCount: number; skippedDuplicatesCount: number }> {
+export async function clearAllDatabaseRecords(
+	clearedAtIso = new Date().toISOString(),
+	txExecutor?: DbExecutor
+): Promise<void> {
 	await ensureDatabaseReady();
-	const { data } = payload;
-	let totalImported = 0;
-	let skippedDuplicatesCount = 0;
-
-	await db.transaction(async (tx) => {
-		if (mode === 'replace') {
-			await truncateAllWorkspaceTables(tx);
-			await tx.delete(syncState);
+	const applyClear = async (tx: DbExecutor) => {
+		for (const table of WORKSPACE_TABLES) {
+			await tx.delete(table);
 		}
+		await tx.delete(syncState);
+		await bumpServerStructuralVersion(clearedAtIso, tx);
+	};
 
-		const existingData = {
-			habits: await tx.select().from(habits),
-			dailyEntries: await tx.select().from(dailyEntries).where(isNull(dailyEntries.deletedAtIso)),
-			habitLogs: await tx.select().from(habitLogs).where(isNull(habitLogs.deletedAtIso)),
-			cadencePlans: await tx.select().from(cadencePlans).where(isNull(cadencePlans.deletedAtIso)),
-			books: await tx.select().from(books).where(isNull(books.deletedAtIso)),
-			media: await tx.select().from(mediaLogs).where(isNull(mediaLogs.deletedAtIso)),
-			notes: await tx.select().from(notes).where(isNull(notes.deletedAtIso)),
-			calendarEvents: await tx
-				.select()
-				.from(calendarEvents)
-				.where(isNull(calendarEvents.deletedAtIso)),
-			lifecycleEvents: await tx.select().from(habitLifecycleEvents),
-			people: await tx.select().from(people).where(isNull(people.deletedAtIso))
-		};
-
-		const merged = computeSmartBackupMerge(existingData, data);
-		skippedDuplicatesCount = merged.skippedDuplicatesCount;
-
-		const UPSERT_CHUNK_SIZE = 400;
-		const batchUpsertRows = async <TTable extends PgTable>(
-			table: TTable,
-			targetCols: PgColumn | PgColumn[],
-			rows: ReadonlyArray<TTable['$inferInsert']>,
-			excludeKeys: string[] = ['id']
-		) => {
-			if (rows.length === 0) return;
-			const conflictSet = buildConflictUpdateSet(table, excludeKeys);
-			for (let offset = 0; offset < rows.length; offset += UPSERT_CHUNK_SIZE) {
-				const chunk = rows.slice(offset, offset + UPSERT_CHUNK_SIZE);
-				await tx
-					.insert(table)
-					.values(chunk)
-					.onConflictDoUpdate({
-						target: targetCols,
-						set: conflictSet
-					});
-			}
-			totalImported += rows.length;
-		};
-
-		await batchUpsertRows(habits, habits.id, merged.habitsToUpsert);
-		await batchUpsertRows(
-			dailyEntries,
-			dailyEntries.dateIso,
-			merged.dailyEntriesToUpsert,
-			['dateIso']
-		);
-		await batchUpsertRows(
-			habitLogs,
-			[habitLogs.dateIso, habitLogs.habitId],
-			merged.habitLogsToUpsert,
-			[]
-		);
-		await batchUpsertRows(
-			cadencePlans,
-			[cadencePlans.dateIso, cadencePlans.habitId],
-			merged.cadencePlansToUpsert,
-			[]
-		);
-		await batchUpsertRows(books, books.id, merged.booksToUpsert);
-		await batchUpsertRows(mediaLogs, mediaLogs.id, merged.mediaToUpsert);
-		await batchUpsertRows(notes, notes.id, merged.notesToUpsert);
-		await batchUpsertRows(calendarEvents, calendarEvents.id, merged.calendarEventsToUpsert);
-		await batchUpsertRows(
-			habitLifecycleEvents,
-			habitLifecycleEvents.id,
-			merged.lifecycleEventsToUpsert
-		);
-		await batchUpsertRows(people, people.id, merged.peopleToUpsert);
-		await bumpServerStructuralVersion(new Date().toISOString(), tx);
-	});
-
-	return { importedRecordsCount: totalImported, skippedDuplicatesCount };
+	if (txExecutor) {
+		await applyClear(txExecutor);
+	} else {
+		await db.transaction(applyClear);
+	}
 }
