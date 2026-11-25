@@ -16,6 +16,7 @@ import {
 import type {
 	BookEntity,
 	BookStatus,
+	CadencePlanEntity,
 	CalendarEventEntity,
 	CreateBookInput,
 	CreateCalendarEventInput,
