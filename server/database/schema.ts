@@ -50,7 +50,8 @@ export const cadencePlans = pgTable(
 		dateIso: text('date_iso').notNull(),
 		habitId: text('habit_id').notNull(),
 		plannedMinutesPerInterval: doublePrecision('planned_minutes_per_interval').notNull(),
-		updatedAtIso: text('updated_at_iso')
+		updatedAtIso: text('updated_at_iso'),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [
 		uniqueIndex('idx_cadence_plans_date_habit').on(t.dateIso, t.habitId),
@@ -67,7 +68,8 @@ export const dailyEntries = pgTable(
 			.notNull()
 			.default('optimal'),
 		journalText: text('journal_text'),
-		updatedAtIso: text('updated_at_iso').notNull()
+		updatedAtIso: text('updated_at_iso').notNull(),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [index('idx_daily_entries_updated_at').on(t.updatedAtIso)]
 );
@@ -84,7 +86,8 @@ export const habitLogs = pgTable(
 		habitSnapshotJson: text('habit_snapshot_json'),
 		actualMinutesPerInterval: doublePrecision('actual_minutes_per_interval'),
 		plannedMinutesSnapshot: doublePrecision('planned_minutes_snapshot'),
-		updatedAtIso: text('updated_at_iso')
+		updatedAtIso: text('updated_at_iso'),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [
 		index('idx_habit_logs_date_iso').on(t.dateIso),
@@ -134,7 +137,8 @@ export const books = pgTable(
 		rating: integer('rating').default(5),
 		notes: text('notes'),
 		createdAtIso: text('created_at_iso').notNull(),
-		updatedAtIso: text('updated_at_iso')
+		updatedAtIso: text('updated_at_iso'),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [
 		index('idx_books_updated_at').on(t.updatedAtIso),
@@ -158,7 +162,8 @@ export const mediaLogs = pgTable(
 		rating: integer('rating').default(5),
 		notes: text('notes'),
 		createdAtIso: text('created_at_iso').notNull(),
-		updatedAtIso: text('updated_at_iso')
+		updatedAtIso: text('updated_at_iso'),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [
 		index('idx_media_logs_updated_at').on(t.updatedAtIso),
@@ -178,7 +183,8 @@ export const calendarEvents = pgTable(
 		isCompleted: boolean('is_completed').notNull().default(false),
 		notes: text('notes'),
 		createdAtIso: text('created_at_iso').notNull(),
-		updatedAtIso: text('updated_at_iso')
+		updatedAtIso: text('updated_at_iso'),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [
 		index('idx_calendar_events_updated_at').on(t.updatedAtIso),
@@ -196,7 +202,8 @@ export const notes = pgTable(
 		category: text('category').notNull().default('عمومی'),
 		isPinned: boolean('is_pinned').notNull().default(false),
 		createdAtIso: text('created_at_iso').notNull(),
-		updatedAtIso: text('updated_at_iso').notNull()
+		updatedAtIso: text('updated_at_iso').notNull(),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [index('idx_notes_updated_at').on(t.updatedAtIso)]
 );
@@ -232,7 +239,8 @@ export const people = pgTable(
 		notes: text('notes'),
 		isPinned: boolean('is_pinned').notNull().default(false),
 		createdAtIso: text('created_at_iso').notNull(),
-		updatedAtIso: text('updated_at_iso').notNull()
+		updatedAtIso: text('updated_at_iso').notNull(),
+		deletedAtIso: text('deleted_at_iso')
 	},
 	(t) => [
 		index('idx_people_updated_at').on(t.updatedAtIso),

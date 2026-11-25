@@ -1,4 +1,4 @@
-import { getTableColumns, like, sql } from 'drizzle-orm';
+import { getTableColumns, isNull, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import type { DbExecutor } from '~~/server/repositories/daily-tracker.repo';
@@ -38,7 +38,7 @@ async function truncateAllWorkspaceTables(tx: DbExecutor): Promise<void> {
 	}
 }
 
-function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
+export function buildConflictUpdateSet(table: PgTable, excludeKeys: string[] = ['id']) {
 	const cols = getTableColumns(table);
 	const excludeSet = new Set(excludeKeys);
 	const updateSet: Record<string, ReturnType<typeof sql.raw>> = {};
@@ -55,7 +55,7 @@ export async function clearAllDatabaseRecords(): Promise<void> {
 	await ensureDatabaseReady();
 	await db.transaction(async (tx) => {
 		await truncateAllWorkspaceTables(tx);
-		await tx.delete(syncState).where(like(syncState.id, 'del:%'));
+		await tx.delete(syncState);
 		await bumpServerStructuralVersion(new Date().toISOString(), tx);
 	});
 }
@@ -72,20 +72,23 @@ export async function importDatabaseFromJson(
 	await db.transaction(async (tx) => {
 		if (mode === 'replace') {
 			await truncateAllWorkspaceTables(tx);
-			await tx.delete(syncState).where(like(syncState.id, 'del:%'));
+			await tx.delete(syncState);
 		}
 
 		const existingData = {
 			habits: await tx.select().from(habits),
-			dailyEntries: await tx.select().from(dailyEntries),
-			habitLogs: await tx.select().from(habitLogs),
-			cadencePlans: await tx.select().from(cadencePlans),
-			books: await tx.select().from(books),
-			media: await tx.select().from(mediaLogs),
-			notes: await tx.select().from(notes),
-			calendarEvents: await tx.select().from(calendarEvents),
+			dailyEntries: await tx.select().from(dailyEntries).where(isNull(dailyEntries.deletedAtIso)),
+			habitLogs: await tx.select().from(habitLogs).where(isNull(habitLogs.deletedAtIso)),
+			cadencePlans: await tx.select().from(cadencePlans).where(isNull(cadencePlans.deletedAtIso)),
+			books: await tx.select().from(books).where(isNull(books.deletedAtIso)),
+			media: await tx.select().from(mediaLogs).where(isNull(mediaLogs.deletedAtIso)),
+			notes: await tx.select().from(notes).where(isNull(notes.deletedAtIso)),
+			calendarEvents: await tx
+				.select()
+				.from(calendarEvents)
+				.where(isNull(calendarEvents.deletedAtIso)),
 			lifecycleEvents: await tx.select().from(habitLifecycleEvents),
-			people: await tx.select().from(people)
+			people: await tx.select().from(people).where(isNull(people.deletedAtIso))
 		};
 
 		const merged = computeSmartBackupMerge(existingData, data);

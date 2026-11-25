@@ -26,7 +26,8 @@ const BOOTSTRAP_DDL_SQL = `
 		date_iso TEXT NOT NULL,
 		habit_id TEXT NOT NULL,
 		planned_minutes_per_interval DOUBLE PRECISION NOT NULL,
-		updated_at_iso TEXT
+		updated_at_iso TEXT,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS daily_entries (
@@ -34,7 +35,8 @@ const BOOTSTRAP_DDL_SQL = `
 		date_iso TEXT NOT NULL UNIQUE,
 		day_status TEXT NOT NULL DEFAULT 'optimal',
 		journal_text TEXT,
-		updated_at_iso TEXT NOT NULL
+		updated_at_iso TEXT NOT NULL,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS habit_logs (
@@ -47,7 +49,8 @@ const BOOTSTRAP_DDL_SQL = `
 		habit_snapshot_json TEXT,
 		actual_minutes_per_interval DOUBLE PRECISION,
 		planned_minutes_snapshot DOUBLE PRECISION,
-		updated_at_iso TEXT
+		updated_at_iso TEXT,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS habit_lifecycle_events (
@@ -73,7 +76,8 @@ const BOOTSTRAP_DDL_SQL = `
 		rating INTEGER DEFAULT 5,
 		notes TEXT,
 		created_at_iso TEXT NOT NULL,
-		updated_at_iso TEXT
+		updated_at_iso TEXT,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS media_logs (
@@ -86,7 +90,8 @@ const BOOTSTRAP_DDL_SQL = `
 		rating INTEGER DEFAULT 5,
 		notes TEXT,
 		created_at_iso TEXT NOT NULL,
-		updated_at_iso TEXT
+		updated_at_iso TEXT,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS calendar_events (
@@ -99,7 +104,8 @@ const BOOTSTRAP_DDL_SQL = `
 		is_completed BOOLEAN NOT NULL DEFAULT FALSE,
 		notes TEXT,
 		created_at_iso TEXT NOT NULL,
-		updated_at_iso TEXT
+		updated_at_iso TEXT,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS notes (
@@ -109,7 +115,8 @@ const BOOTSTRAP_DDL_SQL = `
 		category TEXT NOT NULL DEFAULT 'عمومی',
 		is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 		created_at_iso TEXT NOT NULL,
-		updated_at_iso TEXT NOT NULL
+		updated_at_iso TEXT NOT NULL,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS app_auth (
@@ -137,7 +144,8 @@ const BOOTSTRAP_DDL_SQL = `
 		notes TEXT,
 		is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 		created_at_iso TEXT NOT NULL,
-		updated_at_iso TEXT NOT NULL
+		updated_at_iso TEXT NOT NULL,
+		deleted_at_iso TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS sync_state (
@@ -220,10 +228,40 @@ export async function ensurePostgreSqlSchemaBootstrapped(
 				notes TEXT,
 				is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
 				created_at_iso TEXT NOT NULL,
-				updated_at_iso TEXT NOT NULL
+				updated_at_iso TEXT NOT NULL,
+				deleted_at_iso TEXT
 			);
 			CREATE INDEX IF NOT EXISTS idx_people_updated_at ON people(updated_at_iso);
 			CREATE INDEX IF NOT EXISTS idx_people_birthday ON people(birthday_month, birthday_day);
+		`);
+	}
+
+	const softDeleteCheck = await sqlClient<{ missing_soft_delete: boolean }[]>`
+		SELECT NOT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = 'books'
+			  AND column_name = 'deleted_at_iso'
+		) AS missing_soft_delete
+	`;
+
+	if (softDeleteCheck[0]?.missing_soft_delete) {
+		const resetIso = new Date().toISOString();
+		await sqlClient.unsafe(`
+			ALTER TABLE cadence_plans ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			ALTER TABLE daily_entries ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			ALTER TABLE habit_logs ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			ALTER TABLE books ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			ALTER TABLE media_logs ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			ALTER TABLE notes ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			ALTER TABLE people ADD COLUMN IF NOT EXISTS deleted_at_iso TEXT;
+			DELETE FROM sync_state WHERE id LIKE 'del:%';
+			INSERT INTO sync_state (id, structural_version_iso)
+			VALUES ('singleton', '${resetIso}')
+			ON CONFLICT (id) DO UPDATE SET
+				structural_version_iso = GREATEST(sync_state.structural_version_iso, excluded.structural_version_iso);
 		`);
 	}
 }

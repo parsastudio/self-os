@@ -403,6 +403,39 @@ export const ChangePasswordInputSchema = z
 export const BackupRestoreModeSchema = z.enum(['merge', 'replace']);
 export type BackupRestoreMode = z.infer<typeof BackupRestoreModeSchema>;
 
+export const SyncEntityCollectionSchema = z.enum([
+	'books',
+	'media',
+	'notes',
+	'calendarEvents',
+	'people'
+]);
+export type SyncEntityCollection = z.infer<typeof SyncEntityCollectionSchema>;
+
+export const UpsertEntityMutationPayloadSchema = z.discriminatedUnion('collection', [
+	z.object({
+		collection: z.literal('books'),
+		record: BookEntitySchema
+	}),
+	z.object({
+		collection: z.literal('media'),
+		record: MediaEntitySchema
+	}),
+	z.object({
+		collection: z.literal('notes'),
+		record: NoteEntitySchema
+	}),
+	z.object({
+		collection: z.literal('calendarEvents'),
+		record: CalendarEventEntitySchema
+	}),
+	z.object({
+		collection: z.literal('people'),
+		record: PersonEntitySchema
+	})
+]);
+export type UpsertEntityMutationPayload = z.infer<typeof UpsertEntityMutationPayloadSchema>;
+
 export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 	z.object({
 		id: z.string(),
@@ -418,63 +451,18 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 	}),
 	z.object({
 		id: z.string(),
-		kind: z.literal('UPSERT_BOOK'),
+		kind: z.literal('UPSERT_ENTITY'),
 		queuedAtIso: z.string(),
-		payload: BookEntitySchema
+		payload: UpsertEntityMutationPayloadSchema
 	}),
 	z.object({
 		id: z.string(),
-		kind: z.literal('DELETE_BOOK'),
+		kind: z.literal('DELETE_ENTITY'),
 		queuedAtIso: z.string(),
-		payload: z.object({ bookId: z.string() })
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('UPSERT_MEDIA'),
-		queuedAtIso: z.string(),
-		payload: MediaEntitySchema
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('DELETE_MEDIA'),
-		queuedAtIso: z.string(),
-		payload: z.object({ mediaId: z.string() })
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('UPSERT_NOTE'),
-		queuedAtIso: z.string(),
-		payload: NoteEntitySchema
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('DELETE_NOTE'),
-		queuedAtIso: z.string(),
-		payload: z.object({ noteId: z.string() })
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('UPSERT_CALENDAR_EVENT'),
-		queuedAtIso: z.string(),
-		payload: CalendarEventEntitySchema
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('DELETE_CALENDAR_EVENT'),
-		queuedAtIso: z.string(),
-		payload: z.object({ eventId: z.string() })
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('UPSERT_PERSON'),
-		queuedAtIso: z.string(),
-		payload: PersonEntitySchema
-	}),
-	z.object({
-		id: z.string(),
-		kind: z.literal('DELETE_PERSON'),
-		queuedAtIso: z.string(),
-		payload: z.object({ personId: z.string() })
+		payload: z.object({
+			collection: SyncEntityCollectionSchema,
+			entityId: z.string().min(1)
+		})
 	}),
 	z.object({
 		id: z.string(),
@@ -538,15 +526,20 @@ export const LocalWorkspaceSnapshotSchema = z.object({
 });
 export type LocalWorkspaceSnapshot = z.infer<typeof LocalWorkspaceSnapshotSchema>;
 
+export const DeltaDeletedIdsSchema = z.object({
+	dailyEntries: z.array(z.string()).default([]),
+	habitLogs: z.array(z.string()).default([]),
+	cadencePlans: z.array(z.string()).default([]),
+	books: z.array(z.string()).default([]),
+	media: z.array(z.string()).default([]),
+	notes: z.array(z.string()).default([]),
+	calendarEvents: z.array(z.string()).default([]),
+	people: z.array(z.string()).default([])
+});
+export type DeltaDeletedIds = z.infer<typeof DeltaDeletedIdsSchema>;
+
 export const DeltaWorkspaceSnapshotSchema = LocalWorkspaceSnapshotSchema.extend({
-	deletedEntryDates: z.array(z.string()).default([]),
-	deletedLogIds: z.array(z.string()).default([]),
-	deletedPlanIds: z.array(z.string()).default([]),
-	deletedBookIds: z.array(z.string()).default([]),
-	deletedMediaIds: z.array(z.string()).default([]),
-	deletedNoteIds: z.array(z.string()).default([]),
-	deletedEventIds: z.array(z.string()).default([]),
-	deletedPersonIds: z.array(z.string()).default([])
+	deleted: DeltaDeletedIdsSchema
 });
 export type DeltaWorkspaceSnapshot = z.infer<typeof DeltaWorkspaceSnapshotSchema>;
 

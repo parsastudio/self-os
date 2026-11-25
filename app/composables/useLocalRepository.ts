@@ -1,3 +1,4 @@
+import type { Table } from 'dexie';
 import { useAppDatabase } from '~/composables/useAppDatabase';
 import { createLocalBackupOperations } from '~/composables/useLocalBackupOperations';
 import { clonePlain } from '~/utils/clone';
@@ -36,14 +37,110 @@ import type {
 	PersonEntity,
 	SaveCadencePlanBatch,
 	SaveDailyEntryInput,
+	SyncEntityCollection,
 	SyncMetaRecord,
 	SyncOutboxMutation,
 	UpdateBookInput,
 	UpdateCalendarEventInput,
 	UpdateMediaInput,
+	UpsertEntityMutationPayload,
 	UpsertNoteInput,
 	UpsertPersonInput
 } from '~/domain/schemas';
+
+interface SyncApplyContext {
+	pendingIds: Set<string>;
+	pendingDailyDates: Set<string>;
+	pendingCadenceDates: Set<string>;
+	fallbackNowIso: string;
+}
+
+function isServerRecordNewerOrEqual(
+	serverIso: string | null | undefined,
+	localIso: string | null | undefined
+): boolean {
+	if (!localIso) return true;
+	if (!serverIso) return false;
+	return compareTimestampsIso(serverIso, localIso) >= 0;
+}
+
+function createTableSyncRunner<TLocal, TIncoming>(config: {
+	table: Table<TLocal, string>;
+	getLocalKey: (row: TLocal) => string;
+	getIncomingKey: (row: TIncoming) => string;
+	getIncomingUpdatedAt: (row: TIncoming) => string | null | undefined;
+	getLocalUpdatedAt: (row: TLocal) => string | null | undefined;
+	isProtectedLocal: (row: TLocal, ctx: SyncApplyContext) => boolean;
+	isProtectedIncoming: (row: TIncoming, ctx: SyncApplyContext) => boolean;
+	toLocalRecord: (row: TIncoming, fallbackNowIso: string) => TLocal;
+}) {
+	return {
+		async applyFull(incomingRows: ReadonlyArray<TIncoming>, ctx: SyncApplyContext): Promise<void> {
+			const localRows = await config.table.toArray();
+			const localByKey = new Map(localRows.map((r) => [config.getLocalKey(r), r]));
+			const serverKeys = new Set(incomingRows.map(config.getIncomingKey));
+
+			const keysToDelete = localRows
+				.filter((r) => !serverKeys.has(config.getLocalKey(r)) && !config.isProtectedLocal(r, ctx))
+				.map(config.getLocalKey);
+			if (keysToDelete.length > 0) {
+				await config.table.bulkDelete(keysToDelete);
+			}
+
+			const rowsToPut = incomingRows
+				.filter((r) => {
+					if (config.isProtectedIncoming(r, ctx)) return false;
+					const existing = localByKey.get(config.getIncomingKey(r));
+					return isServerRecordNewerOrEqual(
+						config.getIncomingUpdatedAt(r),
+						existing ? config.getLocalUpdatedAt(existing) : undefined
+					);
+				})
+				.map((r) => config.toLocalRecord(r, ctx.fallbackNowIso));
+
+			if (rowsToPut.length > 0) {
+				await config.table.bulkPut(rowsToPut);
+			}
+		},
+
+		async applyDelta(
+			incomingRows: ReadonlyArray<TIncoming>,
+			deletedKeys: ReadonlyArray<string>,
+			ctx: SyncApplyContext
+		): Promise<void> {
+			if (incomingRows.length === 0 && deletedKeys.length === 0) return;
+			const localRows = await config.table.toArray();
+			const localByKey = new Map(localRows.map((r) => [config.getLocalKey(r), r]));
+
+			if (deletedKeys.length > 0) {
+				const safeDeleteKeys = deletedKeys.filter((key) => {
+					const existing = localByKey.get(key);
+					return !existing || !config.isProtectedLocal(existing, ctx);
+				});
+				if (safeDeleteKeys.length > 0) {
+					await config.table.bulkDelete(safeDeleteKeys);
+				}
+			}
+
+			if (incomingRows.length > 0) {
+				const rowsToPut = incomingRows
+					.filter((r) => {
+						if (config.isProtectedIncoming(r, ctx)) return false;
+						const existing = localByKey.get(config.getIncomingKey(r));
+						return isServerRecordNewerOrEqual(
+							config.getIncomingUpdatedAt(r),
+							existing ? config.getLocalUpdatedAt(existing) : undefined
+						);
+					})
+					.map((r) => config.toLocalRecord(r, ctx.fallbackNowIso));
+
+				if (rowsToPut.length > 0) {
+					await config.table.bulkPut(rowsToPut);
+				}
+			}
+		}
+	};
+}
 
 const mutationStagedListeners = new Set<() => void>();
 
@@ -80,33 +177,49 @@ export function useLocalRepository() {
 		}
 	}
 
-	function mapServerEntryToLocal(
-		e: LocalWorkspaceSnapshot['entries'][number]
-	): LocalDailyEntryRecord {
-		return {
-			dateIso: e.dateIso,
-			dayStatus: e.dayStatus,
-			journalText: e.journalText ?? null,
-			updatedAtIso: e.updatedAtIso
-		};
+	async function upsertStandardEntity<T extends { id: string }>(params: {
+		outboxPrefix: string;
+		table: Table<T, string>;
+		record: T;
+		queuedAtIso: string;
+		toPayload: (record: T) => UpsertEntityMutationPayload;
+	}): Promise<T> {
+		const plainRecord = clonePlain(params.record);
+		await stageMutation(
+			{
+				id: `${params.outboxPrefix}:${plainRecord.id}`,
+				kind: 'UPSERT_ENTITY',
+				queuedAtIso: params.queuedAtIso,
+				payload: params.toPayload(plainRecord)
+			},
+			async () => {
+				await params.table.put(plainRecord);
+			}
+		);
+		return plainRecord;
 	}
 
-	function mapServerLogToLocal(
-		l: LocalWorkspaceSnapshot['logs'][number],
-		fallbackNowIso: string
-	): LocalHabitLogRecord {
-		return {
-			id: l.id || `log:${l.dateIso}:${l.habitId}`,
-			dateIso: l.dateIso,
-			habitId: l.habitId,
-			habitTitleSnapshot: l.habitTitleSnapshot ?? null,
-			achievedTier: l.achievedTier,
-			achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
-			habitSnapshotJson: l.habitSnapshotJson ?? null,
-			actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
-			plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
-			updatedAtIso: l.updatedAtIso || fallbackNowIso
-		};
+	async function deleteStandardEntity<T extends { id: string }>(params: {
+		collection: SyncEntityCollection;
+		outboxPrefix: string;
+		table: Table<T, string>;
+		entityId: string;
+	}): Promise<void> {
+		const nowIso = new Date().toISOString();
+		await stageMutation(
+			{
+				id: `${params.outboxPrefix}:${params.entityId}`,
+				kind: 'DELETE_ENTITY',
+				queuedAtIso: nowIso,
+				payload: {
+					collection: params.collection,
+					entityId: params.entityId
+				}
+			},
+			async () => {
+				await params.table.delete(params.entityId);
+			}
+		);
 	}
 
 	const daily = {
@@ -412,69 +525,44 @@ export function useLocalRepository() {
 			author: input.author?.trim() || null,
 			status: input.status
 		};
-		await stageMutation(
-			{
-				id: `book:${entity.id}`,
-				kind: 'UPSERT_BOOK',
-				queuedAtIso: nowIso,
-				payload: entity
-			},
-			async () => {
-				await db.books.put(entity);
-			}
-		);
-		return entity;
+		return upsertStandardEntity({
+			outboxPrefix: 'book',
+			table: db.books,
+			record: entity,
+			queuedAtIso: nowIso,
+			toPayload: (record) => ({ collection: 'books', record })
+		});
 	}
 
 	const books = {
-		async create(input: CreateBookInput): Promise<BookEntity> {
-			return upsertBookInternal(input);
-		},
-
+		create: (input: CreateBookInput) => upsertBookInternal(input),
 		async update(input: UpdateBookInput): Promise<void> {
 			await upsertBookInternal(input);
 		},
-
 		async updateStatus(bookId: string, status: BookStatus): Promise<void> {
 			const book = await db.books.get(bookId);
 			if (!book) return;
-
 			const nowIso = new Date().toISOString();
-			const finishedAtIso = status === 'completed' ? getTodayIso() : null;
-			const updated: BookEntity = {
-				...book,
-				status,
-				finishedAtIso,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `book:${bookId}`,
-					kind: 'UPSERT_BOOK',
-					queuedAtIso: nowIso,
-					payload: updated
+			await upsertStandardEntity({
+				outboxPrefix: 'book',
+				table: db.books,
+				record: {
+					...book,
+					status,
+					finishedAtIso: status === 'completed' ? getTodayIso() : null,
+					updatedAtIso: nowIso
 				},
-				async () => {
-					await db.books.put(updated);
-				}
-			);
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'books', record })
+			});
 		},
-
-		async delete(bookId: string): Promise<void> {
-			const nowIso = new Date().toISOString();
-			await stageMutation(
-				{
-					id: `book:${bookId}`,
-					kind: 'DELETE_BOOK',
-					queuedAtIso: nowIso,
-					payload: { bookId }
-				},
-				async () => {
-					await db.books.delete(bookId);
-				}
-			);
-		}
+		delete: (bookId: string) =>
+			deleteStandardEntity({
+				collection: 'books',
+				outboxPrefix: 'book',
+				table: db.books,
+				entityId: bookId
+			})
 	};
 
 	async function upsertMediaInternal(
@@ -496,163 +584,102 @@ export function useLocalRepository() {
 			category: input.category,
 			status: input.status
 		};
-		await stageMutation(
-			{
-				id: `media:${entity.id}`,
-				kind: 'UPSERT_MEDIA',
-				queuedAtIso: nowIso,
-				payload: entity
-			},
-			async () => {
-				await db.media.put(entity);
-			}
-		);
-		return entity;
+		return upsertStandardEntity({
+			outboxPrefix: 'media',
+			table: db.media,
+			record: entity,
+			queuedAtIso: nowIso,
+			toPayload: (record) => ({ collection: 'media', record })
+		});
 	}
 
 	const media = {
-		async create(input: CreateMediaInput): Promise<MediaEntity> {
-			return upsertMediaInternal(input);
-		},
-
+		create: (input: CreateMediaInput) => upsertMediaInternal(input),
 		async update(input: UpdateMediaInput): Promise<void> {
 			await upsertMediaInternal(input);
 		},
-
 		async updateStatus(mediaId: string, status: MediaStatus): Promise<void> {
 			const m = await db.media.get(mediaId);
 			if (!m) return;
-
 			const nowIso = new Date().toISOString();
-			const finishedAtIso = status === 'completed' ? getTodayIso() : null;
-			const updated: MediaEntity = {
-				...m,
-				status,
-				finishedAtIso,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `media:${mediaId}`,
-					kind: 'UPSERT_MEDIA',
-					queuedAtIso: nowIso,
-					payload: updated
+			await upsertStandardEntity({
+				outboxPrefix: 'media',
+				table: db.media,
+				record: {
+					...m,
+					status,
+					finishedAtIso: status === 'completed' ? getTodayIso() : null,
+					updatedAtIso: nowIso
 				},
-				async () => {
-					await db.media.put(updated);
-				}
-			);
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'media', record })
+			});
 		},
-
-		async delete(mediaId: string): Promise<void> {
-			const nowIso = new Date().toISOString();
-			await stageMutation(
-				{
-					id: `media:${mediaId}`,
-					kind: 'DELETE_MEDIA',
-					queuedAtIso: nowIso,
-					payload: { mediaId }
-				},
-				async () => {
-					await db.media.delete(mediaId);
-				}
-			);
-		}
+		delete: (mediaId: string) =>
+			deleteStandardEntity({
+				collection: 'media',
+				outboxPrefix: 'media',
+				table: db.media,
+				entityId: mediaId
+			})
 	};
 
 	const notes = {
 		async create(input: UpsertNoteInput): Promise<NoteEntity> {
 			const nowIso = new Date().toISOString();
-			const newNote: NoteEntity = {
-				id: generateId(),
-				title: input.title.trim(),
-				content: input.content.trim(),
-				category: input.category.trim() || 'عمومی',
-				isPinned: false,
-				createdAtIso: nowIso,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `note:${newNote.id}`,
-					kind: 'UPSERT_NOTE',
-					queuedAtIso: nowIso,
-					payload: newNote
+			return upsertStandardEntity({
+				outboxPrefix: 'note',
+				table: db.notes,
+				record: {
+					id: generateId(),
+					title: input.title.trim(),
+					content: input.content.trim(),
+					category: input.category.trim() || 'عمومی',
+					isPinned: false,
+					createdAtIso: nowIso,
+					updatedAtIso: nowIso
 				},
-				async () => {
-					await db.notes.put(newNote);
-				}
-			);
-
-			return newNote;
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'notes', record })
+			});
 		},
-
 		async update(noteId: string, input: UpsertNoteInput): Promise<void> {
 			const note = await db.notes.get(noteId);
 			if (!note) return;
-
 			const nowIso = new Date().toISOString();
-			const updated: NoteEntity = {
-				...note,
-				title: input.title.trim(),
-				content: input.content.trim(),
-				category: input.category.trim() || 'عمومی',
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `note:${noteId}`,
-					kind: 'UPSERT_NOTE',
-					queuedAtIso: nowIso,
-					payload: updated
+			await upsertStandardEntity({
+				outboxPrefix: 'note',
+				table: db.notes,
+				record: {
+					...note,
+					title: input.title.trim(),
+					content: input.content.trim(),
+					category: input.category.trim() || 'عمومی',
+					updatedAtIso: nowIso
 				},
-				async () => {
-					await db.notes.put(updated);
-				}
-			);
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'notes', record })
+			});
 		},
-
 		async togglePin(noteId: string, isPinned: boolean): Promise<void> {
 			const note = await db.notes.get(noteId);
 			if (!note) return;
-
 			const nowIso = new Date().toISOString();
-			const updated: NoteEntity = {
-				...note,
-				isPinned,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `note:${noteId}`,
-					kind: 'UPSERT_NOTE',
-					queuedAtIso: nowIso,
-					payload: updated
-				},
-				async () => {
-					await db.notes.put(updated);
-				}
-			);
+			await upsertStandardEntity({
+				outboxPrefix: 'note',
+				table: db.notes,
+				record: { ...note, isPinned, updatedAtIso: nowIso },
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'notes', record })
+			});
 		},
-
-		async delete(noteId: string): Promise<void> {
-			const nowIso = new Date().toISOString();
-			await stageMutation(
-				{
-					id: `note:${noteId}`,
-					kind: 'DELETE_NOTE',
-					queuedAtIso: nowIso,
-					payload: { noteId }
-				},
-				async () => {
-					await db.notes.delete(noteId);
-				}
-			);
-		}
+		delete: (noteId: string) =>
+			deleteStandardEntity({
+				collection: 'notes',
+				outboxPrefix: 'note',
+				table: db.notes,
+				entityId: noteId
+			})
 	};
 
 	async function upsertCalendarEventInternal(
@@ -676,172 +703,107 @@ export function useLocalRepository() {
 			updatedAtIso: nowIso
 		};
 
-		await stageMutation(
-			{
-				id: `event:${entity.id}`,
-				kind: 'UPSERT_CALENDAR_EVENT',
-				queuedAtIso: nowIso,
-				payload: entity
-			},
-			async () => {
-				await db.calendarEvents.put(entity);
-			}
-		);
-
-		return entity;
+		return upsertStandardEntity({
+			outboxPrefix: 'event',
+			table: db.calendarEvents,
+			record: entity,
+			queuedAtIso: nowIso,
+			toPayload: (record) => ({ collection: 'calendarEvents', record })
+		});
 	}
 
 	const calendar = {
-		async create(input: CreateCalendarEventInput): Promise<CalendarEventEntity> {
-			return upsertCalendarEventInternal(input);
-		},
-
+		create: (input: CreateCalendarEventInput) => upsertCalendarEventInternal(input),
 		async update(input: UpdateCalendarEventInput): Promise<void> {
 			await upsertCalendarEventInternal(input);
 		},
-
 		async toggleComplete(eventId: string, isCompleted: boolean): Promise<void> {
 			const ev = await db.calendarEvents.get(eventId);
 			if (!ev) return;
-
 			const nowIso = new Date().toISOString();
-			const updated: CalendarEventEntity = {
-				...ev,
-				isCompleted,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `event:${eventId}`,
-					kind: 'UPSERT_CALENDAR_EVENT',
-					queuedAtIso: nowIso,
-					payload: updated
-				},
-				async () => {
-					await db.calendarEvents.put(updated);
-				}
-			);
+			await upsertStandardEntity({
+				outboxPrefix: 'event',
+				table: db.calendarEvents,
+				record: { ...ev, isCompleted, updatedAtIso: nowIso },
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'calendarEvents', record })
+			});
 		},
-
-		async delete(eventId: string): Promise<void> {
-			const nowIso = new Date().toISOString();
-			await stageMutation(
-				{
-					id: `event:${eventId}`,
-					kind: 'DELETE_CALENDAR_EVENT',
-					queuedAtIso: nowIso,
-					payload: { eventId }
-				},
-				async () => {
-					await db.calendarEvents.delete(eventId);
-				}
-			);
-		}
+		delete: (eventId: string) =>
+			deleteStandardEntity({
+				collection: 'calendarEvents',
+				outboxPrefix: 'event',
+				table: db.calendarEvents,
+				entityId: eventId
+			})
 	};
 
 	const people = {
 		async create(input: UpsertPersonInput): Promise<PersonEntity> {
 			const nowIso = new Date().toISOString();
 			const hasBirthday = Boolean(input.birthdayMonth && input.birthdayDay);
-			const newPerson: PersonEntity = {
-				id: generateId(),
-				name: input.name.normalize('NFKC').trim(),
-				relation: input.relation.normalize('NFKC').trim() || 'آشنا',
-				contactInfo: input.contactInfo?.normalize('NFKC').trim() || null,
-				birthdayYear: hasBirthday ? (input.birthdayYear ?? null) : null,
-				birthdayMonth: hasBirthday ? (input.birthdayMonth ?? null) : null,
-				birthdayDay: hasBirthday ? (input.birthdayDay ?? null) : null,
-				notes: input.notes?.normalize('NFKC').trim() || null,
-				isPinned: false,
-				createdAtIso: nowIso,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `person:${newPerson.id}`,
-					kind: 'UPSERT_PERSON',
-					queuedAtIso: nowIso,
-					payload: newPerson
+			return upsertStandardEntity({
+				outboxPrefix: 'person',
+				table: db.people,
+				record: {
+					id: generateId(),
+					name: input.name.normalize('NFKC').trim(),
+					relation: input.relation.normalize('NFKC').trim() || 'آشنا',
+					contactInfo: input.contactInfo?.normalize('NFKC').trim() || null,
+					birthdayYear: hasBirthday ? (input.birthdayYear ?? null) : null,
+					birthdayMonth: hasBirthday ? (input.birthdayMonth ?? null) : null,
+					birthdayDay: hasBirthday ? (input.birthdayDay ?? null) : null,
+					notes: input.notes?.normalize('NFKC').trim() || null,
+					isPinned: false,
+					createdAtIso: nowIso,
+					updatedAtIso: nowIso
 				},
-				async () => {
-					await db.people.put(newPerson);
-				}
-			);
-
-			return newPerson;
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'people', record })
+			});
 		},
-
 		async update(personId: string, input: UpsertPersonInput): Promise<void> {
 			const existing = await db.people.get(personId);
 			if (!existing) return;
-
 			const nowIso = new Date().toISOString();
 			const hasBirthday = Boolean(input.birthdayMonth && input.birthdayDay);
-			const updated: PersonEntity = {
-				...existing,
-				name: input.name.normalize('NFKC').trim(),
-				relation: input.relation.normalize('NFKC').trim() || 'آشنا',
-				contactInfo: input.contactInfo?.normalize('NFKC').trim() || null,
-				birthdayYear: hasBirthday ? (input.birthdayYear ?? null) : null,
-				birthdayMonth: hasBirthday ? (input.birthdayMonth ?? null) : null,
-				birthdayDay: hasBirthday ? (input.birthdayDay ?? null) : null,
-				notes: input.notes?.normalize('NFKC').trim() || null,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `person:${personId}`,
-					kind: 'UPSERT_PERSON',
-					queuedAtIso: nowIso,
-					payload: updated
+			await upsertStandardEntity({
+				outboxPrefix: 'person',
+				table: db.people,
+				record: {
+					...existing,
+					name: input.name.normalize('NFKC').trim(),
+					relation: input.relation.normalize('NFKC').trim() || 'آشنا',
+					contactInfo: input.contactInfo?.normalize('NFKC').trim() || null,
+					birthdayYear: hasBirthday ? (input.birthdayYear ?? null) : null,
+					birthdayMonth: hasBirthday ? (input.birthdayMonth ?? null) : null,
+					birthdayDay: hasBirthday ? (input.birthdayDay ?? null) : null,
+					notes: input.notes?.normalize('NFKC').trim() || null,
+					updatedAtIso: nowIso
 				},
-				async () => {
-					await db.people.put(updated);
-				}
-			);
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'people', record })
+			});
 		},
-
 		async togglePin(personId: string, isPinned: boolean): Promise<void> {
 			const existing = await db.people.get(personId);
 			if (!existing) return;
-
 			const nowIso = new Date().toISOString();
-			const updated: PersonEntity = {
-				...existing,
-				isPinned,
-				updatedAtIso: nowIso
-			};
-
-			await stageMutation(
-				{
-					id: `person:${personId}`,
-					kind: 'UPSERT_PERSON',
-					queuedAtIso: nowIso,
-					payload: updated
-				},
-				async () => {
-					await db.people.put(updated);
-				}
-			);
+			await upsertStandardEntity({
+				outboxPrefix: 'person',
+				table: db.people,
+				record: { ...existing, isPinned, updatedAtIso: nowIso },
+				queuedAtIso: nowIso,
+				toPayload: (record) => ({ collection: 'people', record })
+			});
 		},
-
-		async delete(personId: string): Promise<void> {
-			const nowIso = new Date().toISOString();
-			await stageMutation(
-				{
-					id: `person:${personId}`,
-					kind: 'DELETE_PERSON',
-					queuedAtIso: nowIso,
-					payload: { personId }
-				},
-				async () => {
-					await db.people.delete(personId);
-				}
-			);
-		}
+		delete: (personId: string) =>
+			deleteStandardEntity({
+				collection: 'people',
+				outboxPrefix: 'person',
+				table: db.people,
+				entityId: personId
+			})
 	};
 
 	async function getSyncMeta(): Promise<SyncMetaRecord> {
@@ -878,324 +840,189 @@ export function useLocalRepository() {
 		});
 	}
 
-	async function applyServerWorkspace(ws: LocalWorkspaceSnapshot): Promise<void> {
-		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
-			const pending = await db.syncOutbox.toArray();
-			const pendingIds = new Set(pending.map((m) => m.id));
-			const pendingDailyDates = new Set(
-				pending
-					.filter((m) => m.kind === 'SAVE_DAILY_ENTRY')
-					.map((m) => m.payload.dateIso)
-			);
-			const pendingCadenceDates = new Set(
+	const workspaceRunners = {
+		habits: createTableSyncRunner<HabitEntity, HabitEntity>({
+			table: db.habits,
+			getLocalKey: (h) => h.id,
+			getIncomingKey: (h) => h.id,
+			getIncomingUpdatedAt: (h) => h.updatedAtIso,
+			getLocalUpdatedAt: (h) => h.updatedAtIso,
+			isProtectedLocal: (h, ctx) => ctx.pendingIds.has(`habit:${h.id}`),
+			isProtectedIncoming: (h, ctx) => ctx.pendingIds.has(`habit:${h.id}`),
+			toLocalRecord: (h) => h
+		}),
+		lifecycleEvents: createTableSyncRunner<LifecycleEventEntity, LifecycleEventEntity>({
+			table: db.lifecycleEvents,
+			getLocalKey: (lc) => lc.id,
+			getIncomingKey: (lc) => lc.id,
+			getIncomingUpdatedAt: (lc) => lc.createdAtIso,
+			getLocalUpdatedAt: (lc) => lc.createdAtIso,
+			isProtectedLocal: (lc, ctx) => ctx.pendingIds.has(`lifecycle:${lc.id}`),
+			isProtectedIncoming: (lc, ctx) => ctx.pendingIds.has(`lifecycle:${lc.id}`),
+			toLocalRecord: (lc) => lc
+		}),
+		books: createTableSyncRunner<BookEntity, BookEntity>({
+			table: db.books,
+			getLocalKey: (b) => b.id,
+			getIncomingKey: (b) => b.id,
+			getIncomingUpdatedAt: (b) => b.updatedAtIso,
+			getLocalUpdatedAt: (b) => b.updatedAtIso,
+			isProtectedLocal: (b, ctx) => ctx.pendingIds.has(`book:${b.id}`),
+			isProtectedIncoming: (b, ctx) => ctx.pendingIds.has(`book:${b.id}`),
+			toLocalRecord: (b) => b
+		}),
+		media: createTableSyncRunner<MediaEntity, MediaEntity>({
+			table: db.media,
+			getLocalKey: (m) => m.id,
+			getIncomingKey: (m) => m.id,
+			getIncomingUpdatedAt: (m) => m.updatedAtIso,
+			getLocalUpdatedAt: (m) => m.updatedAtIso,
+			isProtectedLocal: (m, ctx) => ctx.pendingIds.has(`media:${m.id}`),
+			isProtectedIncoming: (m, ctx) => ctx.pendingIds.has(`media:${m.id}`),
+			toLocalRecord: (m) => m
+		}),
+		notes: createTableSyncRunner<NoteEntity, NoteEntity>({
+			table: db.notes,
+			getLocalKey: (n) => n.id,
+			getIncomingKey: (n) => n.id,
+			getIncomingUpdatedAt: (n) => n.updatedAtIso,
+			getLocalUpdatedAt: (n) => n.updatedAtIso,
+			isProtectedLocal: (n, ctx) => ctx.pendingIds.has(`note:${n.id}`),
+			isProtectedIncoming: (n, ctx) => ctx.pendingIds.has(`note:${n.id}`),
+			toLocalRecord: (n) => n
+		}),
+		calendarEvents: createTableSyncRunner<CalendarEventEntity, CalendarEventEntity>({
+			table: db.calendarEvents,
+			getLocalKey: (ev) => ev.id,
+			getIncomingKey: (ev) => ev.id,
+			getIncomingUpdatedAt: (ev) => ev.updatedAtIso,
+			getLocalUpdatedAt: (ev) => ev.updatedAtIso,
+			isProtectedLocal: (ev, ctx) => ctx.pendingIds.has(`event:${ev.id}`),
+			isProtectedIncoming: (ev, ctx) => ctx.pendingIds.has(`event:${ev.id}`),
+			toLocalRecord: (ev) => ev
+		}),
+		people: createTableSyncRunner<PersonEntity, PersonEntity>({
+			table: db.people,
+			getLocalKey: (p) => p.id,
+			getIncomingKey: (p) => p.id,
+			getIncomingUpdatedAt: (p) => p.updatedAtIso,
+			getLocalUpdatedAt: (p) => p.updatedAtIso,
+			isProtectedLocal: (p, ctx) => ctx.pendingIds.has(`person:${p.id}`),
+			isProtectedIncoming: (p, ctx) => ctx.pendingIds.has(`person:${p.id}`),
+			toLocalRecord: (p) => p
+		}),
+		cadencePlans: createTableSyncRunner<CadencePlanEntity, CadencePlanEntity>({
+			table: db.cadencePlans,
+			getLocalKey: (c) => c.id,
+			getIncomingKey: (c) => c.id,
+			getIncomingUpdatedAt: (c) => c.updatedAtIso,
+			getLocalUpdatedAt: (c) => c.updatedAtIso,
+			isProtectedLocal: (c, ctx) => ctx.pendingCadenceDates.has(c.dateIso),
+			isProtectedIncoming: (c, ctx) => ctx.pendingCadenceDates.has(c.dateIso),
+			toLocalRecord: (c) => c
+		}),
+		entries: createTableSyncRunner<
+			LocalDailyEntryRecord,
+			LocalWorkspaceSnapshot['entries'][number]
+		>({
+			table: db.dailyEntries,
+			getLocalKey: (e) => e.dateIso,
+			getIncomingKey: (e) => e.dateIso,
+			getIncomingUpdatedAt: (e) => e.updatedAtIso,
+			getLocalUpdatedAt: (e) => e.updatedAtIso,
+			isProtectedLocal: (e, ctx) => ctx.pendingDailyDates.has(e.dateIso),
+			isProtectedIncoming: (e, ctx) => ctx.pendingDailyDates.has(e.dateIso),
+			toLocalRecord: (e) => ({
+				dateIso: e.dateIso,
+				dayStatus: e.dayStatus,
+				journalText: e.journalText ?? null,
+				updatedAtIso: e.updatedAtIso
+			})
+		}),
+		logs: createTableSyncRunner<
+			LocalHabitLogRecord,
+			LocalWorkspaceSnapshot['logs'][number]
+		>({
+			table: db.habitLogs,
+			getLocalKey: (l) => l.id,
+			getIncomingKey: (l) => l.id || `log:${l.dateIso}:${l.habitId}`,
+			getIncomingUpdatedAt: (l) => l.updatedAtIso,
+			getLocalUpdatedAt: (l) => l.updatedAtIso,
+			isProtectedLocal: (l, ctx) => ctx.pendingDailyDates.has(l.dateIso),
+			isProtectedIncoming: (l, ctx) => ctx.pendingDailyDates.has(l.dateIso),
+			toLocalRecord: (l, fallbackNowIso) => ({
+				id: l.id || `log:${l.dateIso}:${l.habitId}`,
+				dateIso: l.dateIso,
+				habitId: l.habitId,
+				habitTitleSnapshot: l.habitTitleSnapshot ?? null,
+				achievedTier: l.achievedTier,
+				achievedRuleSnapshot: l.achievedRuleSnapshot ?? null,
+				habitSnapshotJson: l.habitSnapshotJson ?? null,
+				actualMinutesPerInterval: l.actualMinutesPerInterval ?? null,
+				plannedMinutesSnapshot: l.plannedMinutesSnapshot ?? null,
+				updatedAtIso: l.updatedAtIso || fallbackNowIso
+			})
+		})
+	};
+
+	async function buildSyncApplyContext(): Promise<SyncApplyContext> {
+		const pending = await db.syncOutbox.toArray();
+		return {
+			pendingIds: new Set(pending.map((m) => m.id)),
+			pendingDailyDates: new Set(
+				pending.filter((m) => m.kind === 'SAVE_DAILY_ENTRY').map((m) => m.payload.dateIso)
+			),
+			pendingCadenceDates: new Set(
 				pending
 					.filter((m) => m.kind === 'SAVE_CADENCE_PLAN')
 					.map((m) => m.payload.targetDateIso)
-			);
+			),
+			fallbackNowIso: new Date().toISOString()
+		};
+	}
 
-			// Reconcile remote deletions for all collections (respecting staged local mutations)
-			const serverHabitIds = new Set(ws.habits.map((h) => h.id));
-			const localHabitIds = await db.habits.toCollection().primaryKeys();
-			const habitsToDelete = localHabitIds.filter(
-				(id) => !serverHabitIds.has(id) && !pendingIds.has(`habit:${id}`)
-			);
-			if (habitsToDelete.length > 0) await db.habits.bulkDelete(habitsToDelete);
-
-			const serverLifecycleIds = new Set(ws.lifecycleEvents.map((lc) => lc.id));
-			const localLifecycleIds = await db.lifecycleEvents.toCollection().primaryKeys();
-			const lifecyclesToDelete = localLifecycleIds.filter(
-				(id) => !serverLifecycleIds.has(id) && !pendingIds.has(`lifecycle:${id}`)
-			);
-			if (lifecyclesToDelete.length > 0) await db.lifecycleEvents.bulkDelete(lifecyclesToDelete);
-
-			const serverBookIds = new Set(ws.books.map((b) => b.id));
-			const localBookIds = await db.books.toCollection().primaryKeys();
-			const booksToDelete = localBookIds.filter(
-				(id) => !serverBookIds.has(id) && !pendingIds.has(`book:${id}`)
-			);
-			if (booksToDelete.length > 0) await db.books.bulkDelete(booksToDelete);
-
-			const serverMediaIds = new Set(ws.media.map((m) => m.id));
-			const localMediaIds = await db.media.toCollection().primaryKeys();
-			const mediaToDelete = localMediaIds.filter(
-				(id) => !serverMediaIds.has(id) && !pendingIds.has(`media:${id}`)
-			);
-			if (mediaToDelete.length > 0) await db.media.bulkDelete(mediaToDelete);
-
-			const serverNoteIds = new Set(ws.notes.map((n) => n.id));
-			const localNoteIds = await db.notes.toCollection().primaryKeys();
-			const notesToDelete = localNoteIds.filter(
-				(id) => !serverNoteIds.has(id) && !pendingIds.has(`note:${id}`)
-			);
-			if (notesToDelete.length > 0) await db.notes.bulkDelete(notesToDelete);
-
-			const serverEventIds = new Set(ws.calendarEvents.map((ev) => ev.id));
-			const localEventIds = await db.calendarEvents.toCollection().primaryKeys();
-			const eventsToDelete = localEventIds.filter(
-				(id) => !serverEventIds.has(id) && !pendingIds.has(`event:${id}`)
-			);
-			if (eventsToDelete.length > 0) await db.calendarEvents.bulkDelete(eventsToDelete);
-
-			const serverPeople = ws.people ?? [];
-			const serverPersonIds = new Set(serverPeople.map((p) => p.id));
-			const localPersonIds = await db.people.toCollection().primaryKeys();
-			const peopleToDelete = localPersonIds.filter(
-				(id) => !serverPersonIds.has(id) && !pendingIds.has(`person:${id}`)
-			);
-			if (peopleToDelete.length > 0) await db.people.bulkDelete(peopleToDelete);
-
-			const serverPlanIds = new Set(ws.cadencePlans.map((c) => c.id));
-			const allLocalPlans = await db.cadencePlans.toArray();
-			const plansToDelete = allLocalPlans
-				.filter((p) => !serverPlanIds.has(p.id) && !pendingCadenceDates.has(p.dateIso))
-				.map((p) => p.id);
-			if (plansToDelete.length > 0) await db.cadencePlans.bulkDelete(plansToDelete);
-
-			const isServerRecordNewerOrEqual = (
-				serverIso: string | null | undefined,
-				localIso: string | null | undefined
-			): boolean => {
-				if (!localIso) return true;
-				if (!serverIso) return false;
-				return compareTimestampsIso(serverIso, localIso) >= 0;
-			};
-
-			const localHabitMap = new Map((await db.habits.toArray()).map((h) => [h.id, h]));
-			await db.habits.bulkPut(
-				ws.habits.filter(
-					(h) =>
-						!pendingIds.has(`habit:${h.id}`) &&
-						isServerRecordNewerOrEqual(h.updatedAtIso, localHabitMap.get(h.id)?.updatedAtIso)
-				)
-			);
-
-			const localPlanMap = new Map(allLocalPlans.map((p) => [p.id, p]));
-			await db.cadencePlans.bulkPut(
-				ws.cadencePlans.filter(
-					(c) =>
-						!pendingIds.has(`cadence:${c.dateIso}`) &&
-						!pendingCadenceDates.has(c.dateIso) &&
-						isServerRecordNewerOrEqual(c.updatedAtIso, localPlanMap.get(c.id)?.updatedAtIso)
-				)
-			);
-
-			const localBookMap = new Map((await db.books.toArray()).map((b) => [b.id, b]));
-			await db.books.bulkPut(
-				ws.books.filter(
-					(b) =>
-						!pendingIds.has(`book:${b.id}`) &&
-						isServerRecordNewerOrEqual(b.updatedAtIso, localBookMap.get(b.id)?.updatedAtIso)
-				)
-			);
-
-			const localMediaMap = new Map((await db.media.toArray()).map((m) => [m.id, m]));
-			await db.media.bulkPut(
-				ws.media.filter(
-					(m) =>
-						!pendingIds.has(`media:${m.id}`) &&
-						isServerRecordNewerOrEqual(m.updatedAtIso, localMediaMap.get(m.id)?.updatedAtIso)
-				)
-			);
-
-			const localNoteMap = new Map((await db.notes.toArray()).map((n) => [n.id, n]));
-			await db.notes.bulkPut(
-				ws.notes.filter(
-					(n) =>
-						!pendingIds.has(`note:${n.id}`) &&
-						isServerRecordNewerOrEqual(n.updatedAtIso, localNoteMap.get(n.id)?.updatedAtIso)
-				)
-			);
-
-			const localEventMap = new Map((await db.calendarEvents.toArray()).map((ev) => [ev.id, ev]));
-			await db.calendarEvents.bulkPut(
-				ws.calendarEvents.filter(
-					(ev) =>
-						!pendingIds.has(`event:${ev.id}`) &&
-						isServerRecordNewerOrEqual(ev.updatedAtIso, localEventMap.get(ev.id)?.updatedAtIso)
-				)
-			);
-			await db.lifecycleEvents.bulkPut(
-				ws.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
-			);
-
-			const localPeopleMap = new Map((await db.people.toArray()).map((p) => [p.id, p]));
-			await db.people.bulkPut(
-				serverPeople.filter(
-					(p) =>
-						!pendingIds.has(`person:${p.id}`) &&
-						isServerRecordNewerOrEqual(p.updatedAtIso, localPeopleMap.get(p.id)?.updatedAtIso)
-				)
-			);
-
-			// Reconcile cleared daily entries and logs
-			const serverEntryDates = new Set(ws.entries.map((e) => e.dateIso));
-			const localEntryDates = await db.dailyEntries.toCollection().primaryKeys();
-			const entriesToDelete = localEntryDates.filter(
-				(dateIso) => !serverEntryDates.has(dateIso) && !pendingDailyDates.has(dateIso)
-			);
-			if (entriesToDelete.length > 0) {
-				await db.dailyEntries.bulkDelete(entriesToDelete);
-			}
-
-			const localEntryMap = new Map(
-				(await db.dailyEntries.toArray()).map((e) => [e.dateIso, e])
-			);
-			const entriesToPut = ws.entries
-				.filter(
-					(e) =>
-						!pendingDailyDates.has(e.dateIso) &&
-						isServerRecordNewerOrEqual(
-							e.updatedAtIso,
-							localEntryMap.get(e.dateIso)?.updatedAtIso
-						)
-				)
-				.map(mapServerEntryToLocal);
-			if (entriesToPut.length > 0) {
-				await db.dailyEntries.bulkPut(entriesToPut);
-			}
-
-			const serverLogIds = new Set(ws.logs.map((l) => l.id || `log:${l.dateIso}:${l.habitId}`));
-			const allLocalLogs = await db.habitLogs.toArray();
-			const localLogMap = new Map(allLocalLogs.map((l) => [l.id, l]));
-			const logsToDelete = allLocalLogs
-				.filter((l) => !serverLogIds.has(l.id) && !pendingDailyDates.has(l.dateIso))
-				.map((l) => l.id);
-			if (logsToDelete.length > 0) {
-				await db.habitLogs.bulkDelete(logsToDelete);
-			}
-
-			const fallbackNowIso = new Date().toISOString();
-			const logsToPut = ws.logs
-				.filter((l) => {
-					const logId = l.id || `log:${l.dateIso}:${l.habitId}`;
-					return (
-						!pendingDailyDates.has(l.dateIso) &&
-						isServerRecordNewerOrEqual(
-							l.updatedAtIso,
-							localLogMap.get(logId)?.updatedAtIso
-						)
-					);
-				})
-				.map((l) => mapServerLogToLocal(l, fallbackNowIso));
-			if (logsToPut.length > 0) {
-				await db.habitLogs.bulkPut(logsToPut);
-			}
+	async function applyServerWorkspace(ws: LocalWorkspaceSnapshot): Promise<void> {
+		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+			const ctx = await buildSyncApplyContext();
+			await workspaceRunners.habits.applyFull(ws.habits, ctx);
+			await workspaceRunners.lifecycleEvents.applyFull(ws.lifecycleEvents, ctx);
+			await workspaceRunners.books.applyFull(ws.books, ctx);
+			await workspaceRunners.media.applyFull(ws.media, ctx);
+			await workspaceRunners.notes.applyFull(ws.notes, ctx);
+			await workspaceRunners.calendarEvents.applyFull(ws.calendarEvents, ctx);
+			await workspaceRunners.people.applyFull(ws.people ?? [], ctx);
+			await workspaceRunners.cadencePlans.applyFull(ws.cadencePlans, ctx);
+			await workspaceRunners.entries.applyFull(ws.entries, ctx);
+			await workspaceRunners.logs.applyFull(ws.logs, ctx);
 		});
 	}
 
 	async function applyDeltaWorkspace(delta: DeltaWorkspaceSnapshot): Promise<void> {
 		await db.transaction('rw', db.workspaceAndSyncTables, async () => {
-				const pending = await db.syncOutbox.toArray();
-				const pendingIds = new Set(pending.map((m) => m.id));
-				const pendingDailyDates = new Set(
-					pending
-						.filter((m) => m.kind === 'SAVE_DAILY_ENTRY')
-						.map((m) => m.payload.dateIso)
-				);
-				const pendingCadenceDates = new Set(
-					pending
-						.filter((m) => m.kind === 'SAVE_CADENCE_PLAN')
-						.map((m) => m.payload.targetDateIso)
-				);
-
-				if (delta.deletedEntryDates.length > 0) {
-					await db.dailyEntries.bulkDelete(
-						delta.deletedEntryDates.filter((dateIso) => !pendingDailyDates.has(dateIso))
-					);
-				}
-				if (delta.deletedLogIds.length > 0) {
-					await db.habitLogs.bulkDelete(delta.deletedLogIds);
-				}
-				if (delta.deletedPlanIds.length > 0) {
-					await db.cadencePlans.bulkDelete(delta.deletedPlanIds);
-				}
-				if (delta.deletedBookIds.length > 0) {
-					await db.books.bulkDelete(
-						delta.deletedBookIds.filter((id) => !pendingIds.has(`book:${id}`))
-					);
-				}
-				if (delta.deletedMediaIds.length > 0) {
-					await db.media.bulkDelete(
-						delta.deletedMediaIds.filter((id) => !pendingIds.has(`media:${id}`))
-					);
-				}
-				if (delta.deletedNoteIds.length > 0) {
-					await db.notes.bulkDelete(
-						delta.deletedNoteIds.filter((id) => !pendingIds.has(`note:${id}`))
-					);
-				}
-				if (delta.deletedEventIds.length > 0) {
-					await db.calendarEvents.bulkDelete(
-						delta.deletedEventIds.filter((id) => !pendingIds.has(`event:${id}`))
-					);
-				}
-				if (delta.deletedPersonIds.length > 0) {
-					await db.people.bulkDelete(
-						delta.deletedPersonIds.filter((id) => !pendingIds.has(`person:${id}`))
-					);
-				}
-
-				if (delta.habits.length > 0) {
-					await db.habits.bulkPut(
-						delta.habits.filter((h) => !pendingIds.has(`habit:${h.id}`))
-					);
-				}
-				if (delta.cadencePlans.length > 0) {
-					await db.cadencePlans.bulkPut(
-						delta.cadencePlans.filter(
-							(c) =>
-								!pendingIds.has(`cadence:${c.dateIso}`) &&
-								!pendingCadenceDates.has(c.dateIso)
-						)
-					);
-				}
-				if (delta.books.length > 0) {
-					await db.books.bulkPut(
-						delta.books.filter((b) => !pendingIds.has(`book:${b.id}`))
-					);
-				}
-				if (delta.media.length > 0) {
-					await db.media.bulkPut(
-						delta.media.filter((m) => !pendingIds.has(`media:${m.id}`))
-					);
-				}
-				if (delta.notes.length > 0) {
-					await db.notes.bulkPut(
-						delta.notes.filter((n) => !pendingIds.has(`note:${n.id}`))
-					);
-				}
-				if (delta.calendarEvents.length > 0) {
-					await db.calendarEvents.bulkPut(
-						delta.calendarEvents.filter((ev) => !pendingIds.has(`event:${ev.id}`))
-					);
-				}
-				if (delta.lifecycleEvents.length > 0) {
-					await db.lifecycleEvents.bulkPut(
-						delta.lifecycleEvents.filter((lc) => !pendingIds.has(`lifecycle:${lc.id}`))
-					);
-				}
-				if (delta.people.length > 0) {
-					await db.people.bulkPut(
-						delta.people.filter((p) => !pendingIds.has(`person:${p.id}`))
-					);
-				}
-				if (delta.entries.length > 0) {
-					await db.dailyEntries.bulkPut(
-						delta.entries
-							.filter((e) => !pendingDailyDates.has(e.dateIso))
-							.map(mapServerEntryToLocal)
-					);
-				}
-				if (delta.logs.length > 0) {
-					const fallbackNowIso = new Date().toISOString();
-					await db.habitLogs.bulkPut(
-						delta.logs
-							.filter((l) => !pendingDailyDates.has(l.dateIso))
-							.map((l) => mapServerLogToLocal(l, fallbackNowIso))
-					);
-				}
-			}
-		);
+			const ctx = await buildSyncApplyContext();
+			await workspaceRunners.habits.applyDelta(delta.habits, [], ctx);
+			await workspaceRunners.lifecycleEvents.applyDelta(delta.lifecycleEvents, [], ctx);
+			await workspaceRunners.books.applyDelta(delta.books, delta.deleted.books, ctx);
+			await workspaceRunners.media.applyDelta(delta.media, delta.deleted.media, ctx);
+			await workspaceRunners.notes.applyDelta(delta.notes, delta.deleted.notes, ctx);
+			await workspaceRunners.calendarEvents.applyDelta(
+				delta.calendarEvents,
+				delta.deleted.calendarEvents,
+				ctx
+			);
+			await workspaceRunners.people.applyDelta(delta.people, delta.deleted.people, ctx);
+			await workspaceRunners.cadencePlans.applyDelta(
+				delta.cadencePlans,
+				delta.deleted.cadencePlans,
+				ctx
+			);
+			await workspaceRunners.entries.applyDelta(
+				delta.entries,
+				delta.deleted.dailyEntries,
+				ctx
+			);
+			await workspaceRunners.logs.applyDelta(delta.logs, delta.deleted.habitLogs, ctx);
+		});
 	}
 
 	async function clearLocalData(): Promise<void> {

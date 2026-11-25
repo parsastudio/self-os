@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, gt, like, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import type { PgColumn, PgTable, PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	books,
@@ -13,6 +14,7 @@ import {
 	people,
 	syncState
 } from '~~/server/database/schema';
+import { buildConflictUpdateSet } from '~~/server/repositories/backup.repo';
 import {
 	clampClientTimestampIso,
 	type DbExecutor,
@@ -22,13 +24,210 @@ import {
 } from '~~/server/repositories/daily-tracker.repo';
 import { compareTimestampsIso, normalizeTimestampIso } from '~/domain/calendar';
 import type {
+	BookEntity,
+	CalendarEventEntity,
 	DeltaWorkspaceSnapshot,
 	LocalWorkspaceSnapshot,
+	MediaEntity,
+	NoteEntity,
+	PersonEntity,
 	ServerSyncResponse,
-	SyncRequestPayload
+	SyncEntityCollection,
+	SyncRequestPayload,
+	UpsertEntityMutationPayload
 } from '~/domain/schemas';
 
 const SYNC_STATE_SINGLETON_ID = 'singleton';
+
+function stripDeletedAt<T extends { deletedAtIso: string | null }>(
+	row: T
+): Omit<T, 'deletedAtIso'> {
+	const { deletedAtIso: _deletedAtIso, ...publicRow } = row;
+	return publicRow;
+}
+
+function createStandardCollectionAdapter<
+	TTable extends PgTable,
+	TRow extends TTable['$inferSelect'] & {
+		id: string;
+		updatedAtIso: string | null;
+		deletedAtIso: string | null;
+	},
+	TPayload extends { id: string; updatedAtIso?: string | null }
+>(config: {
+	table: TTable;
+	idCol: PgColumn;
+	updatedAtCol: PgColumn;
+	deletedAtCol: PgColumn;
+	toInsertRow: (payload: TPayload, effectiveIso: string) => TTable['$inferInsert'];
+	toSoftDeleteSet: (iso: string) => PgUpdateSetSource<TTable>;
+	selectRows: (whereClause?: SQL) => Promise<TRow[]>;
+}) {
+	const conflictSet = buildConflictUpdateSet(config.table, ['id']);
+
+	return {
+		async upsert(
+			tx: DbExecutor,
+			payload: TPayload,
+			fallbackIso: string,
+			referenceNowMs: number
+		): Promise<void> {
+			const effectiveIso = clampClientTimestampIso(
+				payload.updatedAtIso ?? fallbackIso,
+				referenceNowMs
+			);
+			const row = config.toInsertRow(payload, effectiveIso);
+			await tx
+				.insert(config.table)
+				.values(row)
+				.onConflictDoUpdate({
+					target: config.idCol,
+					set: conflictSet,
+					setWhere: sql`${config.updatedAtCol} IS NULL OR excluded.updated_at_iso >= ${config.updatedAtCol}`
+				});
+		},
+
+		async softDelete(tx: DbExecutor, entityId: string, deletedAtIso: string): Promise<void> {
+			await tx
+				.update(config.table)
+				.set(config.toSoftDeleteSet(deletedAtIso))
+				.where(
+					and(
+						eq(config.idCol, entityId),
+						or(isNull(config.updatedAtCol), lte(config.updatedAtCol, deletedAtIso))
+					)
+				);
+		},
+
+		async fetchDelta(sinceIso: string): Promise<{
+			upserted: Omit<TRow, 'deletedAtIso'>[];
+			deletedIds: string[];
+		}> {
+			const rows = await config.selectRows(gt(config.updatedAtCol, sinceIso));
+			const upserted: Omit<TRow, 'deletedAtIso'>[] = [];
+			const deletedIds: string[] = [];
+
+			for (const row of rows) {
+				if (row.deletedAtIso !== null) {
+					deletedIds.push(row.id);
+				} else {
+					upserted.push(stripDeletedAt(row));
+				}
+			}
+
+			return { upserted, deletedIds };
+		},
+
+		async fetchActive(): Promise<Omit<TRow, 'deletedAtIso'>[]> {
+			const rows = await config.selectRows(isNull(config.deletedAtCol));
+			return rows.map(stripDeletedAt);
+		}
+	};
+}
+
+const standardAdapters = {
+	books: createStandardCollectionAdapter({
+		table: books,
+		idCol: books.id,
+		updatedAtCol: books.updatedAtIso,
+		deletedAtCol: books.deletedAtIso,
+		toInsertRow: (payload: BookEntity, effectiveIso: string) => ({
+			...payload,
+			updatedAtIso: effectiveIso,
+			deletedAtIso: null
+		}),
+		toSoftDeleteSet: (iso: string) => ({ deletedAtIso: iso, updatedAtIso: iso }),
+		selectRows: (whereClause) =>
+			db.select().from(books).where(whereClause).orderBy(desc(books.createdAtIso))
+	}),
+	media: createStandardCollectionAdapter({
+		table: mediaLogs,
+		idCol: mediaLogs.id,
+		updatedAtCol: mediaLogs.updatedAtIso,
+		deletedAtCol: mediaLogs.deletedAtIso,
+		toInsertRow: (payload: MediaEntity, effectiveIso: string) => ({
+			...payload,
+			updatedAtIso: effectiveIso,
+			deletedAtIso: null
+		}),
+		toSoftDeleteSet: (iso: string) => ({ deletedAtIso: iso, updatedAtIso: iso }),
+		selectRows: (whereClause) =>
+			db.select().from(mediaLogs).where(whereClause).orderBy(desc(mediaLogs.createdAtIso))
+	}),
+	notes: createStandardCollectionAdapter({
+		table: notes,
+		idCol: notes.id,
+		updatedAtCol: notes.updatedAtIso,
+		deletedAtCol: notes.deletedAtIso,
+		toInsertRow: (payload: NoteEntity, effectiveIso: string) => ({
+			...payload,
+			updatedAtIso: effectiveIso,
+			deletedAtIso: null
+		}),
+		toSoftDeleteSet: (iso: string) => ({ deletedAtIso: iso, updatedAtIso: iso }),
+		selectRows: (whereClause) =>
+			db
+				.select()
+				.from(notes)
+				.where(whereClause)
+				.orderBy(desc(notes.isPinned), desc(notes.updatedAtIso))
+	}),
+	calendarEvents: createStandardCollectionAdapter({
+		table: calendarEvents,
+		idCol: calendarEvents.id,
+		updatedAtCol: calendarEvents.updatedAtIso,
+		deletedAtCol: calendarEvents.deletedAtIso,
+		toInsertRow: (payload: CalendarEventEntity, effectiveIso: string) => ({
+			...payload,
+			updatedAtIso: effectiveIso,
+			deletedAtIso: null
+		}),
+		toSoftDeleteSet: (iso: string) => ({ deletedAtIso: iso, updatedAtIso: iso }),
+		selectRows: (whereClause) =>
+			db
+				.select()
+				.from(calendarEvents)
+				.where(whereClause)
+				.orderBy(desc(calendarEvents.createdAtIso))
+	}),
+	people: createStandardCollectionAdapter({
+		table: people,
+		idCol: people.id,
+		updatedAtCol: people.updatedAtIso,
+		deletedAtCol: people.deletedAtIso,
+		toInsertRow: (payload: PersonEntity, effectiveIso: string) => ({
+			...payload,
+			updatedAtIso: effectiveIso,
+			deletedAtIso: null
+		}),
+		toSoftDeleteSet: (iso: string) => ({ deletedAtIso: iso, updatedAtIso: iso }),
+		selectRows: (whereClause) =>
+			db
+				.select()
+				.from(people)
+				.where(whereClause)
+				.orderBy(desc(people.isPinned), desc(people.updatedAtIso))
+	})
+} as const;
+
+async function dispatchStandardUpsert(
+	tx: DbExecutor,
+	payload: UpsertEntityMutationPayload,
+	fallbackIso: string,
+	referenceNowMs: number
+): Promise<void> {
+	if (payload.collection === 'books') {
+		await standardAdapters.books.upsert(tx, payload.record, fallbackIso, referenceNowMs);
+	} else if (payload.collection === 'media') {
+		await standardAdapters.media.upsert(tx, payload.record, fallbackIso, referenceNowMs);
+	} else if (payload.collection === 'notes') {
+		await standardAdapters.notes.upsert(tx, payload.record, fallbackIso, referenceNowMs);
+	} else if (payload.collection === 'calendarEvents') {
+		await standardAdapters.calendarEvents.upsert(tx, payload.record, fallbackIso, referenceNowMs);
+	} else {
+		await standardAdapters.people.upsert(tx, payload.record, fallbackIso, referenceNowMs);
+	}
+}
 
 function mapEntryRow(e: typeof dailyEntries.$inferSelect) {
 	return {
@@ -72,30 +271,6 @@ export async function bumpServerStructuralVersion(
 			id: SYNC_STATE_SINGLETON_ID,
 			structuralVersionIso: effectiveIso
 		})
-		.onConflictDoUpdate({
-			target: syncState.id,
-			set: {
-				structuralVersionIso: sql`GREATEST(${syncState.structuralVersionIso}, excluded.structural_version_iso)`
-			}
-		});
-}
-
-export async function recordServerDeletionTombstones(
-	tombstoneIds: string[],
-	deletedAtIso: string,
-	txExecutor?: DbExecutor
-): Promise<void> {
-	if (tombstoneIds.length === 0) return;
-	const effectiveIso = resolveSafeIso(deletedAtIso);
-	await ensureDatabaseReady();
-	const executor = txExecutor ?? db;
-	const rows = tombstoneIds.map((id) => ({
-		id,
-		structuralVersionIso: effectiveIso
-	}));
-	await executor
-		.insert(syncState)
-		.values(rows)
 		.onConflictDoUpdate({
 			target: syncState.id,
 			set: {
@@ -164,179 +339,25 @@ export async function processClientSyncRequest(
 
 		const allHabitsList = await getAllHabits();
 		const preloadedHabitMap = new Map(allHabitsList.map((h) => [h.id, h]));
-
-		const existingTombstoneRows = await db
-			.select()
-			.from(syncState)
-			.where(like(syncState.id, 'del:%'));
-		const tombstoneMap = new Map(
-			existingTombstoneRows.map((r) => [r.id, r.structuralVersionIso])
-		);
-
-		const isBlockedByNewerTombstone = (tombstoneKey: string, mutationIso: string): boolean => {
-			const deletedAtIso = tombstoneMap.get(tombstoneKey);
-			if (!deletedAtIso) return false;
-			return compareTimestampsIso(deletedAtIso, mutationIso) > 0;
-		};
-
 		const nowMs = Date.now();
+
 		await db.transaction(async (tx) => {
-			const clearTombstoneIfPresent = async (tombstoneKey: string) => {
-				if (tombstoneMap.has(tombstoneKey)) {
-					await tx.delete(syncState).where(eq(syncState.id, tombstoneKey));
-					tombstoneMap.delete(tombstoneKey);
-				}
-			};
-
-			const applyTombstonedDelete = async (params: {
-				tombstoneKey: string;
-				existingUpdatedAtIso: string | null | undefined;
-				safeQueuedIso: string;
-				executeDelete: () => Promise<unknown>;
-			}) => {
-				if (
-					!params.existingUpdatedAtIso ||
-					compareTimestampsIso(params.safeQueuedIso, params.existingUpdatedAtIso) >= 0
-				) {
-					await params.executeDelete();
-					await recordServerDeletionTombstones(
-						[params.tombstoneKey],
-						params.safeQueuedIso,
-						tx
-					);
-					tombstoneMap.set(params.tombstoneKey, params.safeQueuedIso);
-				}
-			};
-
 			for (const mutation of sortedMutations) {
 				const safeQueuedIso = clampClientTimestampIso(mutation.queuedAtIso, nowMs);
+
 				if (mutation.kind === 'SAVE_DAILY_ENTRY') {
 					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
 				} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
 					await saveCadencePlansForDate(mutation.payload, tx);
-				} else if (mutation.kind === 'UPSERT_BOOK') {
-					const effectiveIso = clampClientTimestampIso(
-						mutation.payload.updatedAtIso ?? safeQueuedIso,
-						nowMs
+				} else if (mutation.kind === 'UPSERT_ENTITY') {
+					await dispatchStandardUpsert(tx, mutation.payload, safeQueuedIso, nowMs);
+				} else if (mutation.kind === 'DELETE_ENTITY') {
+					const collection: SyncEntityCollection = mutation.payload.collection;
+					await standardAdapters[collection].softDelete(
+						tx,
+						mutation.payload.entityId,
+						safeQueuedIso
 					);
-					const tombstoneKey = `del:book:${mutation.payload.id}`;
-					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
-						await tx
-							.insert(books)
-							.values(payload)
-							.onConflictDoUpdate({
-								target: books.id,
-								set: payload,
-								setWhere: sql`${books.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${books.updatedAtIso}`
-							});
-						await clearTombstoneIfPresent(tombstoneKey);
-					}
-				} else if (mutation.kind === 'DELETE_BOOK') {
-					const existing = await tx
-						.select({ updatedAtIso: books.updatedAtIso })
-						.from(books)
-						.where(eq(books.id, mutation.payload.bookId))
-						.limit(1);
-					await applyTombstonedDelete({
-						tombstoneKey: `del:book:${mutation.payload.bookId}`,
-						existingUpdatedAtIso: existing[0]?.updatedAtIso,
-						safeQueuedIso,
-						executeDelete: () =>
-							tx.delete(books).where(eq(books.id, mutation.payload.bookId))
-					});
-				} else if (mutation.kind === 'UPSERT_MEDIA') {
-					const effectiveIso = clampClientTimestampIso(
-						mutation.payload.updatedAtIso ?? safeQueuedIso,
-						nowMs
-					);
-					const tombstoneKey = `del:media:${mutation.payload.id}`;
-					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
-						await tx
-							.insert(mediaLogs)
-							.values(payload)
-							.onConflictDoUpdate({
-								target: mediaLogs.id,
-								set: payload,
-								setWhere: sql`${mediaLogs.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${mediaLogs.updatedAtIso}`
-							});
-						await clearTombstoneIfPresent(tombstoneKey);
-					}
-				} else if (mutation.kind === 'DELETE_MEDIA') {
-					const existing = await tx
-						.select({ updatedAtIso: mediaLogs.updatedAtIso })
-						.from(mediaLogs)
-						.where(eq(mediaLogs.id, mutation.payload.mediaId))
-						.limit(1);
-					await applyTombstonedDelete({
-						tombstoneKey: `del:media:${mutation.payload.mediaId}`,
-						existingUpdatedAtIso: existing[0]?.updatedAtIso,
-						safeQueuedIso,
-						executeDelete: () =>
-							tx.delete(mediaLogs).where(eq(mediaLogs.id, mutation.payload.mediaId))
-					});
-				} else if (mutation.kind === 'UPSERT_NOTE') {
-					const effectiveIso = clampClientTimestampIso(mutation.payload.updatedAtIso, nowMs);
-					const tombstoneKey = `del:note:${mutation.payload.id}`;
-					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
-						await tx
-							.insert(notes)
-							.values(payload)
-							.onConflictDoUpdate({
-								target: notes.id,
-								set: payload,
-								setWhere: sql`excluded.updated_at_iso >= ${notes.updatedAtIso}`
-							});
-						await clearTombstoneIfPresent(tombstoneKey);
-					}
-				} else if (mutation.kind === 'DELETE_NOTE') {
-					const existing = await tx
-						.select({ updatedAtIso: notes.updatedAtIso })
-						.from(notes)
-						.where(eq(notes.id, mutation.payload.noteId))
-						.limit(1);
-					await applyTombstonedDelete({
-						tombstoneKey: `del:note:${mutation.payload.noteId}`,
-						existingUpdatedAtIso: existing[0]?.updatedAtIso,
-						safeQueuedIso,
-						executeDelete: () =>
-							tx.delete(notes).where(eq(notes.id, mutation.payload.noteId))
-					});
-				} else if (mutation.kind === 'UPSERT_CALENDAR_EVENT') {
-					const effectiveIso = clampClientTimestampIso(
-						mutation.payload.updatedAtIso ?? safeQueuedIso,
-						nowMs
-					);
-					const tombstoneKey = `del:event:${mutation.payload.id}`;
-					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
-						await tx
-							.insert(calendarEvents)
-							.values(payload)
-							.onConflictDoUpdate({
-								target: calendarEvents.id,
-								set: payload,
-								setWhere: sql`${calendarEvents.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${calendarEvents.updatedAtIso}`
-							});
-						await clearTombstoneIfPresent(tombstoneKey);
-					}
-				} else if (mutation.kind === 'DELETE_CALENDAR_EVENT') {
-					const existing = await tx
-						.select({ updatedAtIso: calendarEvents.updatedAtIso })
-						.from(calendarEvents)
-						.where(eq(calendarEvents.id, mutation.payload.eventId))
-						.limit(1);
-					await applyTombstonedDelete({
-						tombstoneKey: `del:event:${mutation.payload.eventId}`,
-						existingUpdatedAtIso: existing[0]?.updatedAtIso,
-						safeQueuedIso,
-						executeDelete: () =>
-							tx
-								.delete(calendarEvents)
-								.where(eq(calendarEvents.id, mutation.payload.eventId))
-					});
 				} else if (mutation.kind === 'UPSERT_HABIT') {
 					const payload = {
 						...mutation.payload,
@@ -354,34 +375,6 @@ export async function processClientSyncRequest(
 							setWhere: sql`${habits.updatedAtIso} IS NULL OR excluded.updated_at_iso >= ${habits.updatedAtIso}`
 						});
 					preloadedHabitMap.set(payload.id, payload);
-				} else if (mutation.kind === 'UPSERT_PERSON') {
-					const effectiveIso = clampClientTimestampIso(mutation.payload.updatedAtIso, nowMs);
-					const tombstoneKey = `del:person:${mutation.payload.id}`;
-					if (!isBlockedByNewerTombstone(tombstoneKey, effectiveIso)) {
-						const payload = { ...mutation.payload, updatedAtIso: effectiveIso };
-						await tx
-							.insert(people)
-							.values(payload)
-							.onConflictDoUpdate({
-								target: people.id,
-								set: payload,
-								setWhere: sql`excluded.updated_at_iso >= ${people.updatedAtIso}`
-							});
-						await clearTombstoneIfPresent(tombstoneKey);
-					}
-				} else if (mutation.kind === 'DELETE_PERSON') {
-					const existing = await tx
-						.select({ updatedAtIso: people.updatedAtIso })
-						.from(people)
-						.where(eq(people.id, mutation.payload.personId))
-						.limit(1);
-					await applyTombstonedDelete({
-						tombstoneKey: `del:person:${mutation.payload.personId}`,
-						existingUpdatedAtIso: existing[0]?.updatedAtIso,
-						safeQueuedIso,
-						executeDelete: () =>
-							tx.delete(people).where(eq(people.id, mutation.payload.personId))
-					});
 				} else if (mutation.kind === 'ADD_LIFECYCLE_EVENT') {
 					const payload = {
 						...mutation.payload,
@@ -395,6 +388,7 @@ export async function processClientSyncRequest(
 							set: payload
 						});
 				}
+
 				appliedMutationIds.push(mutation.id);
 			}
 		});
@@ -423,14 +417,13 @@ export async function processClientSyncRequest(
 			changedEntriesRaw,
 			changedLogsRaw,
 			changedHabits,
-			changedCadencePlans,
-			changedBooks,
-			changedMedia,
-			changedNotes,
-			changedCalendarEvents,
+			changedCadencePlansRaw,
 			changedLifecycleEvents,
-			changedPeople,
-			tombstoneRows
+			booksDelta,
+			mediaDelta,
+			notesDelta,
+			eventsDelta,
+			peopleDelta
 		] = await Promise.all([
 			db
 				.select()
@@ -454,66 +447,43 @@ export async function processClientSyncRequest(
 				.orderBy(asc(cadencePlans.dateIso)),
 			db
 				.select()
-				.from(books)
-				.where(gt(books.updatedAtIso, normalizedKnownIso))
-				.orderBy(desc(books.createdAtIso)),
-			db
-				.select()
-				.from(mediaLogs)
-				.where(gt(mediaLogs.updatedAtIso, normalizedKnownIso))
-				.orderBy(desc(mediaLogs.createdAtIso)),
-			db
-				.select()
-				.from(notes)
-				.where(gt(notes.updatedAtIso, normalizedKnownIso))
-				.orderBy(desc(notes.isPinned), desc(notes.updatedAtIso)),
-			db
-				.select()
-				.from(calendarEvents)
-				.where(gt(calendarEvents.updatedAtIso, normalizedKnownIso))
-				.orderBy(desc(calendarEvents.createdAtIso)),
-			db
-				.select()
 				.from(habitLifecycleEvents)
 				.where(gt(habitLifecycleEvents.createdAtIso, normalizedKnownIso))
 				.orderBy(desc(habitLifecycleEvents.createdAtIso)),
-			db
-				.select()
-				.from(people)
-				.where(gt(people.updatedAtIso, normalizedKnownIso))
-				.orderBy(desc(people.isPinned), desc(people.updatedAtIso)),
-			db
-				.select()
-				.from(syncState)
-				.where(
-					and(
-						like(syncState.id, 'del:%'),
-						gt(syncState.structuralVersionIso, normalizedKnownIso)
-					)
-				)
+			standardAdapters.books.fetchDelta(normalizedKnownIso),
+			standardAdapters.media.fetchDelta(normalizedKnownIso),
+			standardAdapters.notes.fetchDelta(normalizedKnownIso),
+			standardAdapters.calendarEvents.fetchDelta(normalizedKnownIso),
+			standardAdapters.people.fetchDelta(normalizedKnownIso)
 		]);
 
-		const deletedBuckets: Record<
-			'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event' | 'person',
-			string[]
-		> = {
-			entry: [],
-			log: [],
-			plan: [],
-			book: [],
-			media: [],
-			note: [],
-			event: [],
-			person: []
-		};
+		const entries: LocalWorkspaceSnapshot['entries'] = [];
+		const deletedEntryDates: string[] = [];
+		for (const row of changedEntriesRaw) {
+			if (row.deletedAtIso !== null) {
+				deletedEntryDates.push(row.dateIso);
+			} else {
+				entries.push(mapEntryRow(row));
+			}
+		}
 
-		for (const t of tombstoneRows) {
-			const match = t.id.match(
-				/^del:(entry|log|plan|book|media|note|event|person):(.+)$/
-			);
-			if (match && match[1] && match[2]) {
-				const kind = match[1] as keyof typeof deletedBuckets;
-				deletedBuckets[kind].push(match[2]);
+		const logs: LocalWorkspaceSnapshot['logs'] = [];
+		const deletedLogIds: string[] = [];
+		for (const row of changedLogsRaw) {
+			if (row.deletedAtIso !== null) {
+				deletedLogIds.push(row.id);
+			} else {
+				logs.push(mapLogRow(row));
+			}
+		}
+
+		const activeCadencePlans: LocalWorkspaceSnapshot['cadencePlans'] = [];
+		const deletedPlanIds: string[] = [];
+		for (const row of changedCadencePlansRaw) {
+			if (row.deletedAtIso !== null) {
+				deletedPlanIds.push(row.id);
+			} else {
+				activeCadencePlans.push(stripDeletedAt(row));
 			}
 		}
 
@@ -521,23 +491,25 @@ export async function processClientSyncRequest(
 			versionIso: serverVersionIso,
 			syncedAtIso: serverTimeIso,
 			habits: changedHabits,
-			entries: changedEntriesRaw.map(mapEntryRow),
-			logs: changedLogsRaw.map(mapLogRow),
-			cadencePlans: changedCadencePlans,
-			books: changedBooks,
-			media: changedMedia,
-			notes: changedNotes,
-			calendarEvents: changedCalendarEvents,
+			entries,
+			logs,
+			cadencePlans: activeCadencePlans,
+			books: booksDelta.upserted,
+			media: mediaDelta.upserted,
+			notes: notesDelta.upserted,
+			calendarEvents: eventsDelta.upserted,
 			lifecycleEvents: changedLifecycleEvents,
-			people: changedPeople,
-			deletedEntryDates: deletedBuckets.entry,
-			deletedLogIds: deletedBuckets.log,
-			deletedPlanIds: deletedBuckets.plan,
-			deletedBookIds: deletedBuckets.book,
-			deletedMediaIds: deletedBuckets.media,
-			deletedNoteIds: deletedBuckets.note,
-			deletedEventIds: deletedBuckets.event,
-			deletedPersonIds: deletedBuckets.person
+			people: peopleDelta.upserted,
+			deleted: {
+				dailyEntries: deletedEntryDates,
+				habitLogs: deletedLogIds,
+				cadencePlans: deletedPlanIds,
+				books: booksDelta.deletedIds,
+				media: mediaDelta.deletedIds,
+				notes: notesDelta.deletedIds,
+				calendarEvents: eventsDelta.deletedIds,
+				people: peopleDelta.deletedIds
+			}
 		};
 
 		return {
@@ -553,33 +525,39 @@ export async function processClientSyncRequest(
 		allEntriesRaw,
 		allLogsRaw,
 		allHabits,
-		allCadencePlans,
+		allCadencePlansRaw,
+		allLifecycleEvents,
 		allBooks,
 		allMedia,
 		allNotes,
 		allCalendarEvents,
-		allLifecycleEvents,
 		allPeople
 	] = await Promise.all([
-		db.select().from(dailyEntries).orderBy(desc(dailyEntries.dateIso)),
-		db.select().from(habitLogs).orderBy(desc(habitLogs.dateIso)),
-		getAllHabits(),
-		db.select().from(cadencePlans).orderBy(asc(cadencePlans.dateIso)),
-		db.select().from(books).orderBy(desc(books.createdAtIso)),
-		db.select().from(mediaLogs).orderBy(desc(mediaLogs.createdAtIso)),
 		db
 			.select()
-			.from(notes)
-			.orderBy(desc(notes.isPinned), desc(notes.updatedAtIso)),
-		db.select().from(calendarEvents).orderBy(desc(calendarEvents.createdAtIso)),
+			.from(dailyEntries)
+			.where(isNull(dailyEntries.deletedAtIso))
+			.orderBy(desc(dailyEntries.dateIso)),
+		db
+			.select()
+			.from(habitLogs)
+			.where(isNull(habitLogs.deletedAtIso))
+			.orderBy(desc(habitLogs.dateIso)),
+		getAllHabits(),
+		db
+			.select()
+			.from(cadencePlans)
+			.where(isNull(cadencePlans.deletedAtIso))
+			.orderBy(asc(cadencePlans.dateIso)),
 		db
 			.select()
 			.from(habitLifecycleEvents)
 			.orderBy(desc(habitLifecycleEvents.createdAtIso)),
-		db
-			.select()
-			.from(people)
-			.orderBy(desc(people.isPinned), desc(people.updatedAtIso))
+		standardAdapters.books.fetchActive(),
+		standardAdapters.media.fetchActive(),
+		standardAdapters.notes.fetchActive(),
+		standardAdapters.calendarEvents.fetchActive(),
+		standardAdapters.people.fetchActive()
 	]);
 
 	const fullWorkspace: LocalWorkspaceSnapshot = {
@@ -588,7 +566,7 @@ export async function processClientSyncRequest(
 		habits: allHabits,
 		entries: allEntriesRaw.map(mapEntryRow),
 		logs: allLogsRaw.map(mapLogRow),
-		cadencePlans: allCadencePlans,
+		cadencePlans: allCadencePlansRaw.map(stripDeletedAt),
 		books: allBooks,
 		media: allMedia,
 		notes: allNotes,

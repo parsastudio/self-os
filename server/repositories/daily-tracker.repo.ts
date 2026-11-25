@@ -1,4 +1,4 @@
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
@@ -6,7 +6,6 @@ import {
 	habitLogs,
 	habits
 } from '~~/server/database/schema';
-import { recordServerDeletionTombstones } from '~~/server/repositories/sync.repo';
 import {
 	isDailyEntryEmpty,
 	resolveDailyHabitLogSnapshot,
@@ -64,27 +63,30 @@ export async function saveDailyEntryAndLogs(
 		const existing = existingRows[0];
 
 		if (isDailyEntryEmpty(input)) {
+			if (!existing || existing.deletedAtIso !== null) {
+				return;
+			}
 			if (
-				existing &&
 				input.updatedAtIso &&
 				compareTimestampsIso(entryUpdatedAtIso, existing.updatedAtIso) < 0
 			) {
 				return;
 			}
-			const existingLogs = await tx
-				.select({ id: habitLogs.id })
-				.from(habitLogs)
-				.where(eq(habitLogs.dateIso, input.dateIso));
-			await tx.delete(habitLogs).where(eq(habitLogs.dateIso, input.dateIso));
-			await tx.delete(dailyEntries).where(eq(dailyEntries.dateIso, input.dateIso));
-			await recordServerDeletionTombstones(
-				[
-					`del:entry:${input.dateIso}`,
-					...existingLogs.map((l) => `del:log:${l.id}`)
-				],
-				entryUpdatedAtIso,
-				tx
-			);
+			await tx
+				.update(habitLogs)
+				.set({
+					deletedAtIso: entryUpdatedAtIso,
+					updatedAtIso: entryUpdatedAtIso
+				})
+				.where(and(eq(habitLogs.dateIso, input.dateIso), isNull(habitLogs.deletedAtIso)));
+			await tx
+				.update(dailyEntries)
+				.set({
+					journalText: null,
+					deletedAtIso: entryUpdatedAtIso,
+					updatedAtIso: entryUpdatedAtIso
+				})
+				.where(eq(dailyEntries.dateIso, input.dateIso));
 			return;
 		}
 
@@ -98,6 +100,7 @@ export async function saveDailyEntryAndLogs(
 					.set({
 						dayStatus: input.dayStatus,
 						journalText: normalizedJournal,
+						deletedAtIso: null,
 						updatedAtIso: entryUpdatedAtIso
 					})
 					.where(eq(dailyEntries.dateIso, input.dateIso));
@@ -108,7 +111,8 @@ export async function saveDailyEntryAndLogs(
 				dateIso: input.dateIso,
 				dayStatus: input.dayStatus,
 				journalText: normalizedJournal,
-				updatedAtIso: entryUpdatedAtIso
+				updatedAtIso: entryUpdatedAtIso,
+				deletedAtIso: null
 			});
 		}
 
@@ -119,29 +123,38 @@ export async function saveDailyEntryAndLogs(
 		const previousLogByHabitId = new Map(previousLogs.map((l) => [l.habitId, l]));
 		const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
 
-		const logIdsToDelete: string[] = [];
+		const logIdsToSoftDelete: string[] = [];
 		const logsToUpsert: Array<typeof habitLogs.$inferInsert> = [];
 
 		for (const prevLog of previousLogs) {
-			if (!incomingHabitIds.has(prevLog.habitId)) {
-				logIdsToDelete.push(prevLog.id);
+			if (
+				prevLog.deletedAtIso === null &&
+				!incomingHabitIds.has(prevLog.habitId) &&
+				(!prevLog.updatedAtIso ||
+					compareTimestampsIso(entryUpdatedAtIso, prevLog.updatedAtIso) >= 0)
+			) {
+				logIdsToSoftDelete.push(prevLog.id);
 			}
 		}
 
 		for (const log of input.logs) {
 			const habit = habitMap.get(log.habitId);
 			const prev = previousLogByHabitId.get(log.habitId);
-
-			if (shouldDiscardHabitLogItem(habit, log)) {
-				if (prev) {
-					logIdsToDelete.push(prev.id);
-				}
-				continue;
-			}
-
 			const sanitizedLogUpdatedAtIso = log.updatedAtIso
 				? clampClientTimestampIso(log.updatedAtIso, nowMs)
 				: entryUpdatedAtIso;
+
+			if (shouldDiscardHabitLogItem(habit, log)) {
+				if (
+					prev &&
+					prev.deletedAtIso === null &&
+					(!prev.updatedAtIso ||
+						compareTimestampsIso(sanitizedLogUpdatedAtIso, prev.updatedAtIso) >= 0)
+				) {
+					logIdsToSoftDelete.push(prev.id);
+				}
+				continue;
+			}
 
 			if (
 				prev?.updatedAtIso &&
@@ -156,7 +169,7 @@ export async function saveDailyEntryAndLogs(
 					...log,
 					updatedAtIso: sanitizedLogUpdatedAtIso
 				},
-				previousLog: prev,
+				previousLog: prev && prev.deletedAtIso === null ? prev : null,
 				fallbackUpdatedAtIso: nowIso
 			});
 
@@ -164,18 +177,20 @@ export async function saveDailyEntryAndLogs(
 				id: prev?.id ?? `log:${input.dateIso}:${log.habitId}`,
 				dateIso: input.dateIso,
 				habitId: log.habitId,
-				...resolvedLogValues
+				...resolvedLogValues,
+				deletedAtIso: null
 			});
 		}
 
-		if (logIdsToDelete.length > 0) {
-			const uniqueDeleteIds = Array.from(new Set(logIdsToDelete));
-			await tx.delete(habitLogs).where(inArray(habitLogs.id, uniqueDeleteIds));
-			await recordServerDeletionTombstones(
-				uniqueDeleteIds.map((id) => `del:log:${id}`),
-				entryUpdatedAtIso,
-				tx
-			);
+		if (logIdsToSoftDelete.length > 0) {
+			const uniqueDeleteIds = Array.from(new Set(logIdsToSoftDelete));
+			await tx
+				.update(habitLogs)
+				.set({
+					deletedAtIso: entryUpdatedAtIso,
+					updatedAtIso: entryUpdatedAtIso
+				})
+				.where(inArray(habitLogs.id, uniqueDeleteIds));
 		}
 
 		if (logsToUpsert.length > 0) {
@@ -191,6 +206,7 @@ export async function saveDailyEntryAndLogs(
 						habitSnapshotJson: sql`excluded.habit_snapshot_json`,
 						actualMinutesPerInterval: sql`excluded.actual_minutes_per_interval`,
 						plannedMinutesSnapshot: sql`excluded.planned_minutes_snapshot`,
+						deletedAtIso: sql`excluded.deleted_at_iso`,
 						updatedAtIso: sql`excluded.updated_at_iso`
 					}
 				});
@@ -221,7 +237,7 @@ export async function saveCadencePlansForDate(
 			.where(eq(cadencePlans.dateIso, input.targetDateIso));
 		const existingByHabitId = new Map(existingPlans.map((p) => [p.habitId, p]));
 
-		const planIdsToDelete: string[] = [];
+		const planIdsToSoftDelete: string[] = [];
 		const plansToUpsert: Array<typeof cadencePlans.$inferInsert> = [];
 
 		for (const item of input.items) {
@@ -238,8 +254,8 @@ export async function saveCadencePlansForDate(
 			}
 
 			if (item.plannedMinutesPerInterval <= 0) {
-				if (existing) {
-					planIdsToDelete.push(existing.id);
+				if (existing && existing.deletedAtIso === null) {
+					planIdsToSoftDelete.push(existing.id);
 				}
 				continue;
 			}
@@ -249,18 +265,20 @@ export async function saveCadencePlansForDate(
 				dateIso: input.targetDateIso,
 				habitId: item.habitId,
 				plannedMinutesPerInterval: item.plannedMinutesPerInterval,
-				updatedAtIso: itemUpdatedAtIso
+				updatedAtIso: itemUpdatedAtIso,
+				deletedAtIso: null
 			});
 		}
 
-		if (planIdsToDelete.length > 0) {
-			const uniqueDeleteIds = Array.from(new Set(planIdsToDelete));
-			await tx.delete(cadencePlans).where(inArray(cadencePlans.id, uniqueDeleteIds));
-			await recordServerDeletionTombstones(
-				uniqueDeleteIds.map((id) => `del:plan:${id}`),
-				batchUpdatedAtIso,
-				tx
-			);
+		if (planIdsToSoftDelete.length > 0) {
+			const uniqueDeleteIds = Array.from(new Set(planIdsToSoftDelete));
+			await tx
+				.update(cadencePlans)
+				.set({
+					deletedAtIso: batchUpdatedAtIso,
+					updatedAtIso: batchUpdatedAtIso
+				})
+				.where(inArray(cadencePlans.id, uniqueDeleteIds));
 		}
 
 		if (plansToUpsert.length > 0) {
@@ -271,6 +289,7 @@ export async function saveCadencePlansForDate(
 					target: [cadencePlans.dateIso, cadencePlans.habitId],
 					set: {
 						plannedMinutesPerInterval: sql`excluded.planned_minutes_per_interval`,
+						deletedAtIso: sql`excluded.deleted_at_iso`,
 						updatedAtIso: sql`excluded.updated_at_iso`
 					}
 				});

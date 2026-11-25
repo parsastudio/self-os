@@ -115,7 +115,6 @@ self-os
         ├── 📄 clone.ts
         ├── 📄 ui-tokens.ts
 ├── 📁 data
-    ├── 📄 local.db
 ├── 📄 docker-compose.yml
 ├── 📄 drizzle.config.ts
 ├── 📄 nuxt.config.ts
@@ -531,7 +530,7 @@ function runScryptAsync(
 	password: string,
 	saltBuffer: Buffer,
 	keylen: number,
-	options: crypto.ScryptOptions = {}
+	options: crypto.ScryptOptions
 ): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
 		crypto.scrypt(password, saltBuffer, keylen, options, (err, derivedKey) => {
@@ -556,9 +555,9 @@ function isWellFormedSessionToken(rawToken: string): boolean {
 	return SESSION_TOKEN_HEX_REGEX.test(rawToken);
 }
 
-function hashSessionTokenV2(rawToken: string, hmacKey = getActiveSessionHmacKey()): string {
+function hashSessionTokenV2(rawToken: string): string {
 	return crypto
-		.createHmac('sha256', hmacKey)
+		.createHmac('sha256', getActiveSessionHmacKey())
 		.update(rawToken.toLowerCase())
 		.digest('hex');
 }
@@ -651,13 +650,11 @@ export async function changeMasterPassword(
 
 export async function createAuthSession(): Promise<{
 	token: string;
-	expiresAt: Date;
 }> {
 	await ensureDatabaseReady();
 	const now = new Date();
 	const nowIso = now.toISOString();
-	const expiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
-	const expiresAtIso = expiresAt.toISOString();
+	const expiresAtIso = new Date(now.getTime() + SESSION_DURATION_MS).toISOString();
 
 	await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
 
@@ -671,7 +668,7 @@ export async function createAuthSession(): Promise<{
 		lastSeenAtIso: nowIso
 	});
 
-	return { token: rawToken, expiresAt };
+	return { token: rawToken };
 }
 
 export async function validateAndExtendSession(
@@ -680,12 +677,11 @@ export async function validateAndExtendSession(
 ): Promise<{
 	valid: boolean;
 	shouldRefreshCookie: boolean;
-	expiresAt: Date;
 }> {
 	await ensureDatabaseReady();
 	const now = new Date();
 	if (!isWellFormedSessionToken(rawToken)) {
-		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
+		return { valid: false, shouldRefreshCookie: false };
 	}
 	const nowIso = now.toISOString();
 	const sessionId = hashSessionTokenV2(rawToken);
@@ -698,12 +694,12 @@ export async function validateAndExtendSession(
 
 	const session = rows[0];
 	if (!session) {
-		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
+		return { valid: false, shouldRefreshCookie: false };
 	}
 
 	if (session.expiresAtIso <= nowIso) {
 		await db.delete(authSessions).where(lt(authSessions.expiresAtIso, nowIso));
-		return { valid: false, shouldRefreshCookie: false, expiresAt: now };
+		return { valid: false, shouldRefreshCookie: false };
 	}
 
 	const newExpiresAt = new Date(now.getTime() + SESSION_DURATION_MS);
@@ -724,8 +720,7 @@ export async function validateAndExtendSession(
 
 	return {
 		valid: true,
-		shouldRefreshCookie,
-		expiresAt: newExpiresAt
+		shouldRefreshCookie
 	};
 }
 
@@ -988,7 +983,6 @@ export async function saveCadencePlansForDate(
 ): Promise<void> {
 	await ensureDatabaseReady();
 	const nowMs = Date.now();
-	const nowIso = new Date(nowMs).toISOString();
 	const batchUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
 
 	const applyOperations = async (tx: DbExecutor) => {
@@ -1285,7 +1279,7 @@ function mapLogRow(l: typeof habitLogs.$inferSelect) {
 }
 
 function resolveSafeIso(candidateIso?: string): string {
-	return normalizeTimestampIso(candidateIso, new Date().toISOString()) ?? new Date().toISOString();
+	return normalizeTimestampIso(candidateIso, new Date().toISOString());
 }
 
 export async function bumpServerStructuralVersion(
@@ -1723,10 +1717,9 @@ export async function processClientSyncRequest(
 		]);
 
 		const deletedBuckets: Record<
-			'habit' | 'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event' | 'person',
+			'entry' | 'log' | 'plan' | 'book' | 'media' | 'note' | 'event' | 'person',
 			string[]
 		> = {
-			habit: [],
 			entry: [],
 			log: [],
 			plan: [],
@@ -1739,7 +1732,7 @@ export async function processClientSyncRequest(
 
 		for (const t of tombstoneRows) {
 			const match = t.id.match(
-				/^del:(habit|entry|log|plan|book|media|note|event|person):(.+)$/
+				/^del:(entry|log|plan|book|media|note|event|person):(.+)$/
 			);
 			if (match && match[1] && match[2]) {
 				const kind = match[1] as keyof typeof deletedBuckets;
@@ -1760,7 +1753,6 @@ export async function processClientSyncRequest(
 			calendarEvents: changedCalendarEvents,
 			lifecycleEvents: changedLifecycleEvents,
 			people: changedPeople,
-			deletedHabitIds: deletedBuckets.habit,
 			deletedEntryDates: deletedBuckets.entry,
 			deletedLogIds: deletedBuckets.log,
 			deletedPlanIds: deletedBuckets.plan,
@@ -3282,7 +3274,7 @@ export function resolveHabitRuleSnapshot(
 		return habit.silverDesc?.trim() || habit.bronzeDesc?.trim() || null;
 	}
 	if (achievedTier === TIER_SCORES.BRONZE) {
-		return habit.bronzeDesc?.trim() || habit.emergencyMinDesc?.trim() || null;
+		return habit.bronzeDesc?.trim() || null;
 	}
 	return null;
 }
@@ -3621,10 +3613,8 @@ export function isHabitNodeCompleted(params: {
 	habitId: string;
 	habits: HabitEntity[];
 	logsByHabitId: Record<string, HabitLogItemInput>;
-	hasExistingEntry: boolean;
-	isDirty: boolean;
 }): boolean {
-	const { habitId, habits, logsByHabitId, hasExistingEntry, isDirty } = params;
+	const { habitId, habits, logsByHabitId } = params;
 	const habit = habits.find((h) => h.id === habitId);
 	if (!habit) return false;
 
@@ -3645,15 +3635,7 @@ export function isHabitNodeCompleted(params: {
 		return tier !== null && tier !== undefined;
 	}
 
-	const log = logsByHabitId[habit.id];
-	if (log?.achievedTier !== null && log?.achievedTier !== undefined) {
-		return true;
-	}
-	if (log?.actualMinutesPerInterval !== null && log?.actualMinutesPerInterval !== undefined) {
-		return hasExistingEntry || isDirty;
-	}
-	const actual = resolveEffectiveCadenceMinutes(log);
-	return actual > 0 && (hasExistingEntry || isDirty);
+	return false;
 }
 
 export function computeDailyCompletionStats(params: {
@@ -4446,7 +4428,7 @@ export function parseNoteContentSegments(text: string): NoteContentSegment[] {
 			!rawNumber.includes('.') &&
 			(/[a-zA-Z]/.test(prevChar) || /[a-zA-Z]/.test(nextChar));
 
-		if (!digitsOnly || isGluedShortAscii) {
+		if (isGluedShortAscii) {
 			pushText(rawNumber);
 		} else {
 			const copyValue = normalizeDigits(rawNumber).replace(/[-\s]/g, '');
@@ -4559,10 +4541,6 @@ function resolveDateRangeWindow(
 		}
 	}
 
-	if (minIso > maxIso) {
-		minIso = maxIso;
-	}
-
 	const endIso = maxIso;
 	let startIso = endIso;
 
@@ -4602,7 +4580,6 @@ function evaluateSingleLeafHabitDay(
 	log: AnalyticsRawLog | undefined
 ): {
 	outcome: DayHabitOutcome;
-	tierLevel: number | null;
 	score: number | null;
 	ruleSnapshot: string | null;
 	actualMinutes: number | null;
@@ -4618,7 +4595,6 @@ function evaluateSingleLeafHabitDay(
 		if (!plannedMinutes && actualMinutes <= 0) {
 			return {
 				outcome: 'unlogged',
-				tierLevel: null,
 				score: null,
 				ruleSnapshot: null,
 				actualMinutes: null,
@@ -4629,7 +4605,6 @@ function evaluateSingleLeafHabitDay(
 		if (actualMinutes <= 0) {
 			return {
 				outcome: 'failed',
-				tierLevel: 0,
 				score: 0,
 				ruleSnapshot: `۰ دقیقه از هدف ${plannedMinutes} دقیقه`,
 				actualMinutes: 0,
@@ -4644,7 +4619,6 @@ function evaluateSingleLeafHabitDay(
 		if (ratio >= CADENCE_SUCCESS_RATIOS.GOLD_THRESHOLD) {
 			return {
 				outcome: 'gold',
-				tierLevel: 3,
 				score: QUALITY_SCORES.GOLD,
 				ruleSnapshot: plannedMinutes
 					? `${actualMinutes} دقیقه (تکمیل هدف ${plannedMinutes} دقیقه)`
@@ -4656,7 +4630,6 @@ function evaluateSingleLeafHabitDay(
 		if (ratio >= CADENCE_SUCCESS_RATIOS.SILVER_THRESHOLD) {
 			return {
 				outcome: 'silver',
-				tierLevel: 2,
 				score,
 				ruleSnapshot: `${actualMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`,
 				actualMinutes,
@@ -4665,7 +4638,6 @@ function evaluateSingleLeafHabitDay(
 		}
 		return {
 			outcome: 'bronze',
-			tierLevel: 1,
 			score: Math.max(QUALITY_SCORES.CADENCE_MIN_NONZERO, score),
 			ruleSnapshot: `${actualMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`,
 			actualMinutes,
@@ -4676,7 +4648,6 @@ function evaluateSingleLeafHabitDay(
 	if (!log || log.achievedTier === null || log.achievedTier === undefined) {
 		return {
 			outcome: 'unlogged',
-			tierLevel: null,
 			score: null,
 			ruleSnapshot: null,
 			actualMinutes: null,
@@ -4692,7 +4663,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier === TIER_SCORES.SKIPPED) {
 		return {
 			outcome: 'skipped',
-			tierLevel: -1,
 			score: null,
 			ruleSnapshot: ruleSnapshot || 'امروز موقعیتش پیش نیامد',
 			actualMinutes: null,
@@ -4703,7 +4673,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier === TIER_SCORES.FAILED) {
 		return {
 			outcome: 'failed',
-			tierLevel: 0,
 			score: QUALITY_SCORES.FAILED,
 			ruleSnapshot: ruleSnapshot || 'انجام نشد',
 			actualMinutes: null,
@@ -4714,7 +4683,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier >= maxTier || tier === TIER_SCORES.GOLD) {
 		return {
 			outcome: 'gold',
-			tierLevel: 3,
 			score: QUALITY_SCORES.GOLD,
 			ruleSnapshot,
 			actualMinutes: null,
@@ -4725,7 +4693,6 @@ function evaluateSingleLeafHabitDay(
 	if (tier === TIER_SCORES.SILVER) {
 		return {
 			outcome: 'silver',
-			tierLevel: 2,
 			score: QUALITY_SCORES.SILVER,
 			ruleSnapshot,
 			actualMinutes: null,
@@ -4735,7 +4702,6 @@ function evaluateSingleLeafHabitDay(
 
 	return {
 		outcome: 'bronze',
-		tierLevel: 1,
 		score: maxTier === 1 ? QUALITY_SCORES.BRONZE_MAX : QUALITY_SCORES.BRONZE_DEFAULT,
 		ruleSnapshot,
 		actualMinutes: null,
@@ -4761,7 +4727,6 @@ function evaluateHabitDay(
 	if (loggedChildren.length === 0) {
 		return {
 			outcome: 'unlogged' as DayHabitOutcome,
-			tierLevel: null,
 			score: null,
 			ruleSnapshot: null,
 			actualMinutes: null,
@@ -4769,11 +4734,15 @@ function evaluateHabitDay(
 		};
 	}
 
-	const scoredChildren = loggedChildren.filter((r) => r.evalResult.score !== null);
-	if (scoredChildren.length === 0) {
+	const scoredChildrenScores: number[] = [];
+	for (const r of loggedChildren) {
+		if (r.evalResult.score !== null) {
+			scoredChildrenScores.push(r.evalResult.score);
+		}
+	}
+	if (scoredChildrenScores.length === 0) {
 		return {
 			outcome: 'skipped' as DayHabitOutcome,
-			tierLevel: -1,
 			score: null,
 			ruleSnapshot: 'موقعیت زیرطرح‌ها پیش نیامد',
 			actualMinutes: null,
@@ -4781,20 +4750,17 @@ function evaluateHabitDay(
 		};
 	}
 
-	const avgScore =
-		averageRounded(scoredChildren.map((r) => r.evalResult.score ?? 0)) ?? 0;
+	let scoreSum = 0;
+	for (const s of scoredChildrenScores) scoreSum += s;
+	const avgScore = Math.round(scoreSum / scoredChildrenScores.length);
 
 	let outcome: DayHabitOutcome = 'bronze';
-	let tierLevel = 1;
 	if (avgScore === 0) {
 		outcome = 'failed';
-		tierLevel = 0;
 	} else if (avgScore >= 88) {
 		outcome = 'gold';
-		tierLevel = 3;
 	} else if (avgScore >= 55) {
 		outcome = 'silver';
-		tierLevel = 2;
 	}
 
 	const summaryTokens = loggedChildren.map((r) => {
@@ -4813,7 +4779,6 @@ function evaluateHabitDay(
 
 	return {
 		outcome,
-		tierLevel,
 		score: avgScore,
 		ruleSnapshot: summaryTokens.join(' • '),
 		actualMinutes: null,
@@ -4863,13 +4828,10 @@ function buildEvolutionTimelineForHabit(
 
 		return {
 			id: ev.id,
-			habitId: ev.habitId,
-			habitTitle: ev.habitTitleSnapshot,
 			eventType: ev.eventType,
 			eventTypeLabel: meta.label,
 			badgeClasses: meta.badgeClasses,
 			effectiveDateIso: ev.effectiveDateIso,
-			jalaliSlash: isoToJalaliSlash(ev.effectiveDateIso),
 			humanDateLabel: human.fullLabel,
 			summary: ev.summary,
 			reason: ev.reason,
@@ -4882,9 +4844,9 @@ function buildEvolutionTimelineForHabit(
 }
 
 function computeStreaksFromSeries(
-	series: ReadonlyArray<{ dateIso?: string; outcome: DayHabitOutcome }>,
-	habitCreatedDateIso?: string,
-	graceEndDateIso?: string
+	series: ReadonlyArray<{ dateIso: string; outcome: DayHabitOutcome }>,
+	habitCreatedDateIso: string,
+	graceEndDateIso: string
 ): {
 	currentStreak: number;
 	bestStreak: number;
@@ -4910,7 +4872,7 @@ function computeStreaksFromSeries(
 		} else if (pt.outcome === 'unlogged') {
 			if (isFinalDay) continue;
 			const isAfterCreation =
-				!habitCreatedDateIso || !pt.dateIso || pt.dateIso >= habitCreatedDateIso;
+				!habitCreatedDateIso || pt.dateIso >= habitCreatedDateIso;
 			if (hasSeenFirstActivity && isAfterCreation) {
 				running = 0;
 			}
@@ -4929,7 +4891,7 @@ function computeStreaksFromSeries(
 		} else if (
 			out === 'unlogged' &&
 			i === series.length - 1 &&
-			(!graceEndDateIso || pt.dateIso === graceEndDateIso)
+			pt.dateIso === graceEndDateIso
 		) {
 			continue;
 		} else {
@@ -5004,15 +4966,12 @@ export function buildFullAnalyticsReport(params: {
 
 	const selectableHabits = sortedHabits.map((h) => {
 		const parent = h.parentId ? habitById.get(h.parentId) : null;
-		const children = childrenByParentId.get(h.id) ?? [];
-		const isComposite = children.length > 0;
 		const prefix = parent ? `↳ ${h.title}` : h.title;
 		const suffix = h.status === 'archived' ? ' (بایگانی)' : '';
 
 		return {
 			habit: h,
 			parentTitle: parent?.title ?? null,
-			isComposite,
 			displayLabel: `${prefix}${suffix}`
 		};
 	});
@@ -5021,6 +4980,8 @@ export function buildFullAnalyticsReport(params: {
 		(selectedHabitId ? habitById.get(selectedHabitId) : null) ??
 		selectableHabits[0]?.habit ??
 		null;
+
+	const streaksByHabitId = new Map<string, { currentStreak: number; bestStreak: number }>();
 
 	const comparisonRows: HabitComparisonRow[] = selectableHabits.map((item) => {
 		const h = item.habit;
@@ -5061,16 +5022,16 @@ export function buildFullAnalyticsReport(params: {
 						dateIso: dIso,
 						outcome: evaluateHabitDay(h, children, logsByDate.get(dIso)).outcome
 					}));
-		const { currentStreak, bestStreak } = computeStreaksFromSeries(
+		const streaks = computeStreaksFromSeries(
 			fullStreakSeries,
 			habitCreatedDateIso,
 			fallbackEndDateIso
 		);
+		streaksByHabitId.set(h.id, streaks);
 
 		return {
 			habit: h,
 			parentTitle: item.parentTitle,
-			isComposite: item.isComposite,
 			loggedDays,
 			successDays,
 			goldCount,
@@ -5079,8 +5040,7 @@ export function buildFullAnalyticsReport(params: {
 			failedCount,
 			consistencyRate,
 			avgQualityScore,
-			currentStreak,
-			bestStreak,
+			currentStreak: streaks.currentStreak,
 			trendDelta
 		};
 	});
@@ -5115,7 +5075,6 @@ export function buildFullAnalyticsReport(params: {
 		for (const dIso of dateList) {
 			const dt = isoToDate(dIso);
 			const weekdayIndex = getPersianWeekdayIndex(dt);
-			const weekdayLabel = JALALI_GRID_WEEKDAYS[weekdayIndex] ?? '';
 			const human = formatJalaliHuman(dIso, todayIso);
 
 			const evalRes = evaluateHabitDay(
@@ -5144,10 +5103,8 @@ export function buildFullAnalyticsReport(params: {
 				dateIso: dIso,
 				jalaliSlash: isoToJalaliSlash(dIso),
 				humanLabel: human.fullLabel,
-				weekdayLabel,
 				weekdayIndex,
 				outcome: evalRes.outcome,
-				tierLevel: evalRes.tierLevel,
 				score: evalRes.score,
 				rollingAvgScore,
 				ruleSnapshot: evalRes.ruleSnapshot,
@@ -5168,19 +5125,10 @@ export function buildFullAnalyticsReport(params: {
 
 		const trendDelta = computeTrendDelta(recentValidScores, avgQualityScore);
 
-		const targetComparisonRow = comparisonRows.find(
-			(r) => r.habit.id === targetHabit.id
-		);
-		const { currentStreak, bestStreak } = targetComparisonRow
-			? {
-					currentStreak: targetComparisonRow.currentStreak,
-					bestStreak: targetComparisonRow.bestStreak
-				}
-			: computeStreaksFromSeries(
-					dailySeries,
-					targetHabit.createdAtIso ? targetHabit.createdAtIso.slice(0, 10) : '',
-					fallbackEndDateIso
-				);
+		const { currentStreak, bestStreak } = streaksByHabitId.get(targetHabit.id) ?? {
+			currentStreak: 0,
+			bestStreak: 0
+		};
 
 		const weekdayBuckets = Array.from({ length: 7 }, (_, idx) => ({
 			weekdayIndex: idx,
@@ -5207,8 +5155,6 @@ export function buildFullAnalyticsReport(params: {
 		selectedHabitReport = {
 			habit: targetHabit,
 			parentTitle: parent?.title ?? null,
-			isComposite: children.length > 0,
-			childrenCount: children.length,
 			maxSupportedTier: getMaxSupportedTier(targetHabit),
 			dailySeries,
 			loggedDaysCount,
@@ -5512,7 +5458,6 @@ export function assembleJalaliMonthArchive(params: {
 			jy: cell.jy,
 			jm: cell.jm,
 			jd: cell.jd,
-			weekdayLabel: cell.weekdayLabel,
 			fullHumanLabel: human.fullLabel,
 			isToday: cell.isToday,
 			entry: rawEntry
@@ -5537,9 +5482,6 @@ export function assembleJalaliMonthArchive(params: {
 				: (jalaliPartsToIso({ jy, jm, jd: 1 }) ?? startIso);
 
 	return {
-		year: grid.year,
-		month: grid.month,
-		monthName: grid.monthName,
 		leadingEmptyCells: grid.leadingEmptyCells,
 		selectedIso: defaultSelectedIso,
 		days: daysAggregate
@@ -5797,17 +5739,7 @@ export function useClientAuth() {
 		serverAuthenticated?: boolean,
 		serverPasswordConfigured?: boolean
 	): Promise<{ isAuthenticated: boolean; isPasswordConfigured: boolean }> {
-		if (!import.meta.client) {
-			return {
-				isAuthenticated: serverAuthenticated ?? false,
-				isPasswordConfigured: serverPasswordConfigured ?? true
-			};
-		}
-
 		const db = getAppDatabase();
-		if (!db) {
-			return { isAuthenticated: false, isPasswordConfigured: true };
-		}
 
 		let record: LocalAuthRecord | undefined;
 		try {
@@ -5885,10 +5817,9 @@ export function useClientAuth() {
 	}
 
 	async function saveClientCredential(password: string): Promise<void> {
-		if (!import.meta.client || !password.trim()) return;
+		if (!password.trim()) return;
 
 		const db = getAppDatabase();
-		if (!db) return;
 
 		const salt = generateRandomSalt(CLIENT_SALT_BYTES);
 		const saltHex = bytesToHex(salt);
@@ -5917,10 +5848,7 @@ export function useClientAuth() {
 	}
 
 	async function loginOffline(password: string): Promise<{ success: boolean; error?: string }> {
-		if (!import.meta.client) return { success: false, error: 'محیط نامعتبر است' };
-
 		const db = getAppDatabase();
-		if (!db) return { success: false, error: 'پایگاه داده در دسترس نیست' };
 
 		const record = await db.localAuth.get('auth:session');
 		if (!record || !record.passwordVerifierHex || !record.verifierSaltHex) {
@@ -5960,7 +5888,7 @@ export function useClientAuth() {
 	}
 
 	function verifyServerStatusInBackground(): void {
-		if (!import.meta.client || !navigator.onLine || hasVerifiedWithServerInSession || backgroundCheckInFlight) {
+		if (!navigator.onLine || hasVerifiedWithServerInSession || backgroundCheckInFlight) {
 			return;
 		}
 		backgroundCheckInFlight = true;
@@ -5984,13 +5912,6 @@ export function useClientAuth() {
 		isAuthenticated: boolean;
 		isPasswordConfigured: boolean;
 	}> {
-		if (!import.meta.client) {
-			return {
-				isAuthenticated: isAuthenticated.value,
-				isPasswordConfigured: isPasswordConfigured.value
-			};
-		}
-
 		if (isInitialized.value) {
 			verifyServerStatusInBackground();
 			return {
@@ -6023,19 +5944,14 @@ export function useClientAuth() {
 	}
 
 	async function logout(): Promise<void> {
-		if (!import.meta.client) return;
 		const db = getAppDatabase();
-		if (db) {
-			await db.localAuth.delete('auth:session');
-		}
+		await db.localAuth.delete('auth:session');
 		isAuthenticated.value = false;
 		hasVerifiedWithServerInSession = false;
 	}
 
 	return {
-		isAuthenticated,
 		isPasswordConfigured,
-		isInitialized,
 		checkAuth,
 		ensureSessionChecked,
 		saveClientCredential,
@@ -6071,37 +5987,34 @@ function handleVisibilityOrFocus() {
 }
 
 export function useLiveTodayIso() {
-	if (import.meta.client) {
-		refreshTodayIso();
+	refreshTodayIso();
 
-		onMounted(() => {
-			activeSubscribers++;
-			if (activeSubscribers === 1) {
-				window.addEventListener('focus', handleVisibilityOrFocus);
-				document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-				checkIntervalId = setInterval(refreshTodayIso, 30 * 1000);
-			}
-		});
+	onMounted(() => {
+		activeSubscribers++;
+		if (activeSubscribers === 1) {
+			window.addEventListener('focus', handleVisibilityOrFocus);
+			document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+			checkIntervalId = setInterval(refreshTodayIso, 30 * 1000);
+		}
+	});
 
-		onScopeDispose(() => {
-			activeSubscribers = Math.max(0, activeSubscribers - 1);
-			if (activeSubscribers === 0) {
-				window.removeEventListener('focus', handleVisibilityOrFocus);
-				document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-				if (checkIntervalId) {
-					clearInterval(checkIntervalId);
-					checkIntervalId = null;
-				}
+	onScopeDispose(() => {
+		activeSubscribers = Math.max(0, activeSubscribers - 1);
+		if (activeSubscribers === 0) {
+			window.removeEventListener('focus', handleVisibilityOrFocus);
+			document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+			if (checkIntervalId) {
+				clearInterval(checkIntervalId);
+				checkIntervalId = null;
 			}
-		});
-	}
+		}
+	});
 
 	const yesterdayIso = computed(() => shiftIsoDate(liveTodayIso.value, -1));
 
 	return {
 		todayIso: readonly(liveTodayIso),
-		yesterdayIso,
-		refreshTodayIso
+		yesterdayIso
 	};
 }
 
@@ -7212,11 +7125,6 @@ export function useLocalRepository() {
 						.map((m) => m.payload.targetDateIso)
 				);
 
-				if (delta.deletedHabitIds.length > 0) {
-					await db.habits.bulkDelete(
-						delta.deletedHabitIds.filter((id) => !pendingIds.has(`habit:${id}`))
-					);
-				}
 				if (delta.deletedEntryDates.length > 0) {
 					await db.dailyEntries.bulkDelete(
 						delta.deletedEntryDates.filter((dateIso) => !pendingDailyDates.has(dateIso))
@@ -7380,15 +7288,12 @@ export function useSyncEngine() {
 	const clientAuth = useClientAuth();
 
 	async function refreshPendingCount(): Promise<number> {
-		if (!import.meta.client) return 0;
 		const list = await localRepo.getPendingMutations();
 		pendingCount.value = list.length;
 		return list.length;
 	}
 
 	async function syncNow(options?: { checkRemoteUpdates?: boolean }): Promise<boolean> {
-		if (!import.meta.client) return false;
-
 		if (!navigator.onLine) {
 			isOnline.value = false;
 			status.value = 'offline';
@@ -7422,10 +7327,6 @@ export function useSyncEngine() {
 					mutations
 				}
 			});
-
-			if (!data.ok) {
-				throw new Error(data.error || 'خطا در پردازش بسته همگام‌سازی');
-			}
 
 			const appliedSet = new Set(data.appliedMutationIds);
 			const appliedSnapshots = mutations
@@ -7499,7 +7400,6 @@ export function useSyncEngine() {
 	}
 
 	async function notifyLocalMutationStaged(): Promise<void> {
-		if (!import.meta.client) return;
 		await refreshPendingCount();
 
 		if (!navigator.onLine) {
@@ -7520,7 +7420,7 @@ export function useSyncEngine() {
 	}
 
 	function init() {
-		if (!import.meta.client || isInitialized) return;
+		if (isInitialized) return;
 		isInitialized = true;
 		isOnline.value = navigator.onLine;
 
@@ -7665,16 +7565,12 @@ export function useDexieLiveQuery<T>(
 	initialValue: T,
 	deps?: WatchSource | WatchSource[]
 ): DexieLiveQueryRef<T> {
-	const isLoading = ref<boolean>(Boolean(import.meta.client));
+	const isLoading = ref(true);
 	const error = ref<string | null>(null);
 	const state = Object.assign(shallowRef<T>(initialValue), {
 		isLoading,
 		error
 	}) as DexieLiveQueryRef<T>;
-
-	if (!import.meta.client) {
-		return state;
-	}
 
 	let subscription: Subscription | null = null;
 	let hasResolvedInitial = false;
@@ -8102,18 +7998,14 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		}
 	}
 
-	if (import.meta.client) {
-		onMounted(() => {
-			document.addEventListener('visibilitychange', handlePageVisibilityFlush);
-			window.addEventListener('pagehide', handlePageHideFlush);
-		});
-	}
+	onMounted(() => {
+		document.addEventListener('visibilitychange', handlePageVisibilityFlush);
+		window.addEventListener('pagehide', handlePageHideFlush);
+	});
 
 	onScopeDispose(() => {
-		if (import.meta.client) {
-			document.removeEventListener('visibilitychange', handlePageVisibilityFlush);
-			window.removeEventListener('pagehide', handlePageHideFlush);
-		}
+		document.removeEventListener('visibilitychange', handlePageVisibilityFlush);
+		window.removeEventListener('pagehide', handlePageHideFlush);
 		if (pendingSavePayload || isDirty.value) {
 			void flushPendingSave(isDirty.value);
 		}
@@ -8356,9 +8248,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		return isHabitNodeCompleted({
 			habitId,
 			habits: effectiveHabitsForDate.value,
-			logsByHabitId: logsByHabitId.value,
-			hasExistingEntry: Boolean(entry.value),
-			isDirty: isDirty.value
+			logsByHabitId: logsByHabitId.value
 		});
 	}
 
@@ -8377,9 +8267,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		people,
 		tree,
 		schedulableCadenceHabits,
-		applicableHabits,
 		journalText,
-		manualDayStatus,
 		logsByHabitId,
 		tomorrowPlansByHabitId,
 		tomorrowIso,
@@ -8389,7 +8277,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		completionStats,
 		markAllOptimalFiveSecond,
 		setTierScore,
-		setTierExplicit,
 		setParentGroupAllTier,
 		clearDay,
 		updateCadenceActual,
@@ -8415,10 +8302,8 @@ import { getAppDatabase } from '~/composables/useAppDatabase';
 const isDark = ref(true);
 
 async function loadThemeFromDb(): Promise<boolean> {
-	if (!import.meta.client) return true;
 	try {
 		const db = getAppDatabase();
-		if (!db) return true;
 		const record = await db.syncMeta.get('meta:theme');
 		if (record?.themeMode === 'light') return false;
 		if (record?.themeMode === 'dark') return true;
@@ -8429,10 +8314,8 @@ async function loadThemeFromDb(): Promise<boolean> {
 }
 
 async function persistThemeToDb(dark: boolean): Promise<void> {
-	if (!import.meta.client) return;
 	try {
 		const db = getAppDatabase();
-		if (!db) return;
 		await db.syncMeta.put({
 			key: 'meta:theme',
 			knownServerVersionIso: null,
@@ -8446,7 +8329,6 @@ async function persistThemeToDb(dark: boolean): Promise<void> {
 
 export function useTheme() {
 	function applyToDom() {
-		if (!import.meta.client) return;
 		const root = document.documentElement;
 		root.classList.toggle('dark', isDark.value);
 		root.style.colorScheme = isDark.value ? 'dark' : 'light';
@@ -8457,7 +8339,6 @@ export function useTheme() {
 	}
 
 	function init() {
-		if (!import.meta.client) return;
 		applyToDom();
 		void loadThemeFromDb().then((storedDark) => {
 			isDark.value = storedDark;
@@ -8468,10 +8349,6 @@ export function useTheme() {
 	function setTheme(dark: boolean) {
 		if (isDark.value === dark) {
 			applyToDom();
-			return;
-		}
-		if (!import.meta.client) {
-			isDark.value = dark;
 			return;
 		}
 
@@ -8858,12 +8735,8 @@ export class PersonalOSDatabase extends Dexie {
 }
 
 let dbInstance: PersonalOSDatabase | null = null;
-let ssrNoopDbProxy: PersonalOSDatabase | null = null;
 
-export function getAppDatabase(): PersonalOSDatabase | null {
-	if (!import.meta.client) {
-		return null;
-	}
+export function getAppDatabase(): PersonalOSDatabase {
 	if (!dbInstance) {
 		dbInstance = new PersonalOSDatabase();
 	}
@@ -8871,17 +8744,7 @@ export function getAppDatabase(): PersonalOSDatabase | null {
 }
 
 export function useAppDatabase(): PersonalOSDatabase {
-	const db = getAppDatabase();
-	if (db) {
-		return db;
-	}
-	if (!ssrNoopDbProxy) {
-		const recursiveNoop: unknown = new Proxy(() => Promise.resolve([]), {
-			get: () => recursiveNoop
-		});
-		ssrNoopDbProxy = recursiveNoop as PersonalOSDatabase;
-	}
-	return ssrNoopDbProxy;
+	return getAppDatabase();
 }
 
 
@@ -9167,7 +9030,6 @@ import type { SelectOption } from '~/domain/schemas';
 
 interface Props {
 	id?: string;
-	name?: string;
 	modelValue: string | number;
 	options: ReadonlyArray<SelectOption>;
 	disabled?: boolean;
@@ -9177,7 +9039,6 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
 	id: undefined,
-	name: undefined,
 	disabled: false,
 	triggerClass: '',
 	placeholder: 'انتخاب کنید'
@@ -9255,8 +9116,6 @@ onUnmounted(() => {
 
 <template>
 	<div ref="containerEl" class="relative w-full">
-		<input v-if="name" type="hidden" :name="name" :value="modelValue" />
-
 		<button
 			:id="id"
 			type="button"
@@ -18236,6 +18095,14 @@ export function toPersianDigits(input: string | number): string {
 
 export function normalizeTimestampIso(
 	iso: string | null | undefined,
+	fallbackIso: string
+): string;
+export function normalizeTimestampIso(
+	iso: string | null | undefined,
+	fallbackIso?: string
+): string | null;
+export function normalizeTimestampIso(
+	iso: string | null | undefined,
 	fallbackIso?: string
 ): string | null {
 	if (!iso) return fallbackIso ?? null;
@@ -18995,10 +18862,6 @@ export const ChangePasswordInputSchema = z
 		path: ['confirmNewPassword']
 	});
 
-export const DemoSeedActionSchema = z.object({
-	action: z.enum(['inject', 'remove'])
-});
-
 export const BackupRestoreModeSchema = z.enum(['merge', 'replace']);
 export type BackupRestoreMode = z.infer<typeof BackupRestoreModeSchema>;
 
@@ -19138,7 +19001,6 @@ export const LocalWorkspaceSnapshotSchema = z.object({
 export type LocalWorkspaceSnapshot = z.infer<typeof LocalWorkspaceSnapshotSchema>;
 
 export const DeltaWorkspaceSnapshotSchema = LocalWorkspaceSnapshotSchema.extend({
-	deletedHabitIds: z.array(z.string()).default([]),
 	deletedEntryDates: z.array(z.string()).default([]),
 	deletedLogIds: z.array(z.string()).default([]),
 	deletedPlanIds: z.array(z.string()).default([]),
@@ -19152,7 +19014,6 @@ export type DeltaWorkspaceSnapshot = z.infer<typeof DeltaWorkspaceSnapshotSchema
 
 export const ServerSyncResponseSchema = z.object({
 	ok: z.boolean(),
-	error: z.string().optional(),
 	appliedMutationIds: z.array(z.string()),
 	serverVersionIso: z.string(),
 	serverTimeIso: z.string(),
@@ -19200,7 +19061,6 @@ export const CalendarDayAggregateSchema = z.object({
 	jy: z.number(),
 	jm: z.number(),
 	jd: z.number(),
-	weekdayLabel: z.string(),
 	fullHumanLabel: z.string(),
 	isToday: z.boolean(),
 	entry: z
@@ -19367,13 +19227,10 @@ export type HabitRuleDiffItem = z.infer<typeof HabitRuleDiffItemSchema>;
 
 export const HabitEvolutionItemSchema = z.object({
 	id: z.string(),
-	habitId: z.string().nullable(),
-	habitTitle: z.string(),
 	eventType: LifecycleEventTypeSchema,
 	eventTypeLabel: z.string(),
 	badgeClasses: z.string(),
 	effectiveDateIso: z.string(),
-	jalaliSlash: z.string(),
 	humanDateLabel: z.string(),
 	summary: z.string(),
 	reason: z.string().nullable(),
@@ -19388,10 +19245,8 @@ export const HabitDailyPointSchema = z.object({
 	dateIso: z.string(),
 	jalaliSlash: z.string(),
 	humanLabel: z.string(),
-	weekdayLabel: z.string(),
 	weekdayIndex: z.number(),
 	outcome: DayHabitOutcomeSchema,
-	tierLevel: z.number().nullable(),
 	score: z.number().nullable(),
 	rollingAvgScore: z.number().nullable(),
 	ruleSnapshot: z.string().nullable(),
@@ -19425,7 +19280,6 @@ export type WeekdayPerformanceStat = z.infer<typeof WeekdayPerformanceStatSchema
 export const HabitComparisonRowSchema = z.object({
 	habit: HabitEntitySchema,
 	parentTitle: z.string().nullable(),
-	isComposite: z.boolean(),
 	loggedDays: z.number(),
 	successDays: z.number(),
 	goldCount: z.number(),
@@ -19435,7 +19289,6 @@ export const HabitComparisonRowSchema = z.object({
 	consistencyRate: z.number(),
 	avgQualityScore: z.number(),
 	currentStreak: z.number(),
-	bestStreak: z.number(),
 	trendDelta: z.number()
 });
 export type HabitComparisonRow = z.infer<typeof HabitComparisonRowSchema>;
@@ -19443,8 +19296,6 @@ export type HabitComparisonRow = z.infer<typeof HabitComparisonRowSchema>;
 export const SelectedHabitAnalyticsSchema = z.object({
 	habit: HabitEntitySchema,
 	parentTitle: z.string().nullable(),
-	isComposite: z.boolean(),
-	childrenCount: z.number(),
 	maxSupportedTier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
 	dailySeries: z.array(HabitDailyPointSchema),
 	loggedDaysCount: z.number(),
@@ -19473,7 +19324,6 @@ export const FullAnalyticsReportSchema = z.object({
 		z.object({
 			habit: HabitEntitySchema,
 			parentTitle: z.string().nullable(),
-			isComposite: z.boolean(),
 			displayLabel: z.string()
 		})
 	),
@@ -19658,8 +19508,6 @@ import { defineNuxtRouteMiddleware, navigateTo } from '#app';
 import { useClientAuth } from '~/composables/useClientAuth';
 
 export default defineNuxtRouteMiddleware(async (to) => {
-	if (import.meta.server) return;
-
 	const clientAuth = useClientAuth();
 	const isLoginPage = to.path.startsWith('/login');
 

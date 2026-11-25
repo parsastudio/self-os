@@ -1,8 +1,33 @@
+import type { Table } from 'dexie';
 import type { PersonalOSDatabase } from '~/composables/useAppDatabase';
 import { computeSmartBackupMerge } from '~/core/backup-merger';
 import { getTodayIso, isoToJalaliSlash } from '~/domain/calendar';
-import type { DatabaseBackupPayload, SyncOutboxMutation } from '~/domain/schemas';
+import type {
+	DatabaseBackupPayload,
+	SyncOutboxMutation,
+	UpsertEntityMutationPayload
+} from '~/domain/schemas';
 import { clonePlain } from '~/utils/clone';
+
+async function putAndStageStandardCollection<T extends { id: string }>(params: {
+	outboxPrefix: string;
+	table: Table<T, string>;
+	items: T[];
+	nowIso: string;
+	stagedMutations: SyncOutboxMutation[];
+	toPayload: (record: T) => UpsertEntityMutationPayload;
+}): Promise<void> {
+	if (params.items.length === 0) return;
+	await params.table.bulkPut(params.items);
+	for (const item of params.items) {
+		params.stagedMutations.push({
+			id: `${params.outboxPrefix}:${item.id}`,
+			kind: 'UPSERT_ENTITY',
+			queuedAtIso: params.nowIso,
+			payload: params.toPayload(clonePlain(item))
+		});
+	}
+}
 
 export function createLocalBackupOperations(
 	db: PersonalOSDatabase,
@@ -176,50 +201,38 @@ export function createLocalBackupOperations(
 						});
 					}
 				}
-				if (merged.booksToUpsert.length > 0) {
-					await db.books.bulkPut(merged.booksToUpsert);
-					for (const b of merged.booksToUpsert) {
-						stagedMutations.push({
-							id: `book:${b.id}`,
-							kind: 'UPSERT_BOOK',
-							queuedAtIso: nowIso,
-							payload: clonePlain(b)
-						});
-					}
-				}
-				if (merged.mediaToUpsert.length > 0) {
-					await db.media.bulkPut(merged.mediaToUpsert);
-					for (const m of merged.mediaToUpsert) {
-						stagedMutations.push({
-							id: `media:${m.id}`,
-							kind: 'UPSERT_MEDIA',
-							queuedAtIso: nowIso,
-							payload: clonePlain(m)
-						});
-					}
-				}
-				if (merged.notesToUpsert.length > 0) {
-					await db.notes.bulkPut(merged.notesToUpsert);
-					for (const n of merged.notesToUpsert) {
-						stagedMutations.push({
-							id: `note:${n.id}`,
-							kind: 'UPSERT_NOTE',
-							queuedAtIso: nowIso,
-							payload: clonePlain(n)
-						});
-					}
-				}
-				if (merged.calendarEventsToUpsert.length > 0) {
-					await db.calendarEvents.bulkPut(merged.calendarEventsToUpsert);
-					for (const ev of merged.calendarEventsToUpsert) {
-						stagedMutations.push({
-							id: `event:${ev.id}`,
-							kind: 'UPSERT_CALENDAR_EVENT',
-							queuedAtIso: nowIso,
-							payload: clonePlain(ev)
-						});
-					}
-				}
+				await putAndStageStandardCollection({
+					outboxPrefix: 'book',
+					table: db.books,
+					items: merged.booksToUpsert,
+					nowIso,
+					stagedMutations,
+					toPayload: (record) => ({ collection: 'books', record })
+				});
+				await putAndStageStandardCollection({
+					outboxPrefix: 'media',
+					table: db.media,
+					items: merged.mediaToUpsert,
+					nowIso,
+					stagedMutations,
+					toPayload: (record) => ({ collection: 'media', record })
+				});
+				await putAndStageStandardCollection({
+					outboxPrefix: 'note',
+					table: db.notes,
+					items: merged.notesToUpsert,
+					nowIso,
+					stagedMutations,
+					toPayload: (record) => ({ collection: 'notes', record })
+				});
+				await putAndStageStandardCollection({
+					outboxPrefix: 'event',
+					table: db.calendarEvents,
+					items: merged.calendarEventsToUpsert,
+					nowIso,
+					stagedMutations,
+					toPayload: (record) => ({ collection: 'calendarEvents', record })
+				});
 				if (merged.lifecycleEventsToUpsert.length > 0) {
 					await db.lifecycleEvents.bulkPut(merged.lifecycleEventsToUpsert);
 					for (const lc of merged.lifecycleEventsToUpsert) {
@@ -231,17 +244,14 @@ export function createLocalBackupOperations(
 						});
 					}
 				}
-				if (merged.peopleToUpsert.length > 0) {
-					await db.people.bulkPut(merged.peopleToUpsert);
-					for (const person of merged.peopleToUpsert) {
-						stagedMutations.push({
-							id: `person:${person.id}`,
-							kind: 'UPSERT_PERSON',
-							queuedAtIso: nowIso,
-							payload: clonePlain(person)
-						});
-					}
-				}
+				await putAndStageStandardCollection({
+					outboxPrefix: 'person',
+					table: db.people,
+					items: merged.peopleToUpsert,
+					nowIso,
+					stagedMutations,
+					toPayload: (record) => ({ collection: 'people', record })
+				});
 				if (!skipOutboxStaging && stagedMutations.length > 0) {
 					await db.syncOutbox.bulkPut(stagedMutations);
 				}
