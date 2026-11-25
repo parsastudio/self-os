@@ -10,9 +10,11 @@ import {
 	getApplicableHabitsForDate,
 	getMaxSupportedTier,
 	isHabitNodeCompleted,
+	resolveDailyHabitLogSnapshot,
 	resolveEffectiveCadenceMinutes,
 	resolveHabitRuleSnapshot,
-	resolveHistoricalHabitForDate
+	resolveHistoricalHabitForDate,
+	shouldDiscardHabitLogItem
 } from '~/core/habit-engine';
 import { shiftIsoDate } from '~/domain/calendar';
 import { CADENCE_SUCCESS_RATIOS, TIER_SCORES } from '~/domain/constants';
@@ -21,7 +23,7 @@ import type {
 	DayStatusColor,
 	HabitEntity,
 	HabitLogItemInput,
-	SaveDailyEntryInput
+	LocalHabitLogRecord
 } from '~/domain/schemas';
 
 export function useDailyTracker(dateIso: Ref<string>) {
@@ -41,109 +43,112 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	const people = useDexieLiveQuery(() => db.people.toArray(), []);
 	const lifecycleEvents = useDexieLiveQuery(() => db.lifecycleEvents.toArray(), []);
 
-	// Local mutable state
-	const journalText = ref('');
-	const manualDayStatus = ref<DayStatusColor | null>(null);
-	const logsByHabitId = ref<Record<string, HabitLogItemInput>>({});
-	const tomorrowPlansByHabitId = ref<Record<string, CadenceDraftItem>>({});
-	const saveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
-	const isDirty = ref(false);
+	// Reactive Dexie-derived views (Single Source of Truth)
+	const dayPlanByHabitId = computed(() => new Map(dayCadencePlans.value.map((p) => [p.habitId, p])));
+	const existingLogByHabitId = computed(() => new Map(logs.value.map((l) => [l.habitId, l])));
 
-	let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
-	let pendingSavePayload: SaveDailyEntryInput | null = null;
-	let activeDraftDateIso = dateIso.value;
+	const logsByHabitId = computed<Record<string, HabitLogItemInput>>(() => {
+		const nextLogs: Record<string, HabitLogItemInput> = {};
+
+		for (const habit of habits.value) {
+			const existing = existingLogByHabitId.value.get(habit.id);
+			const dayPlan = dayPlanByHabitId.value.get(habit.id);
+			const hasDefaultCadenceTarget =
+				habit.trackingMode === 'interval_cadence' &&
+				habit.status === 'active' &&
+				habit.defaultMinutesPerInterval > 0 &&
+				(!entry.value || habit.createdAtIso.slice(0, 10) <= dateIso.value);
+			const plannedMinutes =
+				dayPlan !== undefined
+					? dayPlan.plannedMinutesPerInterval
+					: hasDefaultCadenceTarget
+						? habit.defaultMinutesPerInterval
+						: null;
+
+			if (existing) {
+				nextLogs[habit.id] = {
+					habitId: habit.id,
+					habitTitleSnapshot: existing.habitTitleSnapshot ?? habit.title,
+					achievedTier: existing.achievedTier,
+					achievedRuleSnapshot:
+						existing.achievedRuleSnapshot ??
+						resolveHabitRuleSnapshot(habit, existing.achievedTier),
+					actualMinutesPerInterval: existing.actualMinutesPerInterval,
+					plannedMinutesSnapshot: existing.plannedMinutesSnapshot ?? plannedMinutes,
+					updatedAtIso: existing.updatedAtIso ?? null
+				};
+			} else {
+				nextLogs[habit.id] = {
+					habitId: habit.id,
+					habitTitleSnapshot: habit.title,
+					achievedTier: null,
+					achievedRuleSnapshot: null,
+					actualMinutesPerInterval: null,
+					plannedMinutesSnapshot: plannedMinutes,
+					updatedAtIso: null
+				};
+			}
+		}
+
+		return nextLogs;
+	});
+
+	// Lightweight draft state strictly for debounced journal text & tomorrow plan form
+	const journalText = ref('');
+	const isJournalDirty = ref(false);
+	const saveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+	const tomorrowPlansByHabitId = ref<Record<string, CadenceDraftItem>>({});
+
+	let journalAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let pendingJournalSnapshot: {
+		dateIso: string;
+		dayStatus: DayStatusColor;
+		journalText: string;
+	} | null = null;
+	let activeJournalDateIso = dateIso.value;
 	let inFlightSavePromise: Promise<void> | null = null;
 
-	const isHydratingQueries = computed(
-		() =>
-			entry.isLoading.value ||
-			logs.isLoading.value ||
-			dayCadencePlans.isLoading.value ||
-			tomorrowCadencePlans.isLoading.value
-	);
-
-	// Synchronize when date or database queries change
 	watch(
-		[dateIso, entry, logs, habits, dayCadencePlans, tomorrowCadencePlans, isHydratingQueries],
+		[dateIso, () => entry.value?.journalText, () => entry.isLoading.value],
 		() => {
-			const isDateChanged = activeDraftDateIso !== dateIso.value;
+			const isDateChanged = activeJournalDateIso !== dateIso.value;
 			if (isDateChanged) {
-				if (isDirty.value && !pendingSavePayload) {
-					pendingSavePayload = {
-						dateIso: activeDraftDateIso,
-						dayStatus: computedDayStatus.value,
-						journalText: journalText.value.trim() ? journalText.value : null,
-						updatedAtIso: new Date().toISOString(),
-						logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
+				if (isJournalDirty.value && !pendingJournalSnapshot) {
+					pendingJournalSnapshot = {
+						dateIso: activeJournalDateIso,
+						dayStatus: entry.value?.dayStatus ?? 'failed',
+						journalText: journalText.value
 					};
 				}
-				if (pendingSavePayload) {
+				if (pendingJournalSnapshot) {
 					void flushPendingSave();
 				}
-				activeDraftDateIso = dateIso.value;
-			}
-			if (isHydratingQueries.value) {
+				activeJournalDateIso = dateIso.value;
+				isJournalDirty.value = false;
+				journalText.value = entry.isLoading.value ? '' : (entry.value?.journalText ?? '');
+				saveState.value = entry.value ? 'saved' : 'idle';
 				return;
 			}
-			if (pendingSavePayload && pendingSavePayload.dateIso === dateIso.value) {
+
+			if (entry.isLoading.value || isJournalDirty.value) {
 				return;
 			}
 
 			const incomingJournal = entry.value?.journalText ?? '';
-
-			if (
-				isDateChanged ||
-				(!isDirty.value && journalText.value.trim() !== incomingJournal.trim())
-			) {
+			if (journalText.value !== incomingJournal) {
 				journalText.value = incomingJournal;
 			}
-
-			manualDayStatus.value = null;
-
-			const dayPlanMap = new Map(dayCadencePlans.value.map((p) => [p.habitId, p]));
-			const existingLogMap = new Map(logs.value.map((l) => [l.habitId, l]));
-			const nextLogs: Record<string, HabitLogItemInput> = {};
-
-			for (const habit of habits.value) {
-				const existing = existingLogMap.get(habit.id);
-				const dayPlan = dayPlanMap.get(habit.id);
-				const hasDefaultCadenceTarget =
-					habit.trackingMode === 'interval_cadence' &&
-					habit.status === 'active' &&
-					habit.defaultMinutesPerInterval > 0 &&
-					(!entry.value || habit.createdAtIso.slice(0, 10) <= dateIso.value);
-				const plannedMinutes =
-					dayPlan !== undefined
-						? dayPlan.plannedMinutesPerInterval
-						: hasDefaultCadenceTarget
-							? habit.defaultMinutesPerInterval
-							: null;
-
-				if (existing) {
-					nextLogs[habit.id] = {
-						habitId: habit.id,
-						habitTitleSnapshot: existing.habitTitleSnapshot ?? habit.title,
-						achievedTier: existing.achievedTier,
-						achievedRuleSnapshot:
-							existing.achievedRuleSnapshot ?? resolveHabitRuleSnapshot(habit, existing.achievedTier),
-						actualMinutesPerInterval: existing.actualMinutesPerInterval,
-						plannedMinutesSnapshot: existing.plannedMinutesSnapshot ?? plannedMinutes,
-						updatedAtIso: existing.updatedAtIso ?? null
-					};
-				} else {
-					nextLogs[habit.id] = {
-						habitId: habit.id,
-						habitTitleSnapshot: habit.title,
-						achievedTier: null,
-						achievedRuleSnapshot: null,
-						actualMinutesPerInterval: null,
-						plannedMinutesSnapshot: plannedMinutes,
-						updatedAtIso: null
-					};
-				}
+			if (saveState.value !== 'error') {
+				saveState.value = entry.value ? 'saved' : 'idle';
 			}
-			logsByHabitId.value = nextLogs;
+		},
+		{ immediate: true }
+	);
 
+	watch(
+		[tomorrowIso, tomorrowCadencePlans, habits, () => tomorrowCadencePlans.isLoading.value],
+		() => {
+			if (tomorrowCadencePlans.isLoading.value) return;
 			const tomorrowPlanMap = new Map(tomorrowCadencePlans.value.map((p) => [p.habitId, p]));
 			const nextTomorrow: Record<string, CadenceDraftItem> = {};
 			for (const habit of habits.value.filter((h) => h.trackingMode === 'interval_cadence')) {
@@ -160,8 +165,6 @@ export function useDailyTracker(dateIso: Ref<string>) {
 				};
 			}
 			tomorrowPlansByHabitId.value = nextTomorrow;
-			isDirty.value = false;
-			saveState.value = entry.value ? 'saved' : 'idle';
 		},
 		{ immediate: true }
 	);
@@ -255,8 +258,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	);
 
 	const computedDayStatus = computed<DayStatusColor>(() => {
-		if (manualDayStatus.value) return manualDayStatus.value;
-		if (!isDirty.value && entry.value && loggedHabitIds.value.size === 0) {
+		if (!isJournalDirty.value && entry.value && loggedHabitIds.value.size === 0) {
 			return entry.value.dayStatus;
 		}
 		return evaluateDayStatusColor(applicableHabits.value, Object.values(logsByHabitId.value), {
@@ -271,96 +273,190 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			loggedHabitIds: loggedHabitIds.value,
 			logsByHabitId: logsByHabitId.value,
 			hasExistingEntry: Boolean(entry.value),
-			isDirty: isDirty.value
+			isDirty: isJournalDirty.value
 		})
 	);
 
-	function buildDailyInputObject(): SaveDailyEntryInput {
+	function runSerializedSave(targetDateIso: string, task: () => Promise<void>): Promise<void> {
+		if (targetDateIso === dateIso.value) {
+			saveState.value = 'saving';
+		}
+
+		const execute = async () => {
+			if (inFlightSavePromise) {
+				await inFlightSavePromise.catch(() => {});
+			}
+			try {
+				await task();
+				if (targetDateIso === dateIso.value) {
+					saveState.value = 'saved';
+				}
+			} catch {
+				if (targetDateIso === dateIso.value) {
+					saveState.value = 'error';
+				}
+			}
+		};
+
+		const currentPromise = execute();
+		inFlightSavePromise = currentPromise;
+		return currentPromise.finally(() => {
+			if (inFlightSavePromise === currentPromise) {
+				inFlightSavePromise = null;
+			}
+		});
+	}
+
+	function buildLocalHabitLogRecord(
+		habit: HabitEntity,
+		item: HabitLogItemInput,
+		nowIso: string
+	): LocalHabitLogRecord {
+		const existing = existingLogByHabitId.value.get(habit.id);
+		const resolved = resolveDailyHabitLogSnapshot({
+			habit,
+			log: item,
+			previousLog: existing
+				? {
+						achievedTier: existing.achievedTier,
+						habitTitleSnapshot: existing.habitTitleSnapshot ?? null,
+						achievedRuleSnapshot: existing.achievedRuleSnapshot ?? null,
+						habitSnapshotJson: existing.habitSnapshotJson ?? null,
+						plannedMinutesSnapshot: existing.plannedMinutesSnapshot ?? null
+					}
+				: null,
+			fallbackUpdatedAtIso: nowIso
+		});
+
 		return {
+			id: existing?.id ?? `log:${dateIso.value}:${habit.id}`,
 			dateIso: dateIso.value,
-			dayStatus: computedDayStatus.value,
-			journalText: journalText.value.trim() ? journalText.value : null,
-			updatedAtIso: new Date().toISOString(),
-			logs: Object.values(logsByHabitId.value).map((log) => ({ ...log }))
+			habitId: habit.id,
+			...resolved
 		};
 	}
 
-	function scheduleAutoSave(delayMs = 0) {
-		isDirty.value = true;
-		saveState.value = 'saving';
-		pendingSavePayload = buildDailyInputObject();
+	function commitHabitLogChanges(
+		updates: Array<{ habit: HabitEntity; item: HabitLogItemInput }>,
+		forcedDayStatus?: DayStatusColor
+	) {
+		const targetDateIso = dateIso.value;
+		const nowIso = new Date().toISOString();
+		const simulatedLogsMap: Record<string, HabitLogItemInput> = { ...logsByHabitId.value };
+		const upserts: LocalHabitLogRecord[] = [];
+		const deleteHabitIds: string[] = [];
 
-		if (autoSaveTimer) clearTimeout(autoSaveTimer);
+		for (const { habit, item } of updates) {
+			simulatedLogsMap[habit.id] = item;
+			if (shouldDiscardHabitLogItem(habit, item)) {
+				deleteHabitIds.push(habit.id);
+			} else {
+				upserts.push(buildLocalHabitLogRecord(habit, item, nowIso));
+			}
+		}
+
+		const nextDayStatus =
+			forcedDayStatus ??
+			evaluateDayStatusColor(applicableHabits.value, Object.values(simulatedLogsMap), {
+				dateIso: targetDateIso,
+				scheduledCadenceHabitIds: scheduledCadenceHabitIds.value
+			});
+
+		const hasJournal = Boolean(journalText.value.trim());
+		const dirtyJournalText = isJournalDirty.value ? journalText.value : undefined;
+		if (isJournalDirty.value) {
+			if (journalAutoSaveTimer) {
+				clearTimeout(journalAutoSaveTimer);
+				journalAutoSaveTimer = null;
+			}
+			pendingJournalSnapshot = null;
+			isJournalDirty.value = false;
+		}
+
+		void runSerializedSave(targetDateIso, () =>
+			localRepo.daily.applyHabitLogChanges({
+				dateIso: targetDateIso,
+				dayStatus: nextDayStatus,
+				...(dirtyJournalText !== undefined ? { journalText: dirtyJournalText } : {}),
+				hasJournal,
+				upserts,
+				deleteHabitIds,
+				updatedAtIso: nowIso
+			})
+		);
+	}
+
+	function scheduleAutoSave(delayMs = 750) {
+		isJournalDirty.value = true;
+		saveState.value = 'saving';
+		pendingJournalSnapshot = {
+			dateIso: dateIso.value,
+			dayStatus: computedDayStatus.value,
+			journalText: journalText.value
+		};
+
+		if (journalAutoSaveTimer) clearTimeout(journalAutoSaveTimer);
 
 		if (delayMs <= 0) {
 			void flushPendingSave();
 		} else {
-			autoSaveTimer = setTimeout(() => {
-				autoSaveTimer = null;
+			journalAutoSaveTimer = setTimeout(() => {
+				journalAutoSaveTimer = null;
 				void flushPendingSave();
 			}, delayMs);
 		}
 	}
 
-	async function flushPendingSave(forceBuildCurrent = false): Promise<void> {
-		if (autoSaveTimer) {
-			clearTimeout(autoSaveTimer);
-			autoSaveTimer = null;
+	async function flushPendingSave(forceSaveCurrent = false): Promise<void> {
+		if (journalAutoSaveTimer) {
+			clearTimeout(journalAutoSaveTimer);
+			journalAutoSaveTimer = null;
 		}
-		const payloadToSave =
-			pendingSavePayload ??
-			(forceBuildCurrent && dateIso.value ? buildDailyInputObject() : null);
-		pendingSavePayload = null;
-		if (!payloadToSave) {
+
+		const snapshot =
+			pendingJournalSnapshot ??
+			(forceSaveCurrent || isJournalDirty.value
+				? {
+						dateIso: dateIso.value,
+						dayStatus: computedDayStatus.value,
+						journalText: journalText.value
+					}
+				: null);
+
+		pendingJournalSnapshot = null;
+		if (!snapshot) {
 			if (inFlightSavePromise) {
 				await inFlightSavePromise;
 			}
 			return;
 		}
 
-		if (payloadToSave.dateIso === dateIso.value) {
-			saveState.value = 'saving';
-		}
-
-		const runSave = async () => {
-			if (inFlightSavePromise) {
-				await inFlightSavePromise.catch(() => {});
+		await runSerializedSave(snapshot.dateIso, async () => {
+			await localRepo.daily.saveJournalEntry({
+				dateIso: snapshot.dateIso,
+				dayStatus: snapshot.dayStatus,
+				journalText: snapshot.journalText.trim() ? snapshot.journalText : null
+			});
+			if (
+				snapshot.dateIso === dateIso.value &&
+				(!pendingJournalSnapshot || pendingJournalSnapshot.dateIso !== dateIso.value)
+			) {
+				isJournalDirty.value = false;
 			}
-			try {
-				await localRepo.daily.saveDailyEntry(payloadToSave);
-				if (
-					payloadToSave.dateIso === dateIso.value &&
-					(!pendingSavePayload || pendingSavePayload.dateIso !== dateIso.value)
-				) {
-					isDirty.value = false;
-					saveState.value = 'saved';
-				}
-			} catch {
-				if (payloadToSave.dateIso === dateIso.value) {
-					saveState.value = 'error';
-				}
-			}
-		};
-
-		const currentPromise = runSave();
-		inFlightSavePromise = currentPromise;
-		await currentPromise;
-		if (inFlightSavePromise === currentPromise) {
-			inFlightSavePromise = null;
-		}
+		});
 	}
 
 	function handlePageVisibilityFlush() {
 		if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-			if (pendingSavePayload || isDirty.value) {
-				void flushPendingSave(isDirty.value);
+			if (pendingJournalSnapshot || isJournalDirty.value) {
+				void flushPendingSave();
 			}
 		}
 	}
 
 	function handlePageHideFlush() {
-		if (pendingSavePayload || isDirty.value) {
-			void flushPendingSave(isDirty.value);
+		if (pendingJournalSnapshot || isJournalDirty.value) {
+			void flushPendingSave();
 		}
 	}
 
@@ -372,28 +468,32 @@ export function useDailyTracker(dateIso: Ref<string>) {
 	onScopeDispose(() => {
 		document.removeEventListener('visibilitychange', handlePageVisibilityFlush);
 		window.removeEventListener('pagehide', handlePageHideFlush);
-		if (pendingSavePayload || isDirty.value) {
-			void flushPendingSave(isDirty.value);
+		if (pendingJournalSnapshot || isJournalDirty.value) {
+			void flushPendingSave();
 		}
 	});
 
 	function markAllOptimalFiveSecond() {
 		const nowIso = new Date().toISOString();
-		const updated = { ...logsByHabitId.value };
+		const updates: Array<{ habit: HabitEntity; item: HabitLogItemInput }> = [];
+
 		for (const habit of applicableHabits.value) {
 			if (habit.status !== 'active') continue;
-			const current = updated[habit.id];
+			const current = logsByHabitId.value[habit.id];
 			if (!current) continue;
 
 			if (habit.trackingMode === 'tiered') {
 				const maxTier = getMaxSupportedTier(habit);
-				updated[habit.id] = {
-					...current,
-					habitTitleSnapshot: habit.title,
-					achievedTier: maxTier,
-					achievedRuleSnapshot: resolveHabitRuleSnapshot(habit, maxTier),
-					updatedAtIso: nowIso
-				};
+				updates.push({
+					habit,
+					item: {
+						...current,
+						habitTitleSnapshot: habit.title,
+						achievedTier: maxTier,
+						achievedRuleSnapshot: resolveHabitRuleSnapshot(habit, maxTier),
+						updatedAtIso: nowIso
+					}
+				});
 			} else {
 				const plannedMinutes =
 					current.plannedMinutesSnapshot && current.plannedMinutesSnapshot > 0
@@ -402,44 +502,42 @@ export function useDailyTracker(dateIso: Ref<string>) {
 							? current.actualMinutesPerInterval
 							: 0;
 				if (plannedMinutes <= 0) continue;
-				updated[habit.id] = {
-					...current,
-					actualMinutesPerInterval: plannedMinutes,
-					achievedTier: TIER_SCORES.GOLD,
-					updatedAtIso: nowIso
-				};
+				updates.push({
+					habit,
+					item: {
+						...current,
+						actualMinutesPerInterval: plannedMinutes,
+						achievedTier: TIER_SCORES.GOLD,
+						updatedAtIso: nowIso
+					}
+				});
 			}
 		}
-		logsByHabitId.value = updated;
-		manualDayStatus.value = 'optimal';
-		scheduleAutoSave(0);
+
+		commitHabitLogChanges(updates, 'optimal');
 	}
 
 	function setTierScore(habitId: string, tier: number) {
 		const current = logsByHabitId.value[habitId];
-		if (!current) return;
-		const nextTier = current.achievedTier === tier ? null : tier;
-		setTierExplicit(habitId, nextTier);
-	}
-
-	function setTierExplicit(habitId: string, tier: number | null) {
-		const current = logsByHabitId.value[habitId];
-		if (!current) return;
-		const nowIso = new Date().toISOString();
 		const habit = effectiveHabitsForDate.value.find((h) => h.id === habitId);
+		if (!current || !habit) return;
 
-		logsByHabitId.value = {
-			...logsByHabitId.value,
-			[habitId]: {
-				...current,
-				habitTitleSnapshot: habit?.title ?? current.habitTitleSnapshot ?? null,
-				achievedTier: tier,
-				achievedRuleSnapshot: habit && tier !== null ? resolveHabitRuleSnapshot(habit, tier) : null,
-				updatedAtIso: nowIso
+		const nextTier = current.achievedTier === tier ? null : tier;
+		const nowIso = new Date().toISOString();
+
+		commitHabitLogChanges([
+			{
+				habit,
+				item: {
+					...current,
+					habitTitleSnapshot: habit.title,
+					achievedTier: nextTier,
+					achievedRuleSnapshot:
+						nextTier !== null ? resolveHabitRuleSnapshot(habit, nextTier) : null,
+					updatedAtIso: nowIso
+				}
 			}
-		};
-		manualDayStatus.value = null;
-		scheduleAutoSave(0);
+		]);
 	}
 
 	function setParentGroupAllTier(parentId: string, tier: number) {
@@ -451,10 +549,10 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			children.every((child) => logsByHabitId.value[child.id]?.achievedTier === tier);
 		const targetTier = allAlreadySelected ? null : tier;
 		const nowIso = new Date().toISOString();
-		const nextLogs = { ...logsByHabitId.value };
+		const updates: Array<{ habit: HabitEntity; item: HabitLogItemInput }> = [];
 
 		for (const child of children) {
-			const currentChildLog = nextLogs[child.id];
+			const currentChildLog = logsByHabitId.value[child.id];
 			if (!currentChildLog) continue;
 			const maxChildTier = getMaxSupportedTier(child);
 			const effectiveTier =
@@ -463,72 +561,71 @@ export function useDailyTracker(dateIso: Ref<string>) {
 					: targetTier === TIER_SCORES.FAILED || targetTier === TIER_SCORES.SKIPPED
 						? targetTier
 						: Math.min(targetTier, maxChildTier);
-			nextLogs[child.id] = {
-				...currentChildLog,
-				habitTitleSnapshot: child.title,
-				achievedTier: effectiveTier,
-				achievedRuleSnapshot:
-					effectiveTier !== null ? resolveHabitRuleSnapshot(child, effectiveTier) : null,
-				updatedAtIso: nowIso
-			};
+
+			updates.push({
+				habit: child,
+				item: {
+					...currentChildLog,
+					habitTitleSnapshot: child.title,
+					achievedTier: effectiveTier,
+					achievedRuleSnapshot:
+						effectiveTier !== null ? resolveHabitRuleSnapshot(child, effectiveTier) : null,
+					updatedAtIso: nowIso
+				}
+			});
 		}
 
-		const parentCurrent = nextLogs[parentId];
-		if (parentCurrent) {
-			const parentHabit = effectiveHabitsForDate.value.find((h) => h.id === parentId);
-			nextLogs[parentId] = {
-				...parentCurrent,
-				habitTitleSnapshot: parentHabit?.title ?? parentCurrent.habitTitleSnapshot ?? null,
-				achievedTier: null,
-				achievedRuleSnapshot: null,
-				updatedAtIso: nowIso
-			};
+		const parentHabit = effectiveHabitsForDate.value.find((h) => h.id === parentId);
+		const parentCurrent = logsByHabitId.value[parentId];
+		if (parentHabit && parentCurrent && existingLogByHabitId.value.has(parentId)) {
+			updates.push({
+				habit: parentHabit,
+				item: {
+					...parentCurrent,
+					achievedTier: null,
+					achievedRuleSnapshot: null,
+					updatedAtIso: nowIso
+				}
+			});
 		}
 
-		logsByHabitId.value = nextLogs;
-		manualDayStatus.value = null;
-		scheduleAutoSave(0);
+		if (updates.length > 0) {
+			commitHabitLogChanges(updates);
+		}
 	}
 
 	function clearDay() {
-		const nowIso = new Date().toISOString();
-		const updated = { ...logsByHabitId.value };
-		for (const habit of habits.value) {
-			const current = updated[habit.id];
-			if (!current) continue;
-			updated[habit.id] = {
-				...current,
-				achievedTier: null,
-				achievedRuleSnapshot: null,
-				actualMinutesPerInterval: null,
-				updatedAtIso: nowIso
-			};
+		if (journalAutoSaveTimer) {
+			clearTimeout(journalAutoSaveTimer);
+			journalAutoSaveTimer = null;
 		}
-		logsByHabitId.value = updated;
+		pendingJournalSnapshot = null;
+		isJournalDirty.value = false;
 		journalText.value = '';
-		manualDayStatus.value = null;
-		scheduleAutoSave(0);
+
+		const targetDateIso = dateIso.value;
+		void runSerializedSave(targetDateIso, () => localRepo.daily.clearDayEntry(targetDateIso));
 	}
 
 	function updateCadenceActual(habitId: string, minutesPerInterval: number | null) {
 		const current = logsByHabitId.value[habitId];
-		if (!current) return;
-		const nowIso = new Date().toISOString();
 		const habit = effectiveHabitsForDate.value.find((h) => h.id === habitId);
+		if (!current || !habit) return;
+		const nowIso = new Date().toISOString();
 
 		if (minutesPerInterval === null) {
-			logsByHabitId.value = {
-				...logsByHabitId.value,
-				[habitId]: {
-					...current,
-					achievedTier: null,
-					achievedRuleSnapshot: null,
-					actualMinutesPerInterval: null,
-					updatedAtIso: nowIso
+			commitHabitLogChanges([
+				{
+					habit,
+					item: {
+						...current,
+						achievedTier: null,
+						achievedRuleSnapshot: null,
+						actualMinutesPerInterval: null,
+						updatedAtIso: nowIso
+					}
 				}
-			};
-			manualDayStatus.value = null;
-			scheduleAutoSave(0);
+			]);
 			return;
 		}
 
@@ -536,7 +633,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		const plannedMinutes =
 			current.plannedMinutesSnapshot && current.plannedMinutesSnapshot > 0
 				? current.plannedMinutesSnapshot
-				: habit?.defaultMinutesPerInterval && habit.defaultMinutesPerInterval > 0
+				: habit.defaultMinutesPerInterval > 0
 					? habit.defaultMinutesPerInterval
 					: null;
 
@@ -553,20 +650,20 @@ export function useDailyTracker(dateIso: Ref<string>) {
 			? `${safeMinutes} دقیقه از هدف ${plannedMinutes} دقیقه`
 			: `${safeMinutes} دقیقه انجام‌شده`;
 
-		logsByHabitId.value = {
-			...logsByHabitId.value,
-			[habitId]: {
-				...current,
-				habitTitleSnapshot: habit?.title ?? current.habitTitleSnapshot ?? null,
-				achievedTier,
-				achievedRuleSnapshot,
-				actualMinutesPerInterval: safeMinutes,
-				plannedMinutesSnapshot: plannedMinutes,
-				updatedAtIso: nowIso
+		commitHabitLogChanges([
+			{
+				habit,
+				item: {
+					...current,
+					habitTitleSnapshot: habit.title,
+					achievedTier,
+					achievedRuleSnapshot,
+					actualMinutesPerInterval: safeMinutes,
+					plannedMinutesSnapshot: plannedMinutes,
+					updatedAtIso: nowIso
+				}
 			}
-		};
-		manualDayStatus.value = null;
-		scheduleAutoSave(0);
+		]);
 	}
 
 	function setTomorrowPlanMinutes(habitId: string, minutes: number | null) {
@@ -638,7 +735,7 @@ export function useDailyTracker(dateIso: Ref<string>) {
 		tomorrowPlansByHabitId,
 		tomorrowIso,
 		saveState,
-		isDirty,
+		isDirty: readonly(isJournalDirty),
 		computedDayStatus,
 		completionStats,
 		markAllOptimalFiveSecond,

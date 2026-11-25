@@ -17,10 +17,14 @@ import {
 import { buildConflictUpdateSet } from '~~/server/repositories/backup.repo';
 import {
 	clampClientTimestampIso,
+	clearDailyEntryOnServer,
 	type DbExecutor,
 	getAllHabits,
 	saveCadencePlansForDate,
-	saveDailyEntryAndLogs
+	saveDailyEntryAndLogs,
+	softDeleteSingleHabitLog,
+	upsertDailyEntryMetadata,
+	upsertSingleHabitLog
 } from '~~/server/repositories/daily-tracker.repo';
 import { compareTimestampsIso, normalizeTimestampIso } from '~/domain/calendar';
 import type {
@@ -347,6 +351,14 @@ export async function processClientSyncRequest(
 
 				if (mutation.kind === 'SAVE_DAILY_ENTRY') {
 					await saveDailyEntryAndLogs(mutation.payload, preloadedHabitMap, tx);
+				} else if (mutation.kind === 'UPSERT_DAILY_ENTRY') {
+					await upsertDailyEntryMetadata(mutation.payload, tx);
+				} else if (mutation.kind === 'CLEAR_DAILY_ENTRY') {
+					await clearDailyEntryOnServer(mutation.payload, tx);
+				} else if (mutation.kind === 'UPSERT_HABIT_LOG') {
+					await upsertSingleHabitLog(mutation.payload, preloadedHabitMap, tx);
+				} else if (mutation.kind === 'DELETE_HABIT_LOG') {
+					await softDeleteSingleHabitLog(mutation.payload, tx);
 				} else if (mutation.kind === 'SAVE_CADENCE_PLAN') {
 					await saveCadencePlansForDate(mutation.payload, tx);
 				} else if (mutation.kind === 'UPSERT_ENTITY') {

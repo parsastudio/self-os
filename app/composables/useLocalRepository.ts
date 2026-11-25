@@ -4,10 +4,7 @@ import { createLocalBackupOperations } from '~/composables/useLocalBackupOperati
 import { clonePlain } from '~/utils/clone';
 import {
 	buildCreatedHabitWithLifecycle,
-	buildUpdatedHabitWithLifecycle,
-	isDailyEntryEmpty,
-	resolveDailyHabitLogSnapshot,
-	shouldDiscardHabitLogItem
+	buildUpdatedHabitWithLifecycle
 } from '~/core/habit-engine';
 import {
 	compareTimestampsIso,
@@ -24,6 +21,7 @@ import type {
 	CreateCalendarEventInput,
 	CreateHabitInput,
 	CreateMediaInput,
+	DayStatusColor,
 	DeltaWorkspaceSnapshot,
 	HabitEntity,
 	LifecycleEventEntity,
@@ -36,7 +34,6 @@ import type {
 	NoteEntity,
 	PersonEntity,
 	SaveCadencePlanBatch,
-	SaveDailyEntryInput,
 	SyncEntityCollection,
 	SyncMetaRecord,
 	SyncOutboxMutation,
@@ -50,7 +47,9 @@ import type {
 
 interface SyncApplyContext {
 	pendingIds: Set<string>;
-	pendingDailyDates: Set<string>;
+	pendingEntryDates: Set<string>;
+	pendingFullDayDates: Set<string>;
+	pendingLogIds: Set<string>;
 	pendingCadenceDates: Set<string>;
 	fallbackNowIso: string;
 }
@@ -223,83 +222,209 @@ export function useLocalRepository() {
 	}
 
 	const daily = {
-		async saveDailyEntry(input: SaveDailyEntryInput): Promise<void> {
-			const nowIso = input.updatedAtIso || new Date().toISOString();
-			const outboxId = `daily:${input.dateIso}`;
+		async applyHabitLogChanges(params: {
+			dateIso: string;
+			dayStatus: DayStatusColor;
+			journalText?: string | null;
+			hasJournal: boolean;
+			upserts: LocalHabitLogRecord[];
+			deleteHabitIds: string[];
+			updatedAtIso?: string;
+		}): Promise<void> {
+			const nowIso = params.updatedAtIso || new Date().toISOString();
+			const mutations: SyncOutboxMutation[] = [];
+			const hasExplicitJournal = params.journalText !== undefined;
+			const normalizedExplicitJournal = params.journalText?.trim() ? params.journalText : null;
 
-			const isClearState = isDailyEntryEmpty(input);
+			await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+				if (params.deleteHabitIds.length > 0) {
+					const existingLogs = await db.habitLogs
+						.where('dateIso')
+						.equals(params.dateIso)
+						.toArray();
+					const existingByHabit = new Map(existingLogs.map((l) => [l.habitId, l]));
 
-			const mutation: SyncOutboxMutation = {
-				id: outboxId,
-				kind: 'SAVE_DAILY_ENTRY',
-				queuedAtIso: nowIso,
-				payload: {
-					...input,
-					updatedAtIso: nowIso
+					for (const habitId of params.deleteHabitIds) {
+						const prev = existingByHabit.get(habitId);
+						const logId = prev?.id ?? `log:${params.dateIso}:${habitId}`;
+						if (prev) {
+							await db.habitLogs.delete(prev.id);
+						}
+						mutations.push({
+							id: `log:${params.dateIso}:${habitId}`,
+							kind: 'DELETE_HABIT_LOG',
+							queuedAtIso: nowIso,
+							payload: {
+								logId,
+								dateIso: params.dateIso,
+								habitId,
+								updatedAtIso: nowIso
+							}
+						});
+					}
 				}
-			};
 
-			await stageMutation(mutation, async () => {
-				if (isClearState) {
-					await db.dailyEntries.delete(input.dateIso);
-					await db.habitLogs.where('dateIso').equals(input.dateIso).delete();
+				if (params.upserts.length > 0) {
+					const plainUpserts = params.upserts.map((u) => clonePlain(u));
+					await db.habitLogs.bulkPut(plainUpserts);
+					for (const u of plainUpserts) {
+						mutations.push({
+							id: `log:${params.dateIso}:${u.habitId}`,
+							kind: 'UPSERT_HABIT_LOG',
+							queuedAtIso: u.updatedAtIso || nowIso,
+							payload: u
+						});
+					}
+				}
+
+				const remainingLogsCount = await db.habitLogs
+					.where('dateIso')
+					.equals(params.dateIso)
+					.count();
+
+				if (remainingLogsCount === 0 && !params.hasJournal) {
+					await db.dailyEntries.delete(params.dateIso);
+					await db.syncOutbox.delete(`entry:${params.dateIso}`);
+					mutations.push({
+						id: `clear-entry:${params.dateIso}`,
+						kind: 'CLEAR_DAILY_ENTRY',
+						queuedAtIso: nowIso,
+						payload: {
+							dateIso: params.dateIso,
+							updatedAtIso: nowIso
+						}
+					});
+				} else {
+					const existingEntry = await db.dailyEntries.get(params.dateIso);
+					const existingOutbox = await db.syncOutbox.get(`entry:${params.dateIso}`);
+					const nextJournalText = hasExplicitJournal
+						? normalizedExplicitJournal
+						: (existingEntry?.journalText ?? null);
+
+					await db.dailyEntries.put({
+						dateIso: params.dateIso,
+						dayStatus: params.dayStatus,
+						journalText: nextJournalText,
+						updatedAtIso: nowIso
+					});
+
+					const stagedJournalText = hasExplicitJournal
+						? normalizedExplicitJournal
+						: existingOutbox?.kind === 'UPSERT_DAILY_ENTRY'
+							? existingOutbox.payload.journalText
+							: undefined;
+
+					mutations.push({
+						id: `entry:${params.dateIso}`,
+						kind: 'UPSERT_DAILY_ENTRY',
+						queuedAtIso: nowIso,
+						payload: {
+							dateIso: params.dateIso,
+							dayStatus: params.dayStatus,
+							...(stagedJournalText !== undefined ? { journalText: stagedJournalText } : {}),
+							updatedAtIso: nowIso
+						}
+					});
+				}
+
+				if (mutations.length > 0) {
+					await db.syncOutbox.bulkPut(mutations.map((m) => clonePlain(m)));
+				}
+			});
+
+			for (const listener of mutationStagedListeners) {
+				listener();
+			}
+		},
+
+		async saveJournalEntry(params: {
+			dateIso: string;
+			dayStatus: DayStatusColor;
+			journalText: string | null;
+			updatedAtIso?: string;
+		}): Promise<void> {
+			const nowIso = params.updatedAtIso || new Date().toISOString();
+			const normalizedJournal = params.journalText?.trim() ? params.journalText : null;
+
+			await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+				const logsCount = await db.habitLogs
+					.where('dateIso')
+					.equals(params.dateIso)
+					.count();
+
+				if (normalizedJournal === null && logsCount === 0) {
+					await db.dailyEntries.delete(params.dateIso);
+					await db.syncOutbox.delete(`entry:${params.dateIso}`);
+					await db.syncOutbox.put({
+						id: `clear-entry:${params.dateIso}`,
+						kind: 'CLEAR_DAILY_ENTRY',
+						queuedAtIso: nowIso,
+						payload: {
+							dateIso: params.dateIso,
+							updatedAtIso: nowIso
+						}
+					});
 					return;
 				}
 
-				const entryRecord: LocalDailyEntryRecord = {
-					dateIso: input.dateIso,
-					dayStatus: input.dayStatus,
-					journalText: input.journalText?.trim() ? input.journalText : null,
+				await db.dailyEntries.put({
+					dateIso: params.dateIso,
+					dayStatus: params.dayStatus,
+					journalText: normalizedJournal,
 					updatedAtIso: nowIso
-				};
-				await db.dailyEntries.put(entryRecord);
+				});
 
-				const allHabits = await db.habits.toArray();
-				const habitMap = new Map(allHabits.map((h) => [h.id, h]));
-				const existingDayLogs = await db.habitLogs.where('dateIso').equals(input.dateIso).toArray();
-				const existingLogByHabitId = new Map(existingDayLogs.map((l) => [l.habitId, l]));
-				const incomingHabitIds = new Set(input.logs.map((l) => l.habitId));
-
-				for (const existingLog of existingDayLogs) {
-					if (!incomingHabitIds.has(existingLog.habitId)) {
-						await db.habitLogs.delete(existingLog.id);
+				await db.syncOutbox.put({
+					id: `entry:${params.dateIso}`,
+					kind: 'UPSERT_DAILY_ENTRY',
+					queuedAtIso: nowIso,
+					payload: {
+						dateIso: params.dateIso,
+						dayStatus: params.dayStatus,
+						journalText: normalizedJournal,
+						updatedAtIso: nowIso
 					}
-				}
-
-				for (const log of input.logs) {
-					const habit = habitMap.get(log.habitId);
-					const prev = existingLogByHabitId.get(log.habitId);
-					const logId = prev?.id || `log:${input.dateIso}:${log.habitId}`;
-
-					if (shouldDiscardHabitLogItem(habit, log)) {
-						await db.habitLogs.delete(logId);
-						continue;
-					}
-
-					const resolvedSnapshot = resolveDailyHabitLogSnapshot({
-						habit,
-						log,
-						previousLog: prev
-							? {
-									achievedTier: prev.achievedTier,
-									habitTitleSnapshot: prev.habitTitleSnapshot ?? null,
-									achievedRuleSnapshot: prev.achievedRuleSnapshot ?? null,
-									habitSnapshotJson: prev.habitSnapshotJson ?? null,
-									plannedMinutesSnapshot: prev.plannedMinutesSnapshot ?? null
-								}
-							: null,
-						fallbackUpdatedAtIso: nowIso
-					});
-
-					const logRecord: LocalHabitLogRecord = {
-						id: logId,
-						dateIso: input.dateIso,
-						habitId: log.habitId,
-						...resolvedSnapshot
-					};
-					await db.habitLogs.put(logRecord);
-				}
+				});
 			});
+
+			for (const listener of mutationStagedListeners) {
+				listener();
+			}
+		},
+
+		async clearDayEntry(dateIso: string): Promise<void> {
+			const nowIso = new Date().toISOString();
+
+			await db.transaction('rw', db.workspaceAndSyncTables, async () => {
+				await db.dailyEntries.delete(dateIso);
+				await db.habitLogs.where('dateIso').equals(dateIso).delete();
+
+				const pendingForDay = await db.syncOutbox
+					.filter(
+						(m) =>
+							m.id === `entry:${dateIso}` ||
+							m.id.startsWith(`log:${dateIso}:`) ||
+							(m.kind === 'SAVE_DAILY_ENTRY' && m.payload.dateIso === dateIso)
+					)
+					.primaryKeys();
+				if (pendingForDay.length > 0) {
+					await db.syncOutbox.bulkDelete(pendingForDay);
+				}
+
+				await db.syncOutbox.put({
+					id: `clear-entry:${dateIso}`,
+					kind: 'CLEAR_DAILY_ENTRY',
+					queuedAtIso: nowIso,
+					payload: {
+						dateIso,
+						updatedAtIso: nowIso
+					}
+				});
+			});
+
+			for (const listener of mutationStagedListeners) {
+				listener();
+			}
 		},
 
 		async saveCadencePlans(input: SaveCadencePlanBatch): Promise<void> {
@@ -930,8 +1055,8 @@ export function useLocalRepository() {
 			getIncomingKey: (e) => e.dateIso,
 			getIncomingUpdatedAt: (e) => e.updatedAtIso,
 			getLocalUpdatedAt: (e) => e.updatedAtIso,
-			isProtectedLocal: (e, ctx) => ctx.pendingDailyDates.has(e.dateIso),
-			isProtectedIncoming: (e, ctx) => ctx.pendingDailyDates.has(e.dateIso),
+			isProtectedLocal: (e, ctx) => ctx.pendingEntryDates.has(e.dateIso),
+			isProtectedIncoming: (e, ctx) => ctx.pendingEntryDates.has(e.dateIso),
 			toLocalRecord: (e) => ({
 				dateIso: e.dateIso,
 				dayStatus: e.dayStatus,
@@ -948,8 +1073,18 @@ export function useLocalRepository() {
 			getIncomingKey: (l) => l.id || `log:${l.dateIso}:${l.habitId}`,
 			getIncomingUpdatedAt: (l) => l.updatedAtIso,
 			getLocalUpdatedAt: (l) => l.updatedAtIso,
-			isProtectedLocal: (l, ctx) => ctx.pendingDailyDates.has(l.dateIso),
-			isProtectedIncoming: (l, ctx) => ctx.pendingDailyDates.has(l.dateIso),
+			isProtectedLocal: (l, ctx) =>
+				ctx.pendingFullDayDates.has(l.dateIso) ||
+				ctx.pendingLogIds.has(l.id) ||
+				ctx.pendingLogIds.has(`log:${l.dateIso}:${l.habitId}`),
+			isProtectedIncoming: (l, ctx) => {
+				const logId = l.id || `log:${l.dateIso}:${l.habitId}`;
+				return (
+					ctx.pendingFullDayDates.has(l.dateIso) ||
+					ctx.pendingLogIds.has(logId) ||
+					ctx.pendingLogIds.has(`log:${l.dateIso}:${l.habitId}`)
+				);
+			},
 			toLocalRecord: (l, fallbackNowIso) => ({
 				id: l.id || `log:${l.dateIso}:${l.habitId}`,
 				dateIso: l.dateIso,
@@ -967,16 +1102,34 @@ export function useLocalRepository() {
 
 	async function buildSyncApplyContext(): Promise<SyncApplyContext> {
 		const pending = await db.syncOutbox.toArray();
+		const pendingEntryDates = new Set<string>();
+		const pendingFullDayDates = new Set<string>();
+		const pendingLogIds = new Set<string>();
+		const pendingCadenceDates = new Set<string>();
+
+		for (const m of pending) {
+			if (m.kind === 'SAVE_DAILY_ENTRY' || m.kind === 'CLEAR_DAILY_ENTRY') {
+				pendingEntryDates.add(m.payload.dateIso);
+				pendingFullDayDates.add(m.payload.dateIso);
+			} else if (m.kind === 'UPSERT_DAILY_ENTRY') {
+				pendingEntryDates.add(m.payload.dateIso);
+			} else if (m.kind === 'UPSERT_HABIT_LOG') {
+				pendingLogIds.add(m.payload.id);
+				pendingLogIds.add(`log:${m.payload.dateIso}:${m.payload.habitId}`);
+			} else if (m.kind === 'DELETE_HABIT_LOG') {
+				pendingLogIds.add(m.payload.logId);
+				pendingLogIds.add(`log:${m.payload.dateIso}:${m.payload.habitId}`);
+			} else if (m.kind === 'SAVE_CADENCE_PLAN') {
+				pendingCadenceDates.add(m.payload.targetDateIso);
+			}
+		}
+
 		return {
 			pendingIds: new Set(pending.map((m) => m.id)),
-			pendingDailyDates: new Set(
-				pending.filter((m) => m.kind === 'SAVE_DAILY_ENTRY').map((m) => m.payload.dateIso)
-			),
-			pendingCadenceDates: new Set(
-				pending
-					.filter((m) => m.kind === 'SAVE_CADENCE_PLAN')
-					.map((m) => m.payload.targetDateIso)
-			),
+			pendingEntryDates,
+			pendingFullDayDates,
+			pendingLogIds,
+			pendingCadenceDates,
 			fallbackNowIso: new Date().toISOString()
 		};
 	}

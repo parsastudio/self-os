@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { db, ensureDatabaseReady } from '~~/server/database/index';
 import {
 	cadencePlans,
@@ -13,9 +13,13 @@ import {
 } from '~/core/habit-engine';
 import { compareTimestampsIso } from '~/domain/calendar';
 import type {
+	ClearDailyEntryInput,
+	DeleteHabitLogMutationPayload,
 	HabitEntity,
 	SaveCadencePlanBatch,
-	SaveDailyEntryInput
+	SaveDailyEntryInput,
+	UpsertDailyEntryInput,
+	UpsertHabitLogMutationPayload
 } from '~/domain/schemas';
 
 export type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>;
@@ -219,6 +223,213 @@ export async function saveDailyEntryAndLogs(
 		await db.transaction(async (tx) => {
 			await applyOperations(tx);
 		});
+	}
+}
+
+export async function upsertDailyEntryMetadata(
+	input: UpsertDailyEntryInput,
+	txExecutor?: DbExecutor
+): Promise<void> {
+	await ensureDatabaseReady();
+	const nowMs = Date.now();
+	const entryUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
+	const hasJournalField = input.journalText !== undefined;
+	const normalizedJournal = input.journalText?.trim() ? input.journalText : null;
+
+	const applyOperation = async (tx: DbExecutor) => {
+		const existingRows = await tx
+			.select()
+			.from(dailyEntries)
+			.where(eq(dailyEntries.dateIso, input.dateIso))
+			.limit(1);
+		const existing = existingRows[0];
+
+		if (existing) {
+			if (compareTimestampsIso(entryUpdatedAtIso, existing.updatedAtIso) < 0) {
+				return;
+			}
+			await tx
+				.update(dailyEntries)
+				.set({
+					dayStatus: input.dayStatus,
+					...(hasJournalField ? { journalText: normalizedJournal } : {}),
+					deletedAtIso: null,
+					updatedAtIso: entryUpdatedAtIso
+				})
+				.where(eq(dailyEntries.dateIso, input.dateIso));
+			return;
+		}
+
+		await tx.insert(dailyEntries).values({
+			id: `entry:${input.dateIso}`,
+			dateIso: input.dateIso,
+			dayStatus: input.dayStatus,
+			journalText: normalizedJournal,
+			updatedAtIso: entryUpdatedAtIso,
+			deletedAtIso: null
+		});
+	};
+
+	if (txExecutor) {
+		await applyOperation(txExecutor);
+	} else {
+		await db.transaction(applyOperation);
+	}
+}
+
+export async function clearDailyEntryOnServer(
+	input: ClearDailyEntryInput,
+	txExecutor?: DbExecutor
+): Promise<void> {
+	await ensureDatabaseReady();
+	const nowMs = Date.now();
+	const clearedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
+
+	const applyOperation = async (tx: DbExecutor) => {
+		await tx
+			.update(habitLogs)
+			.set({
+				deletedAtIso: clearedAtIso,
+				updatedAtIso: clearedAtIso
+			})
+			.where(
+				and(
+					eq(habitLogs.dateIso, input.dateIso),
+					isNull(habitLogs.deletedAtIso),
+					or(isNull(habitLogs.updatedAtIso), lte(habitLogs.updatedAtIso, clearedAtIso))
+				)
+			);
+
+		await tx
+			.update(dailyEntries)
+			.set({
+				journalText: null,
+				deletedAtIso: clearedAtIso,
+				updatedAtIso: clearedAtIso
+			})
+			.where(
+				and(
+					eq(dailyEntries.dateIso, input.dateIso),
+					isNull(dailyEntries.deletedAtIso),
+					lte(dailyEntries.updatedAtIso, clearedAtIso)
+				)
+			);
+	};
+
+	if (txExecutor) {
+		await applyOperation(txExecutor);
+	} else {
+		await db.transaction(applyOperation);
+	}
+}
+
+export async function upsertSingleHabitLog(
+	input: UpsertHabitLogMutationPayload,
+	preloadedHabitMap?: ReadonlyMap<string, HabitEntity>,
+	txExecutor?: DbExecutor
+): Promise<void> {
+	await ensureDatabaseReady();
+	const nowMs = Date.now();
+	const logUpdatedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
+	const habitMap =
+		preloadedHabitMap ?? new Map((await getAllHabits()).map((h) => [h.id, h]));
+
+	const applyOperation = async (tx: DbExecutor) => {
+		const habit = habitMap.get(input.habitId);
+		const existingRows = await tx
+			.select()
+			.from(habitLogs)
+			.where(and(eq(habitLogs.dateIso, input.dateIso), eq(habitLogs.habitId, input.habitId)))
+			.limit(1);
+		const prev = existingRows[0];
+
+		if (prev?.updatedAtIso && compareTimestampsIso(logUpdatedAtIso, prev.updatedAtIso) < 0) {
+			return;
+		}
+
+		if (shouldDiscardHabitLogItem(habit, input)) {
+			if (prev && prev.deletedAtIso === null) {
+				await tx
+					.update(habitLogs)
+					.set({
+						deletedAtIso: logUpdatedAtIso,
+						updatedAtIso: logUpdatedAtIso
+					})
+					.where(eq(habitLogs.id, prev.id));
+			}
+			return;
+		}
+
+		const resolvedLogValues = resolveDailyHabitLogSnapshot({
+			habit,
+			log: {
+				...input,
+				updatedAtIso: logUpdatedAtIso
+			},
+			previousLog: prev && prev.deletedAtIso === null ? prev : null,
+			fallbackUpdatedAtIso: logUpdatedAtIso
+		});
+
+		await tx
+			.insert(habitLogs)
+			.values({
+				id: prev?.id ?? input.id,
+				dateIso: input.dateIso,
+				habitId: input.habitId,
+				...resolvedLogValues,
+				deletedAtIso: null
+			})
+			.onConflictDoUpdate({
+				target: [habitLogs.dateIso, habitLogs.habitId],
+				set: {
+					habitTitleSnapshot: sql`excluded.habit_title_snapshot`,
+					achievedTier: sql`excluded.achieved_tier`,
+					achievedRuleSnapshot: sql`excluded.achieved_rule_snapshot`,
+					habitSnapshotJson: sql`excluded.habit_snapshot_json`,
+					actualMinutesPerInterval: sql`excluded.actual_minutes_per_interval`,
+					plannedMinutesSnapshot: sql`excluded.planned_minutes_snapshot`,
+					deletedAtIso: sql`excluded.deleted_at_iso`,
+					updatedAtIso: sql`excluded.updated_at_iso`
+				}
+			});
+	};
+
+	if (txExecutor) {
+		await applyOperation(txExecutor);
+	} else {
+		await db.transaction(applyOperation);
+	}
+}
+
+export async function softDeleteSingleHabitLog(
+	input: DeleteHabitLogMutationPayload,
+	txExecutor?: DbExecutor
+): Promise<void> {
+	await ensureDatabaseReady();
+	const nowMs = Date.now();
+	const deletedAtIso = clampClientTimestampIso(input.updatedAtIso, nowMs);
+
+	const applyOperation = async (tx: DbExecutor) => {
+		await tx
+			.update(habitLogs)
+			.set({
+				deletedAtIso,
+				updatedAtIso: deletedAtIso
+			})
+			.where(
+				and(
+					eq(habitLogs.dateIso, input.dateIso),
+					eq(habitLogs.habitId, input.habitId),
+					isNull(habitLogs.deletedAtIso),
+					or(isNull(habitLogs.updatedAtIso), lte(habitLogs.updatedAtIso, deletedAtIso))
+				)
+			);
+	};
+
+	if (txExecutor) {
+		await applyOperation(txExecutor);
+	} else {
+		await db.transaction(applyOperation);
 	}
 }
 

@@ -131,6 +131,39 @@ export const SaveDailyEntryInputSchema = z.object({
 });
 export type SaveDailyEntryInput = z.infer<typeof SaveDailyEntryInputSchema>;
 
+export const UpsertDailyEntryInputSchema = z.object({
+	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+	dayStatus: DayStatusColorSchema,
+	journalText: z.string().max(100000).nullable().optional(),
+	updatedAtIso: z.string()
+});
+export type UpsertDailyEntryInput = z.infer<typeof UpsertDailyEntryInputSchema>;
+
+export const ClearDailyEntryInputSchema = z.object({
+	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+	updatedAtIso: z.string()
+});
+export type ClearDailyEntryInput = z.infer<typeof ClearDailyEntryInputSchema>;
+
+export const UpsertHabitLogMutationPayloadSchema = HabitLogItemInputSchema.extend({
+	id: z.string(),
+	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+	updatedAtIso: z.string()
+});
+export type UpsertHabitLogMutationPayload = z.infer<
+	typeof UpsertHabitLogMutationPayloadSchema
+>;
+
+export const DeleteHabitLogMutationPayloadSchema = z.object({
+	logId: z.string(),
+	dateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+	habitId: z.string(),
+	updatedAtIso: z.string()
+});
+export type DeleteHabitLogMutationPayload = z.infer<
+	typeof DeleteHabitLogMutationPayloadSchema
+>;
+
 export const SaveCadencePlanBatchSchema = z.object({
 	targetDateIso: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	updatedAtIso: z.string().optional(),
@@ -442,6 +475,30 @@ export const SyncOutboxMutationSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('SAVE_DAILY_ENTRY'),
 		queuedAtIso: z.string(),
 		payload: SaveDailyEntryInputSchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('UPSERT_DAILY_ENTRY'),
+		queuedAtIso: z.string(),
+		payload: UpsertDailyEntryInputSchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('CLEAR_DAILY_ENTRY'),
+		queuedAtIso: z.string(),
+		payload: ClearDailyEntryInputSchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('UPSERT_HABIT_LOG'),
+		queuedAtIso: z.string(),
+		payload: UpsertHabitLogMutationPayloadSchema
+	}),
+	z.object({
+		id: z.string(),
+		kind: z.literal('DELETE_HABIT_LOG'),
+		queuedAtIso: z.string(),
+		payload: DeleteHabitLogMutationPayloadSchema
 	}),
 	z.object({
 		id: z.string(),
